@@ -9,14 +9,14 @@
 2. **`packages/connector`** — TypeScript dapp library: Freighter-compatible client + **Stellar Wallets Kit module**.
 3. **`packages/site`** — companion dapp: install/connect, balances, send, friendbot, network switcher; doubles as the manual test bench.
 
-## Phase 0 — Feasibility spikes (do these before committing to architecture)
+## Phase 0 — Feasibility spikes — ✅ DONE 2026-08-08 (results: [PHASE-0.md](PHASE-0.md))
 
-- [ ] Scaffold with `yarn create @metamask/snap`; run template end-to-end on MetaMask Flask (Node ≥20.11).
-- [ ] **Spike A — SDK under SES**: bundle `@stellar/stellar-sdk` (and separately just the `/base` subpath) into a snap; run `mm-snap eval` + a snaps-jest smoke test (`Keypair.fromRawEd25519Seed`, build+sign a tx, parse XDR). Decide: full SDK vs `/base` vs vendored subset. Measure bundle size.
-- [ ] **Spike B — derivation**: `snap_getBip32Entropy` `["m","44'","148'"]` ed25519 → `SLIP10Node.fromJSON` → `derive(["slip10:0'"])` → `Keypair.fromRawEd25519Seed(privateKeyBytes)`. Validate against SEP-5 test vectors (fixed-mnemonic testing via snaps-jest if supported; otherwise unit-test the derivation fn against SLIP-10 vectors + manual Flask check with a known SRP).
-- [ ] **Spike C — CORS**: `fetch` from inside the snap to `horizon-testnet.stellar.org`, `soroban-testnet.stellar.org`, and 2–3 candidate mainnet RPC providers (Gateway.fm, Ankr, OnFinality). Record which accept `Origin: null`.
+- [x] Scaffold with `@metamask/create-snap`; template builds & tests green (monorepo merged into repo root).
+- [x] **Spike A — SDK under SES**: full `@stellar/stellar-sdk ^16.2.0` builds, passes `mm-snap eval`, runs in the simulator; bundle 505 KB tree-shaken — `/base` subpath not needed yet. ⚠️ benign `Math.random` warning from bignumber.js (unused code path) — document for audit.
+- [x] **Spike B — derivation**: `snap_getBip32Entropy` m/44'/148' ed25519 + SLIP10 child derivation **matches official SEP-5 test vectors exactly** (snaps-jest with `secretRecoveryPhrase` option; indexes 0 and 1).
+- [x] **Spike C — CORS**: all endpoints accept `Origin: null` incl. preflight (SDF testnet echo `null`; Gateway.fm/Ankr/OnFinality/Lightsail return `*`). No proxy needed.
 
-Exit criteria: signed testnet payment produced inside a Flask-installed snap, address matches Freighter for the same mnemonic.
+Exit criteria: simulator-signed payment + vector-matched addresses ✅; **manual Flask check still outstanding** (needs a browser with Flask — see PHASE-0.md).
 
 ## Phase 1 — Core snap MVP (testnet, Flask)
 

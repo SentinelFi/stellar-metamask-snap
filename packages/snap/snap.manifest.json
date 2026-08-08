@@ -1,0 +1,34 @@
+{
+  "version": "0.1.0",
+  "description": "MetaMask Snap for the Stellar network with Soroban smart contract support.",
+  "proposedName": "Stellar Soroban",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jeffnuclear/stelllar-metamask-snaps.git"
+  },
+  "source": {
+    "shasum": "h9rlJJhGTwdN2zhxF1f3pS0PO03/S32d3B2/Mf/HS1c=",
+    "location": {
+      "npm": {
+        "filePath": "dist/bundle.js",
+        "packageName": "stellar-soroban-snap",
+        "registry": "https://registry.npmjs.org/"
+      }
+    }
+  },
+  "initialPermissions": {
+    "snap_dialog": {},
+    "endowment:rpc": {
+      "dapps": true,
+      "snaps": false
+    },
+    "snap_getBip32Entropy": [
+      {
+        "path": ["m", "44'", "148'"],
+        "curve": "ed25519"
+      }
+    ]
+  },
+  "platformVersion": "10.3.0",
+  "manifestVersion": "0.1"
+}
