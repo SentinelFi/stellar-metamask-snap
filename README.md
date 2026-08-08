@@ -1,0 +1,1 @@
+# stelllar-metamask-snaps
