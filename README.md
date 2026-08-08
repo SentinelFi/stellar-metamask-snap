@@ -1,8 +1,8 @@
-# stelllar-metamask-snaps
+# Stelllar Metamask Snap
 
 A MetaMask Snap bringing the **Stellar network (including Soroban smart contracts)** to MetaMask: SEP-0005-compatible key derivation from the MetaMask Secret Recovery Phrase, a SEP-43 / Freighter-compatible signing API for dapps, and a Stellar Wallets Kit module for ecosystem-wide integration.
 
-**Status: research & planning.** Implementation has not started yet.
+**Status:** Research & planning. Implementation has not started yet.
 
 ## Documentation
 
@@ -13,9 +13,23 @@ A MetaMask Snap bringing the **Stellar network (including Soroban smart contract
   - [stellar-soroban.md](docs/research/stellar-soroban.md) — Stellar accounts/transactions, SEP-5 derivation, Soroban simulation & auth entries, wallet interop SEPs
   - [example-snaps-analysis.md](docs/research/example-snaps-analysis.md) — code analysis of the XRPL, Sui, and NEAR snaps + the existing `stellar-snap`
 
-## TL;DR of the approach
+## Approach
 
 - Derive ed25519 keys at `m/44'/148'/x'` via `snap_getBip32Entropy` — same addresses as Freighter/Ledger for the same mnemonic (the existing `stellar-snap` doesn't do this; it's our main differentiator).
 - Expose the five SEP-43 methods (`getAddress`, `signTransaction`, `signAuthEntry`, `signMessage`, `getNetwork`) with Freighter-compatible semantics.
 - Simulate Soroban transactions in-snap before signing to show real resource fees, decoded invocations, and balance effects.
 - Ship a connector npm package + Stellar Wallets Kit module so existing Stellar dapps get MetaMask support for free.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+
+Please see [SECURITY.md](SECURITY.md) for how to report security issues.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+Copyright © 2026.
