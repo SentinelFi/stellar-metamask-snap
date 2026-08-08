@@ -77,6 +77,22 @@ The path, curve, and snap name render correctly. **Finding: MetaMask labels our 
 
 Validated with `StrKey`: 56 characters, valid ed25519 `G` strkey (CRC16 checksum passes), decodes to exactly 32 key bytes, and re-encodes identically. So the full chain — real MetaMask vault → `snap_getBip32Entropy` → SLIP-10 child derivation → `Keypair` → strkey encoding — works outside the simulator. (This wallet was created with a fresh random phrase, so the value differs from the SEP-5 test vector by design.)
 
+`stellar_sdkSmoke` on the real extension returned all checks green:
+
+```json
+{
+  "address": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+  "strKeyRoundTrip": true,
+  "signatureValid": true,
+  "txHash": "97698040cea5eaa8fe3df6e3d8430a145967a5379e5d460f424daa5af7be110c",
+  "xdrRoundTrip": true,
+  "envelopeType": "envelopeTypeTx",
+  "memo": "phase-0 spike"
+}
+```
+
+That address derives from a **fixed** seed (`Buffer.alloc(32, 7)`) in the spike, so it is reproducible: computing it in plain Node yields the identical string. **Cryptographic operations under SES are therefore byte-identical to a standard environment** — ed25519 keypair derivation, tx-hash signing (network passphrase mixed in), signature verification, XDR serialize/parse fidelity, and memo preservation all confirmed on the real extension. Spike A is closed definitively.
+
 ### Why "Unknown network" — and how to fix it
 
 Cause is in `@metamask/snaps-utils` [`derivation-paths.ts`](../node_modules/@metamask/snaps-utils/dist/derivation-paths.cjs):
@@ -103,7 +119,7 @@ Cosmetic only — it does not affect derivation, security, or functionality — 
 
 ## Outstanding before Phase 1 sign-off
 
-- [ ] **Cross-wallet address confirmation.** SEP-5 vector conformance is proven by the automated tests, and the real extension produces a valid address — but the two have not been checked against each other on the *same* phrase. Residual risk is low (simulator and extension share the same `key-tree` derivation code), so this is belt-and-braces: either restore Flask with the published test mnemonic and expect `GDRXE2BQ…`, or import the throwaway Flask phrase into Freighter and compare addresses.
+- [ ] **Cross-wallet address confirmation.** Narrowly scoped now: the fixed-seed check above proves the SDK's crypto is identical under SES, and the automated tests prove SEP-5 vector conformance in the simulator. The single unverified link is whether **real MetaMask's `snap_getBip32Entropy` yields the same bytes as the simulator's** for a given mnemonic. Low risk (shared `key-tree` implementation), and closable either by restoring Flask with the published test mnemonic (expect `GDRXE2BQ…`) or importing the throwaway Flask phrase into Freighter and comparing.
 - [ ] File the upstream `derivation-paths.ts` PR for the "Stellar" label (above).
 - [x] ~~Add a snap icon (SVG)~~ **Done** — [packages/snap/images/icon.svg](../packages/snap/images/icon.svg): the Stellar slashed-circle mark recreated as original vector art in a distinct gold-on-navy colorway (the press kit ships no SVG of the network mark), wired into the manifest `iconPath` and npm `files`.
 - [ ] Companion `packages/site` is still the stock template — Phase 1/3 will rework it.
