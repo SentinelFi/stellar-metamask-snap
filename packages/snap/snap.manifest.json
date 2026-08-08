@@ -4,13 +4,14 @@
   "proposedName": "Stellar Soroban",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jeffnuclear/stelllar-metamask-snaps.git"
+    "url": "https://github.com/jeffnuclear/stelllar-metamask-snap.git"
   },
   "source": {
-    "shasum": "h9rlJJhGTwdN2zhxF1f3pS0PO03/S32d3B2/Mf/HS1c=",
+    "shasum": "H2V4W9+rjBejFYmrUXyZt7a/q9+4qLM2eDcZ+Mex3Uk=",
     "location": {
       "npm": {
         "filePath": "dist/bundle.js",
+        "iconPath": "images/icon.svg",
         "packageName": "stellar-soroban-snap",
         "registry": "https://registry.npmjs.org/"
       }

@@ -4,13 +4,14 @@
   "description": "MetaMask Snap for the Stellar network with Soroban smart contract support.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jeffnuclear/stelllar-metamask-snaps.git"
+    "url": "https://github.com/jeffnuclear/stelllar-metamask-snap.git"
   },
   "license": "Apache-2.0",
   "author": "jeffnuclear",
   "main": "./dist/bundle.js",
   "files": [
     "dist/",
+    "images/",
     "snap.manifest.json"
   ],
   "scripts": {
