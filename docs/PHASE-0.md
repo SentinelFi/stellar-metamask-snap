@@ -59,9 +59,52 @@ Snap `fetch` runs in a sandboxed iframe ⇒ requests carry `Origin: null`. Probe
 
 Manifest permissions so far: `snap_dialog`, `endowment:rpc` (dapps), `snap_getBip32Entropy` (m/44'/148' ed25519).
 
+## Manual Flask verification (real extension)
+
+Installed from `local:http://localhost:8080` into **MetaMask Flask on Brave** (separate browser profile, throwaway account). Install succeeded; the permission prompt displayed:
+
+> - Manage **Unknown network** m/44'/148' (ed25519) accounts.
+> - Display dialog windows in MetaMask.
+> - Allow websites to communicate directly with Stellar Soroban.
+
+The path, curve, and snap name render correctly. **Finding: MetaMask labels our chain "Unknown network"** rather than "Stellar" (analysis below).
+
+`stellar_getAddress` against the real extension returned a well-formed account:
+
+```json
+{ "address": "GCI7TJ7M62U6T3CAINS3NVONXSPJEGQINP6FR25JHXCC4WCH2HHVHU57", "index": 0 }
+```
+
+Validated with `StrKey`: 56 characters, valid ed25519 `G` strkey (CRC16 checksum passes), decodes to exactly 32 key bytes, and re-encodes identically. So the full chain — real MetaMask vault → `snap_getBip32Entropy` → SLIP-10 child derivation → `Keypair` → strkey encoding — works outside the simulator. (This wallet was created with a fresh random phrase, so the value differs from the SEP-5 test vector by design.)
+
+### Why "Unknown network" — and how to fix it
+
+Cause is in `@metamask/snaps-utils` [`derivation-paths.ts`](../node_modules/@metamask/snaps-utils/dist/derivation-paths.cjs):
+
+1. `SNAPS_DERIVATION_PATHS` is a hardcoded list of recognized `(path, curve)` pairs — it includes Solana 501', Sui 784', NEAR 397', Aptos 637', Cardano, Tezos, IOTA… but has **no entry for 148' / ed25519**.
+2. `getSnapDerivationPathName()` falls back to the SLIP-44 registry only `if (curve === 'secp256k1')`. Our curve is ed25519, so the fallback never runs — even though the registry does know the coin type:
+
+```js
+require('@metamask/slip44')['148']
+// => { index: '148', hex: '0x80000094', symbol: 'XLM', name: 'Stellar Lumens' }
+```
+
+**Fix: a one-entry upstream PR** to [MetaMask/snaps](https://github.com/MetaMask/snaps) (`packages/snaps-utils/src/derivation-paths.ts`) — the same way Sui, NEAR, and IOTA got their names listed:
+
+```ts
+{
+  path: ['m', `44'`, `148'`],
+  curve: 'ed25519',
+  name: 'Stellar',
+},
+```
+
+Cosmetic only — it does not affect derivation, security, or functionality — but it materially improves the trust signal on the install prompt, so it should be filed early enough to land before allowlisting. Tracked in [PLAN.md](PLAN.md).
+
 ## Outstanding before Phase 1 sign-off
 
-- [ ] **Manual Flask check** (needs a browser with MetaMask Flask): install from `localhost:8080` (`yarn start`), call `stellar_getAddress`, confirm the permission prompt shows the Stellar path/curve correctly. The simulator gives high confidence, but a real-extension check is the true exit criterion.
+- [ ] **Cross-wallet address confirmation.** SEP-5 vector conformance is proven by the automated tests, and the real extension produces a valid address — but the two have not been checked against each other on the *same* phrase. Residual risk is low (simulator and extension share the same `key-tree` derivation code), so this is belt-and-braces: either restore Flask with the published test mnemonic and expect `GDRXE2BQ…`, or import the throwaway Flask phrase into Freighter and compare addresses.
+- [ ] File the upstream `derivation-paths.ts` PR for the "Stellar" label (above).
 - [x] ~~Add a snap icon (SVG)~~ **Done** — [packages/snap/images/icon.svg](../packages/snap/images/icon.svg): the Stellar slashed-circle mark recreated as original vector art in a distinct gold-on-navy colorway (the press kit ships no SVG of the network mark), wired into the manifest `iconPath` and npm `files`.
 - [ ] Companion `packages/site` is still the stock template — Phase 1/3 will rework it.
 

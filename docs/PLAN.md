@@ -77,6 +77,10 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 - [ ] SEP-29 memo-required warning; unfunded-destination detection (`payment` → suggest `createAccount`).
 - [ ] Optional later: SEP-7 URI handling, SEP-10 helper flow in connector, `snap_notify` tx-status notifications, muxed address (M...) display support.
 
+## Upstream contribution (file early — external review latency)
+
+- [ ] PR to [MetaMask/snaps](https://github.com/MetaMask/snaps) `packages/snaps-utils/src/derivation-paths.ts` adding `{ path: ['m', "44'", "148'"], curve: 'ed25519', name: 'Stellar' }` so the install prompt says "Manage **Stellar** accounts" instead of "Unknown network". Cosmetic but trust-relevant; see [PHASE-0.md](PHASE-0.md) for the root-cause analysis. Should land before allowlisting.
+
 ## Phase 5 — Audit & distribution
 
 - [ ] Pre-audit hardening: remove console logs/TODOs/unused permissions (directory requirements), Snapper scan, threat-model doc (display-integrity claims, key lifecycle).

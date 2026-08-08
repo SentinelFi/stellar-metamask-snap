@@ -1,10 +1,11 @@
+import { useState } from 'react';
 import styled from 'styled-components';
 
 import {
+  ActionButton,
   ConnectButton,
   InstallFlaskButton,
   ReconnectButton,
-  SendHelloButton,
   Card,
 } from '../components';
 import { defaultSnapOrigin } from '../config';
@@ -82,6 +83,14 @@ const Notice = styled.div`
   }
 `;
 
+const Result = styled.pre`
+  margin: 0;
+  overflow-x: auto;
+  font-size: ${({ theme }) => theme.fontSizes.small};
+  white-space: pre-wrap;
+  word-break: break-all;
+`;
+
 const ErrorMessage = styled.div`
   background-color: ${({ theme }) => theme.colors.error?.muted};
   border: 1px solid ${({ theme }) => theme.colors.error?.default};
@@ -105,23 +114,33 @@ const Index = () => {
   const { isFlask, snapsDetected, installedSnap } = useMetaMask();
   const requestSnap = useRequestSnap();
   const invokeSnap = useInvokeSnap();
+  const [result, setResult] = useState<string | null>(null);
 
   const isMetaMaskReady = isLocalSnap(defaultSnapOrigin)
     ? isFlask
     : snapsDetected;
 
-  const handleSendHelloClick = async () => {
-    await invokeSnap({ method: 'hello' });
+  const handleGetAddressClick = async () => {
+    setResult(null);
+    const response = await invokeSnap({
+      method: 'stellar_getAddress',
+      params: { index: 0 },
+    });
+    setResult(JSON.stringify(response, null, 2));
+  };
+
+  const handleSdkSmokeClick = async () => {
+    setResult(null);
+    const response = await invokeSnap({ method: 'stellar_sdkSmoke' });
+    setResult(JSON.stringify(response, null, 2));
   };
 
   return (
     <Container>
       <Heading>
-        Welcome to <Span>template-snap</Span>
+        <Span>Stellar Soroban</Span> Snap
       </Heading>
-      <Subtitle>
-        Get started by editing <code>src/index.tsx</code>
-      </Subtitle>
+      <Subtitle>Phase 0 — feasibility verification</Subtitle>
       <CardContainer>
         {error && (
           <ErrorMessage>
@@ -173,29 +192,48 @@ const Index = () => {
         )}
         <Card
           content={{
-            title: 'Send Hello message',
+            title: 'Get Stellar address',
             description:
-              'Display a custom message within a confirmation screen in MetaMask.',
+              "Derive the SEP-0005 account m/44'/148'/0' from your MetaMask recovery phrase.",
             button: (
-              <SendHelloButton
-                onClick={handleSendHelloClick}
+              <ActionButton
+                onClick={handleGetAddressClick}
                 disabled={!installedSnap}
-              />
+              >
+                Get address
+              </ActionButton>
             ),
           }}
           disabled={!installedSnap}
-          fullWidth={
-            isMetaMaskReady &&
-            Boolean(installedSnap) &&
-            !shouldDisplayReconnectButton(installedSnap)
-          }
         />
+        <Card
+          content={{
+            title: 'Run SDK smoke test',
+            description:
+              'Build, sign, and XDR round-trip a transaction inside the snap sandbox.',
+            button: (
+              <ActionButton
+                onClick={handleSdkSmokeClick}
+                disabled={!installedSnap}
+              >
+                Run smoke test
+              </ActionButton>
+            ),
+          }}
+          disabled={!installedSnap}
+        />
+        {result && (
+          <Notice>
+            <Result>{result}</Result>
+          </Notice>
+        )}
         <Notice>
           <p>
-            Please note that the <b>snap.manifest.json</b> and{' '}
-            <b>package.json</b> must be located in the server root directory and
-            the bundle must be hosted at the location specified by the location
-            field.
+            Expected address for the published SEP-0005 test mnemonic
+            (&ldquo;illness spike retreat&hellip;&rdquo;):{' '}
+            <b>GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6</b>. Any
+            other recovery phrase yields its own address &mdash; compare it with
+            Freighter using the same phrase.
           </p>
         </Notice>
       </CardContainer>
