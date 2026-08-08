@@ -62,7 +62,7 @@ Manifest permissions so far: `snap_dialog`, `endowment:rpc` (dapps), `snap_getBi
 ## Outstanding before Phase 1 sign-off
 
 - [ ] **Manual Flask check** (needs a browser with MetaMask Flask): install from `localhost:8080` (`yarn start`), call `stellar_getAddress`, confirm the permission prompt shows the Stellar path/curve correctly. The simulator gives high confidence, but a real-extension check is the true exit criterion.
-- [ ] Add a snap icon (SVG) — build warns about it; required for directory listing later.
+- [x] ~~Add a snap icon (SVG)~~ **Done** — [packages/snap/images/icon.svg](../packages/snap/images/icon.svg): the Stellar slashed-circle mark recreated as original vector art in a distinct gold-on-navy colorway (the press kit ships no SVG of the network mark), wired into the manifest `iconPath` and npm `files`.
 - [ ] Companion `packages/site` is still the stock template — Phase 1/3 will rework it.
 
 ## Audit note (timeline-critical)

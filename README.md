@@ -2,6 +2,8 @@
 
 A MetaMask Snap bringing the **Stellar network (including Soroban smart contracts)** to MetaMask: SEP-0005-compatible key derivation from the MetaMask Secret Recovery Phrase, a SEP-43 / Freighter-compatible signing API for dapps, and a Stellar Wallets Kit module for ecosystem-wide integration.
 
+> Independent software, not affiliated with or endorsed by the Stellar Development Foundation.
+
 **Status:** Phase 0 (feasibility) complete — all spikes green, see [docs/PHASE-0.md](docs/PHASE-0.md). Phase 1 (core snap MVP) is next.
 
 ## Development
