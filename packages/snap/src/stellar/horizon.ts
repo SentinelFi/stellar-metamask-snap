@@ -39,7 +39,7 @@ async function safeFetch(
   url: string,
   init: Parameters<typeof fetch>[1],
   service: string,
-) {
+): ReturnType<typeof fetch> {
   try {
     return await fetch(url, init);
   } catch {
