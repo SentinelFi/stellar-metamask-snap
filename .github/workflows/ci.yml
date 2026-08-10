@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, build, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Lint (eslint + prettier)
+        run: yarn lint
+
+      - name: Build snap (includes SES eval)
+        run: yarn workspace stellar-soroban-snap build
+
+      - name: Verify committed manifest matches the built bundle
+        run: git diff --exit-code packages/snap/snap.manifest.json
+
+      - name: Build connector
+        run: yarn workspace stellar-soroban-snap-connector build
+
+      - name: Snap tests
+        run: yarn workspace stellar-soroban-snap test
+
+      - name: Connector tests
+        run: yarn workspace stellar-soroban-snap-connector test
+
+  site:
+    name: Build companion dapp
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Build connector (site dependency)
+        run: yarn workspace stellar-soroban-snap-connector build
+
+      - name: Build site
+        run: yarn workspace site build

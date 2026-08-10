@@ -1,5 +1,7 @@
 # Stelllar MetaMask Snap
 
+[![CI](https://github.com/jeffnuclear/stelllar-metamask-snap/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffnuclear/stelllar-metamask-snap/actions/workflows/ci.yml)
+
 A MetaMask Snap bringing the **Stellar network (including Soroban smart contracts)** to MetaMask: SEP-0005-compatible key derivation from the MetaMask Secret Recovery Phrase, a SEP-43 / Freighter-compatible signing API for dapps, and a Stellar Wallets Kit module for ecosystem-wide integration.
 
 > Independent software, not affiliated with or endorsed by the Stellar Development Foundation.
