@@ -1,7 +1,7 @@
 name: Snapper security scan
 
-# Manual only — Snapper is a heavy Docker build; run it on demand
-# (e.g. on the frozen pre-publish commit), not on every push.
+# Manual only. Builds Snapper from source (its published npm package and its
+# Docker image are both currently broken) and scans packages/snap.
 on:
   workflow_dispatch:
 
@@ -12,41 +12,48 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout this repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout Snapper
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: sayfer-io/Snapper
           path: .snapper-src
 
-      - name: Build Snapper image
-        run: docker build -t snapper .snapper-src
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
 
-      - name: Prepare output directory
-        run: mkdir -p snapper-report
+      - name: Build Snapper from source
+        working-directory: .snapper-src
+        run: |
+          npm install
+          npm run build
 
       - name: Run Snapper against packages/snap
-        # Mount the snap package read-only and an output dir read-write.
-        # Capture stdout too, so there is always something to inspect even if
-        # the report flags differ across Snapper versions.
+        # Snapper logs via winston; merge stderr into the captured stream so
+        # findings are never lost. `|| true` keeps the job green so the report
+        # always uploads for review.
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}/packages/snap:/snap:ro" \
-            -v "${{ github.workspace }}/snapper-report:/out" \
-            snapper --path /snap --htmlReport --logFile /out/snapper.log \
-            | tee snapper-report/stdout.txt
-        continue-on-error: true
+          mkdir -p snapper-report
+          node .snapper-src/dist/main.js \
+            --path "${{ github.workspace }}/packages/snap" --verbose \
+            > snapper-report/output.txt 2>&1 || true
+          echo "--- output.txt (first 300 lines) ---"
+          head -n 300 snapper-report/output.txt || true
 
       - name: Collect any generated report files
         if: always()
         run: |
-          find packages/snap -maxdepth 2 -name '*.html' -exec cp {} snapper-report/ \; 2>/dev/null || true
+          find . -maxdepth 4 \( -name '*.html' -o -name 'snapper*.json' \) \
+            -not -path './snapper-report/*' -not -path './.snapper-src/node_modules/*' \
+            -exec cp {} snapper-report/ \; 2>/dev/null || true
           ls -la snapper-report || true
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: snapper-report
           path: snapper-report/

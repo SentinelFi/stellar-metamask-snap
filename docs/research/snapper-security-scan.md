@@ -28,27 +28,26 @@ From [get-allowlisted](https://docs.metamask.io/snaps/how-to/get-allowlisted):
 7. Minimum two MetaMask approvals
 8. Only needed because we use protected permissions (rpc/network-access/entropy); open permissions wouldn't require allowlisting
 
-### Docker (recommended — avoids the npm packaging bug)
+### From source with Node 22 (recommended — both the npm package and the Docker image are broken)
+
+Two of Snapper's shipped run methods are currently broken, so build from the `main` source instead:
+
+- **npm** (`npm install -g @sayfer_io/snapper`) — the published `0.19.1` tarball leaks a `workspace:` protocol dependency → `EUNSUPPORTEDPROTOCOL`. (`main`'s `package.json` is clean; only the release is affected.)
+- **Docker** (`docker build . && docker run …`) — the Dockerfile builds on Node 14 (its deps need ≥18), and its entrypoint is bare `node`, so `--path` is parsed by Node itself (`node: bad option: --path`).
+
+Building from source on Node ≥ 18 (we use 22) sidesteps both. The bin entry is `dist/main.js`:
 
 ```bash
 git clone https://github.com/sayfer-io/Snapper.git
-cd Snapper
-docker build -t snapper .
-# scan our snap package (mount it read-only):
-docker run --rm -v /abs/path/to/stelllar-metamask-snaps/packages/snap:/snap snapper --path /snap
+cd Snapper && npm install && npm run build
+node ./dist/main.js --path /abs/path/to/stelllar-metamask-snaps/packages/snap --verbose
 ```
 
-### From source
-
-```bash
-git clone https://github.com/sayfer-io/Snapper.git
-cd Snapper && npm install
-node ./dist/index.js --path /abs/path/to/stelllar-metamask-snaps/packages/snap
-```
+This is exactly what [.github/workflows/snapper.yml](../../.github/workflows/snapper.yml) automates (manual `workflow_dispatch`), so no local setup is needed — run it from the Actions tab and download the `snapper-report` artifact.
 
 ### Useful flags
 
-`--detectors` / `--ignoreDetectors` (select rules), `--htmlReport` (human-readable report to attach to the directory submission), `--logFile`, `--verbose`.
+`--verbose`, `--detectors` / `--ignoreDetectors` (select rules), `--htmlReport`, `--logFile`. (Flag argument semantics aren't documented; the workflow runs `--verbose` and captures combined stdout+stderr, then tightens once the real output shape is known.)
 
 ## Where reports go
 

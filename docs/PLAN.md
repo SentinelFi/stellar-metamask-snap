@@ -104,7 +104,7 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 - [x] Threat-model doc: [THREAT-MODEL.md](THREAT-MODEL.md) (assets, trust boundaries, six attackable security claims, code map, residual risks).
 - [x] npm publish readiness: package READMEs + LICENSE files, metadata verified, pack contents verified by dry-run for both packages.
 - [x] Mainnet RPC decision: Gateway.fm RPC + SDF Horizon (CORS-verified); re-probe before submission; drop-in alternates documented.
-- [ ] **Snapper security scan** (Docker; on the frozen pre-publish commit) — assessment: [research/snapper-security-scan.md](research/snapper-security-scan.md).
+- [ ] **Snapper security scan** (CI workflow builds from source; on the frozen pre-publish commit) — assessment: [research/snapper-security-scan.md](research/snapper-security-scan.md).
 - [ ] **Third-party audit** (mandatory — audit-gated entropy permission); then freeze, re-probe CORS, Snapper, tag.
 - [ ] **npm publish** both packages; **Directory Information form** (draft in PHASE-5.md) + ≥2-approval review; after allowlisting: Wallets Kit upstream PR.
 

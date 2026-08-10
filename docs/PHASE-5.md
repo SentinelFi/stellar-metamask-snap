@@ -40,9 +40,9 @@ Unlike Phases 0–4, this phase is mostly process: the code is feature-complete 
 
 **Default Soroban RPC for PUBLIC stays `https://soroban-rpc.mainnet.stellar.gateway.fm`; Horizon stays `https://horizon.stellar.org`.** Rationale: both verified to accept `Origin: null` (snap sandbox) including preflight in Phase 0's CORS spike; Gateway.fm is keyless and SDF-listed. Risks and mitigations: provider CORS/policy can change → **re-run the Phase 0 CORS probe against mainnet endpoints immediately before submission and after any provider incident**; Ankr/OnFinality/Lightsail all passed the same probe and are drop-in replacements (one constant in `state/networks.ts`). A user-configurable custom-network/RPC override remains a tracked post-launch feature.
 
-## Snapper scan (assessed; run pending — needs Docker on the frozen commit)
+## Snapper scan (assessed; run via the CI workflow on the frozen commit)
 
-Assessment and how-to: [research/snapper-security-scan.md](research/snapper-security-scan.md). Run it via Docker against `packages/snap` on the frozen pre-publish commit and keep the HTML report for the submission. (The tool's npm release is currently broken to install; issue reported upstream.)
+Assessment and how-to: [research/snapper-security-scan.md](research/snapper-security-scan.md). Both Snapper's npm release and its Docker image are currently broken, so the [`Snapper security scan` workflow](../.github/workflows/snapper.yml) builds it from source (Node 22) and scans `packages/snap` — run it manually (Actions tab) on the frozen pre-publish commit, review the artifact, and commit the report to [`audits/scans/`](../audits/scans/) for the submission.
 
 ## Directory submission draft
 
@@ -62,7 +62,7 @@ For the [Snaps Directory Information form](https://docs.metamask.io/snaps/how-to
 
 1. **Track [MetaMask/snaps#4097](https://github.com/MetaMask/snaps/pull/4097)** — the "Stellar" derivation-path label should land before allowlisting review.
 2. **Engage a third-party auditor** — mandatory (audit-gated `snap_getBip32Entropy`). Candidates from the approved list (verify current MetaMask wiki): OtterSec, Cure53, Halborn, Least Authority, Sayfer, Veridise. Provide: pinned commit hash, [THREAT-MODEL.md](THREAT-MODEL.md), scope = `packages/snap` + key-management path. Expect weeks of lead time; fixes → re-verify → pin the final audited commit.
-3. **Freeze the release commit** (after audit fixes): re-run the mainnet CORS probe; run the **Snapper Docker scan** on it; tag it.
+3. **Freeze the release commit** (after audit fixes): re-run the mainnet CORS probe; run the **Snapper scan** (CI workflow) on it; tag it.
 4. **npm publish** both packages from that commit (`npm login` as the owning account; `yarn workspace stellar-soroban-snap npm publish` and same for the connector — or `npm publish` from each package dir). Verify the npm pages render.
 5. **Submit the Directory Information form** with the audit report, screenshots, and demo video; respond to the ≥2-approval review.
 6. **After allowlisting:** file the Stellar Wallets Kit upstream PR (module referencing the now-live `npm:stellar-soroban-snap`), announce, and switch the companion dapp's production env (`.env.production`) to the npm snap ID.
