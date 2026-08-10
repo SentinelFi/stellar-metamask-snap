@@ -50,7 +50,8 @@ export const useMetaMask = () => {
       }
     };
 
-    detect().catch(console.error);
+    // Detection failures leave the "install Flask" state in place.
+    detect().catch(() => undefined);
   }, [provider]);
 
   return { isFlask, snapsDetected, installedSnap, getSnap };

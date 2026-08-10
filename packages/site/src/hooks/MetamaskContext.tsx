@@ -38,7 +38,10 @@ export const MetaMaskProvider = ({ children }: { children: ReactNode }) => {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    getSnapsProvider().then(setProvider).catch(console.error);
+    // A failed provider probe leaves `provider` null (no MetaMask detected).
+    getSnapsProvider()
+      .then(setProvider)
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {

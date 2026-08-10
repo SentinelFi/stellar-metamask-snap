@@ -98,13 +98,15 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 
 - [x] **Filed:** [MetaMask/snaps#4097](https://github.com/MetaMask/snaps/pull/4097) — adds `{ path: ['m', "44'", "148'"], curve: 'ed25519', name: 'Stellar' }` to `packages/snaps-utils/src/derivation-paths.ts` (+ unit test) so the install prompt says "Manage **Stellar** accounts" instead of "Unknown network". Cosmetic but trust-relevant; see [PHASE-0.md](PHASE-0.md) for the root-cause analysis. **Track review; should land before allowlisting.**
 
-## Phase 5 — Audit & distribution
+## Phase 5 — Audit & distribution — ✅ PREPARATION DONE 2026-08-10 (notes: [PHASE-5.md](PHASE-5.md)); external steps pending
 
-- [ ] Pre-audit hardening: remove console logs/TODOs/unused permissions (directory requirements), threat-model doc (display-integrity claims, key lifecycle).
-- [ ] **Snapper security scan** ([Sayfer's tool](https://github.com/sayfer-io/Snapper), named in MetaMask's allowlisting requirements) against `packages/snap` on the frozen pre-publish commit; resolve findings, keep the HTML report for the directory submission. **Run via Docker** — the npm release currently fails to install (`workspace:` protocol bug). Assessment + how-to: [docs/research/snapper-security-scan.md](research/snapper-security-scan.md).
-- [ ] Third-party audit (entropy permission is audit-gated; candidates: OtterSec, Cure53, Halborn, Least Authority, Veridise — check current MetaMask wiki list). Pin audited commit.
-- [ ] npm publish (matching manifest/package fields, SVG icon), Directory Information form, allowlisting review (≥2 approvals, version-pinned — every release needs re-submission).
-- [ ] Mainnet RPC strategy final call (provider with `Origin: null` CORS, or our own proxy).
+- [x] Pre-audit hardening: zero console logs / TODOs across all packages (site's template `console.error`s stripped); permission-usage mapping documented — no unused permissions.
+- [x] Threat-model doc: [THREAT-MODEL.md](THREAT-MODEL.md) (assets, trust boundaries, six attackable security claims, code map, residual risks).
+- [x] npm publish readiness: package READMEs + LICENSE files, metadata verified, pack contents verified by dry-run for both packages.
+- [x] Mainnet RPC decision: Gateway.fm RPC + SDF Horizon (CORS-verified); re-probe before submission; drop-in alternates documented.
+- [ ] **Snapper security scan** (Docker; on the frozen pre-publish commit) — assessment: [research/snapper-security-scan.md](research/snapper-security-scan.md).
+- [ ] **Third-party audit** (mandatory — audit-gated entropy permission); then freeze, re-probe CORS, Snapper, tag.
+- [ ] **npm publish** both packages; **Directory Information form** (draft in PHASE-5.md) + ≥2-approval review; after allowlisting: Wallets Kit upstream PR.
 
 ## Open questions (resolve during Phase 0–1)
 
