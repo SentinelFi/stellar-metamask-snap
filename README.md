@@ -8,6 +8,36 @@ A MetaMask Snap bringing the **Stellar network (including Soroban smart contract
 
 **Status:** Feature-complete; Phase 5 (audit & distribution) preparation done — hardening sweep, [threat model](docs/THREAT-MODEL.md), npm-publish readiness; remaining steps are external (third-party audit, npm publish, directory allowlisting) — see [docs/PHASE-5.md](docs/PHASE-5.md). Phase history: [4](docs/PHASE-4.md) polish · [3](docs/PHASE-3.md) connector · [2](docs/PHASE-2.md) Soroban · [1](docs/PHASE-1.md) SEP-43 API · [0](docs/PHASE-0.md) feasibility.
 
+## FAQ
+
+<details>
+<summary><strong>What is Stellar?</strong></summary>
+
+An open-source, fast, low-cost blockchain network for payments and issuing digital assets. Learn more at [stellar.org](https://stellar.org).
+
+</details>
+
+<details>
+<summary><strong>What is Soroban?</strong></summary>
+
+Stellar's smart contracts platform. Learn more at [stellar.org/soroban](https://stellar.org/soroban).
+
+</details>
+
+<details>
+<summary><strong>What is MetaMask?</strong></summary>
+
+A self-custodial crypto wallet. Learn more at [metamask.io](https://metamask.io).
+
+</details>
+
+<details>
+<summary><strong>What is a MetaMask Snap?</strong></summary>
+
+A sandboxed extension that adds new capabilities to MetaMask. Learn more at [metamask.io/snaps](https://metamask.io/snaps).
+
+</details>
+
 ## Development
 
 ```bash
@@ -47,6 +77,10 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Security
 
 Please see [SECURITY.md](SECURITY.md) for how to report security issues.
+
+Audit reports are available in [audits/](audits/).
+
+> **Disclaimer: use at your own risk.** We are committed to making this software as secure as possible through standards-compliant design, testing, and a planned third-party audit, but no software can be guaranteed free of vulnerabilities, and nothing here is a guarantee of security. It is provided "as is", without warranty of any kind, express or implied. You are solely responsible for reviewing the code and assessing its suitability before use. Interacting with blockchain networks carries inherent risk, including the irreversible loss of funds. The authors and contributors accept no liability for any loss or damage arising from its use.
 
 ## License
 
