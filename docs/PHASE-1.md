@@ -55,7 +55,6 @@ packages/snap/src/
   ui/dialogs.tsx       Connect / NetworkSwitch / SignMessage dialogs
   ui/transaction.tsx   transaction review + per-operation renderers
   ui/format.ts         stroops→XLM, asset/memo/address formatting
-  stellar/sdkSmoke.ts  Phase 0 reference (unwired; excluded from bundle)
 ```
 
 Manifest additions: `snap_manageState`, `endowment:network-access`, `endowment:rpc.maxRequestTime: 180000` (users get up to 3 minutes to review a signing dialog).

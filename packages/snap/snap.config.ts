@@ -12,32 +12,47 @@ const webpack = require(
 );
 /* eslint-enable @typescript-eslint/no-require-imports, import-x/no-dynamic-require, n/no-extraneous-require */
 
-// Insecure randomness must never be used in this snap. The only occurrences
-// in the dependency graph are inside bignumber.js's `BigNumber.random()`
-// (shipped pre-minified within @stellar/stellar-sdk, so parser-level
-// replacement like DefinePlugin cannot reach it), which also probes
-// Math.random once at module init — so a throwing stub would crash the
-// bundle at load. Rewrite the emitted bundle to back every call with
-// crypto.getRandomValues instead.
+// bignumber.js's `BigNumber.random()` (shipped pre-minified inside
+// @stellar/stellar-sdk) references Math.random and probes it at module init.
+// DefinePlugin cannot reach the pre-minified source, and a throwing stub
+// would crash the bundle at load, so rewrite the emitted bundle to back
+// every Math.random call with crypto.getRandomValues.
 const SECURE_RANDOM =
   '(() => crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000)';
 
+/** Minimal structural types for the parts of webpack this plugin touches. */
+type WebpackSource = { source: () => { toString: () => string } };
+type Compilation = {
+  hooks: {
+    processAssets: {
+      tap: (
+        options: { name: string; stage: number },
+        callback: (assets: Record<string, WebpackSource>) => void,
+      ) => void;
+    };
+  };
+  updateAsset: (name: string, source: unknown) => void;
+};
+
 class StripInsecureRandomnessPlugin {
+  // `compiler` is left untyped: the plugin is added to webpack's own plugins
+  // array, whose Compiler type comes from the dynamically-required webpack.
   apply(compiler: any): void {
     compiler.hooks.thisCompilation.tap(
       'StripInsecureRandomness',
-      (compilation: any) => {
+      (compilation: Compilation) => {
         compilation.hooks.processAssets.tap(
           {
             name: 'StripInsecureRandomness',
             stage: webpack.Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE,
           },
-          (assets: Record<string, any>) => {
+          (assets) => {
             for (const assetName of Object.keys(assets)) {
               if (!assetName.endsWith('.js')) {
                 continue;
               }
-              const source = assets[assetName].source().toString();
+              const asset = assets[assetName];
+              const source = asset ? asset.source().toString() : '';
               if (source.includes('Math.random')) {
                 compilation.updateAsset(
                   assetName,

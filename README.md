@@ -82,6 +82,14 @@ Audit reports are available in [audits/](audits/).
 
 > **Disclaimer: use at your own risk.** We are committed to making this software as secure as possible through standards-compliant design, testing, and a planned third-party audit, but no software can be guaranteed free of vulnerabilities, and nothing here is a guarantee of security. It is provided "as is", without warranty of any kind, express or implied. You are solely responsible for reviewing the code and assessing its suitability before use. Interacting with blockchain networks carries inherent risk, including the irreversible loss of funds. The authors and contributors accept no liability for any loss or damage arising from its use.
 
+### Snapper
+
+The snap is scanned with [Snapper](https://github.com/sayfer-io/Snapper), the static-analysis tool named in MetaMask's Snaps allowlisting requirements. It runs as a manually-triggered GitHub Actions workflow:
+
+1. Open the [**Snapper security scan** workflow](../../actions/workflows/snapper.yml) (Actions tab → "Snapper security scan").
+2. Click **Run workflow**. It builds Snapper from source (Node 22) and scans `packages/snap`.
+3. When the run finishes, open its summary page and download the **`snapper-report`** artifact (produced by the workflow's upload step). It contains `output.txt` with the scan log and findings.
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE). Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.

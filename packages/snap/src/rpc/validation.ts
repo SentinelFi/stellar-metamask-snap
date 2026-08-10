@@ -1,6 +1,6 @@
 import type { Struct } from '@metamask/superstruct';
 import {
-  assert as assertStruct,
+  assert,
   boolean,
   enums,
   object,
@@ -25,7 +25,7 @@ export function validate<Type, Schema>(
   struct: Struct<Type, Schema>,
 ): Type {
   try {
-    assertStruct(params, struct);
+    assert(params, struct);
     return params;
   } catch (error) {
     const message =

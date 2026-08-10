@@ -21,7 +21,7 @@ Unlike Phases 0–4, this phase is mostly process: the code is feature-complete 
 | `endowment:lifecycle-hooks`                  | `onInstall` (`handlers/install.tsx`)                                               |
 | `snap_getBip32Entropy` (m/44'/148', ed25519) | `keys/index.ts`                                                                    |
 
-- **Known intentional exception:** `src/stellar/sdkSmoke.ts` is a kept Phase 0 diagnostic, imported by nothing and therefore absent from the shipped bundle (documented in the threat model §5).
+- No dead code: the Phase 0 diagnostic `sdkSmoke.ts` was removed from the source tree (preserved in the `phase-0`/`phase-1` tags).
 
 ## Threat model (done)
 

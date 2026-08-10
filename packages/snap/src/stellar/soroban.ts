@@ -218,7 +218,9 @@ export async function simulateForDisplay(
           authSigners.push(decoded.address);
         }
       } catch {
-        // Undecodable entries are counted implicitly via the raw XDR review.
+        // Undecodable entries are skipped here; they remain visible to the
+        // user via the raw XDR shown in the review dialog.
+        continue;
       }
     }
   }

@@ -55,7 +55,6 @@ Test anchors: SEP-5 official vectors, cryptographic verification of every signat
 - **`origin` string trust.** Origin gating relies on MetaMask's origin reporting; the snap cannot independently verify it. Platform-standard assumption for all snaps.
 - **Multisig heuristic.** The insufficient-weight warning compares against the medium threshold only — not a per-operation threshold analysis. It can under- or over-warn; it never blocks.
 - **Auto-grant on approved signature.** Approving a signing dialog also grants the origin connection (dialog shows the origin, so consent is informed). An auditor may wish to evaluate this consent model.
-- **Dead reference code.** `src/stellar/sdkSmoke.ts` is intentionally kept (Phase 0 diagnostic) but imported by nothing — webpack excludes it from the shipped bundle; it is source-tree-only.
 - **Dependency surface.** `@stellar/stellar-sdk` (XDR/crypto), `@metamask/key-tree` (SLIP-10), `@metamask/snaps-sdk`, `@metamask/superstruct`. Supply-chain risk is mitigated by the audit pinning an exact commit + lockfile and by the manifest `shasum` sealing the exact published bundle.
 
 ## 6. Out of scope

@@ -3,20 +3,23 @@ import {
   Address,
   Operation,
   scValToNative,
+  StrKey,
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk';
+import { Buffer } from 'buffer';
 
 import { simulateTransaction } from './rpc';
 import type { NetworkConfig } from '../state/networks';
 
 /**
- * A throwaway source account for read-only simulations (the all-zeros
- * ed25519 account). Read-only simulation does not require it to exist.
- * Must be a valid strkey — see phase4 regression test.
+ * A throwaway source account for read-only simulations: the all-zeros
+ * ed25519 account, computed (not hardcoded) so it is self-evidently not a
+ * secret. Read-only simulation does not require it to exist on-ledger.
  */
-export const SIMULATION_SOURCE =
-  'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+export const SIMULATION_SOURCE = StrKey.encodeEd25519PublicKey(
+  Buffer.alloc(32, 0),
+);
 
 /** Bound the read chain so a slow/broken RPC cannot hang the caller. */
 const READ_TIMEOUT_MS = 8000;
