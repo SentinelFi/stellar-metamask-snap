@@ -1,5 +1,9 @@
-import type { OnRpcRequestHandler } from '@metamask/snaps-sdk';
+import type {
+  OnHomePageHandler,
+  OnRpcRequestHandler,
+} from '@metamask/snaps-sdk';
 
+import { homePage } from './handlers/home';
 import { route } from './rpc/router';
 
 /**
@@ -15,3 +19,11 @@ import { route } from './rpc/router';
  */
 export const onRpcRequest: OnRpcRequestHandler = async ({ origin, request }) =>
   route(origin, request);
+
+/**
+ * The snap home page (MetaMask menu → Snaps → Stellar Soroban): active
+ * network, wallet address, and balances.
+ *
+ * @returns The home page content.
+ */
+export const onHomePage: OnHomePageHandler = async () => homePage();

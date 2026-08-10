@@ -456,6 +456,20 @@ describe('fund / getBalances', () => {
   });
 });
 
+describe('onHomePage', () => {
+  it('shows the address and active network', async () => {
+    const { onHomePage } = await install();
+    const response = await onHomePage();
+    const content = JSON.stringify(
+      (response as { getInterface: () => { content: unknown } }).getInterface()
+        .content,
+    );
+    expect(content).toContain('Stellar Soroban');
+    expect(content).toContain(SEP5_ADDRESS_0);
+    expect(content).toContain('TESTNET');
+  }, 30000);
+});
+
 describe('unknown methods', () => {
   it('are rejected with method-not-found', async () => {
     const { request } = await install();

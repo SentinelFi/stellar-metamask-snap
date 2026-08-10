@@ -70,13 +70,13 @@ Dialog v1 (classic txs): source, network banner, sequence, fee, memo (+ MEMO_ID 
 
 Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, dialog rendering assertions via `toRender`), `mm-snap eval` in CI.
 
-## Phase 2 — Soroban depth
+## Phase 2 — Soroban depth — ✅ CORE DONE 2026-08-10 (notes: [PHASE-2.md](PHASE-2.md))
 
-- [ ] `signTransaction` for Soroban txs: enforce single-op/MEMO_NONE, **re-simulate in-snap before dialog** → show resource fee vs inclusion fee, decoded invocation (contract C-address, function, `scValToNative` args), events summary, `restorePreamble` handling (offer restore-then-retry flow).
-- [ ] `signAuthEntry`: decode entry, render invocation tree + nonce + `signatureExpirationLedger` (with ledger→time estimate), sign HashIdPreimage. Support the `authorizeEntry` callback shape.
-- [ ] Token balances via Stellar Asset Contract / `getLedgerEntries` for SAC + custom tokens; `addToken({ contractId })` Freighter-parity method.
+- [x] `signTransaction` for Soroban txs: **in-snap display-verification simulation before the dialog** → estimated resource fee, decoded invocation (contract C-address, function, `scValToNative` args), required auth signers, `restorePreamble` **warning** (guided restore-then-retry flow deferred to Phase 4). Simulation failure renders a warning, never blocks review.
+- [x] `signAuthEntry`: decodes the entry, renders the invocation tree + nonce + `signatureExpirationLedger`, signs the HashIdPreimage via the SDK's `authorizeEntry`; preserves the dapp's expiration (defaults to latest+60 when unset).
+- [ ] Token balances via SAC simulation + `addToken({ contractId })` — **deferred to Phase 4** (belongs with home-page balance display; not dapp-compatibility surface).
 - [x] Fee-bump envelope support (display inner tx + who pays) — shipped early in Phase 1.
-- [ ] Multisig awareness: if account thresholds not met by our key, return signed XDR with an "insufficient weight — pass to co-signers" notice instead of failing.
+- [ ] Multisig awareness: if account thresholds not met by our key, return signed XDR with an "insufficient weight — pass to co-signers" notice instead of failing. **Deferred to Phase 4** (needs signer/threshold fetching + per-op source handling).
 
 ## Phase 3 — Connector package + Wallets Kit module
 
@@ -86,7 +86,7 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 
 ## Phase 4 — Polish
 
-- [ ] `onInstall` welcome dialog (link to companion dapp), `onHomePage`: address + balances + network + "open wallet" links.
+- [ ] `onInstall` welcome dialog (link to companion dapp). ~~`onHomePage`: address + balances + network~~ — **done early in Phase 2** (see [PHASE-2.md](PHASE-2.md)).
 - [ ] `snap_getPreferences` locale → i18n scaffold (XRPL/NEAR pattern); English first.
 - [ ] SEP-29 memo-required warning; unfunded-destination detection (`payment` → suggest `createAccount`).
 - [ ] Optional later: SEP-7 URI handling, SEP-10 helper flow in connector, `snap_notify` tx-status notifications, muxed address (M...) display support.

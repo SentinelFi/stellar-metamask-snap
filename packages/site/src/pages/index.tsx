@@ -1,9 +1,11 @@
 import {
   Account,
+  Address,
   Asset,
   Memo,
   Operation,
   TransactionBuilder,
+  xdr,
 } from '@stellar/stellar-sdk/base';
 import { useEffect, useState } from 'react';
 import styled from 'styled-components';
@@ -247,6 +249,64 @@ const Index = () => {
       return null;
     });
 
+  const handleSignSoroban = async () =>
+    run(async () => {
+      setResult(null);
+      const details = (await invokeSnap({
+        method: 'getNetworkDetails',
+      })) as { networkPassphrase: string } | null;
+      const balances = (await invokeSnap({ method: 'getBalances' })) as {
+        funded: boolean;
+        sequence: string | null;
+      } | null;
+      if (!details || !balances) {
+        return null;
+      }
+
+      // The XLM Stellar Asset Contract address is deterministic per network.
+      const contract = Asset.native().contractId(details.networkPassphrase);
+      const sequence =
+        balances.funded && balances.sequence ? balances.sequence : '1';
+
+      // 1 XLM self-transfer through the SAC — demonstrates the decoded
+      // invocation + in-snap simulation review (not meant for submission;
+      // the envelope is not simulation-assembled).
+      const transaction = new TransactionBuilder(
+        new Account(address, sequence),
+        {
+          fee: '1000000',
+          networkPassphrase: details.networkPassphrase,
+        },
+      )
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract,
+            function: 'transfer',
+            args: [
+              new Address(address).toScVal(),
+              new Address(address).toScVal(),
+              xdr.ScVal.scvI128(
+                new xdr.Int128Parts({
+                  hi: new xdr.Int64(0n),
+                  lo: new xdr.Uint64(10000000n),
+                }),
+              ),
+            ],
+          }),
+        )
+        .setTimeout(300)
+        .build();
+
+      const response = await invokeSnap({
+        method: 'signTransaction',
+        params: { xdr: transaction.toXDR() },
+      });
+      if (response !== null) {
+        setResult(JSON.stringify(response, null, 2));
+      }
+      return null;
+    });
+
   return (
     <Container>
       <Heading>
@@ -412,6 +472,22 @@ const Index = () => {
                 disabled={!installedSnap || !address || busy}
               >
                 Sign payment
+              </ActionButton>
+            ),
+          }}
+          disabled={!installedSnap || !address || busy}
+        />
+        <Card
+          content={{
+            title: 'Sign Soroban invoke',
+            description:
+              'Builds an XLM contract (SAC) transfer invocation — review the decoded call and in-snap simulation in MetaMask.',
+            button: (
+              <ActionButton
+                onClick={handleSignSoroban}
+                disabled={!installedSnap || !address || busy}
+              >
+                Sign Soroban invoke
               </ActionButton>
             ),
           }}

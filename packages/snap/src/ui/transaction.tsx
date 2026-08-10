@@ -16,6 +16,8 @@ import { Buffer } from 'buffer';
 
 import { formatAsset, formatMemo, stroopsToXlm, truncate } from './format';
 import type { NetworkName } from '../state/networks';
+import type { SimulationSummary } from '../stellar/soroban';
+import { decodeHostFunction } from '../stellar/soroban';
 
 /**
  * Renders one decoded operation as a titled section. Unknown operation types
@@ -203,6 +205,81 @@ function renderOperation(
         </Section>
       );
 
+    case 'invokeHostFunction': {
+      const decoded = decodeHostFunction(operation.func);
+      if (decoded.kind !== 'invoke') {
+        return (
+          <Section>
+            <Banner
+              title={`${title}: ${
+                decoded.kind === 'uploadWasm'
+                  ? 'Upload contract code'
+                  : 'Create contract'
+              }`}
+              severity="warning"
+            >
+              <Text>
+                This deploys contract code or a new contract instance. Review
+                the raw transaction XDR below.
+              </Text>
+            </Banner>
+          </Section>
+        );
+      }
+      const authCount = operation.auth?.length ?? 0;
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: Contract invocation`}</Bold>
+          </Text>
+          <Text>Contract</Text>
+          <Copyable value={decoded.contract ?? ''} />
+          <Row label="Function">
+            <Text>{decoded.functionName ?? ''}</Text>
+          </Row>
+          {decoded.args.length > 0 ? (
+            <Text>Arguments</Text>
+          ) : (
+            <Row label="Arguments">
+              <Text>none</Text>
+            </Row>
+          )}
+          {decoded.args.length > 0 ? (
+            <Copyable value={decoded.args.join('\n')} />
+          ) : null}
+          {authCount > 0 ? (
+            <Row label="Authorizations">
+              <Text>{String(authCount)}</Text>
+            </Row>
+          ) : null}
+        </Section>
+      );
+    }
+
+    case 'extendFootprintTtl':
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: Extend contract data lifetime`}</Bold>
+          </Text>
+          <Row label="Extend to">
+            <Text>{`${operation.extendTo} ledgers`}</Text>
+          </Row>
+        </Section>
+      );
+
+    case 'restoreFootprint':
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: Restore archived contract data`}</Bold>
+          </Text>
+          <Text>
+            Restores expired ledger entries so a contract can use them again.
+          </Text>
+        </Section>
+      );
+
     default:
       return (
         <Section>
@@ -245,11 +322,68 @@ function renderSummary(tx: Transaction): GenericSnapElement {
   );
 }
 
+/**
+ * Renders the display-verification simulation results for a Soroban
+ * transaction.
+ *
+ * @param simulation - The simulation summary, or null when not simulated.
+ * @returns The simulation section, or null.
+ */
+function renderSimulation(
+  simulation: SimulationSummary | null,
+): GenericSnapElement | null {
+  if (!simulation) {
+    return null;
+  }
+
+  if (!simulation.ok) {
+    return (
+      <Section>
+        <Banner title="Simulation unavailable" severity="warning">
+          <Text>
+            The snap could not verify this contract call by simulation. Only
+            approve if you trust the requesting site.
+          </Text>
+        </Banner>
+        <Row label="Reason">
+          <Text>{simulation.error}</Text>
+        </Row>
+      </Section>
+    );
+  }
+
+  return (
+    <Section>
+      <Text>
+        <Bold>Simulation</Bold>
+      </Text>
+      <Row label="Estimated resource fee">
+        <Text>{`${stroopsToXlm(simulation.minResourceFee)} XLM`}</Text>
+      </Row>
+      {simulation.authSigners.map((signer) => (
+        <Row label="Requires signature from">
+          <Text>{truncate(signer, 8)}</Text>
+        </Row>
+      ))}
+      {simulation.restoreRequired ? (
+        <Banner title="Restore required" severity="warning">
+          <Text>
+            This call touches archived ledger entries. Submission will fail
+            until they are restored (restoreFootprint).
+          </Text>
+        </Banner>
+      ) : null}
+    </Section>
+  );
+}
+
 export type SignTransactionDialogParams = {
   origin: string;
   network: NetworkName;
   tx: Transaction | FeeBumpTransaction;
   xdr: string;
+  /** Present for Soroban transactions: display-verification simulation. */
+  simulation?: SimulationSummary | null;
 };
 
 /**
@@ -261,6 +395,8 @@ export type SignTransactionDialogParams = {
  * @param params.network - The active network name.
  * @param params.tx - The parsed transaction or fee-bump envelope.
  * @param params.xdr - The raw base64 envelope XDR.
+ * @param params.simulation - Display-verification simulation for Soroban
+ * transactions, or null/absent for classic ones.
  * @returns The dialog content.
  */
 export function buildSignTransactionDialog({
@@ -268,6 +404,7 @@ export function buildSignTransactionDialog({
   network,
   tx,
   xdr,
+  simulation,
 }: SignTransactionDialogParams): JSXElement {
   const networkBanner =
     network === 'PUBLIC' ? (
@@ -345,6 +482,7 @@ export function buildSignTransactionDialog({
       {networkBanner}
       {renderSummary(tx)}
       {tx.operations.map(renderOperation)}
+      {renderSimulation(simulation ?? null)}
       <Divider />
       <Text>Raw transaction (XDR)</Text>
       <Copyable value={xdr} />

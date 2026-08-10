@@ -50,6 +50,13 @@ export const SignMessageParams = object({
   address: optional(string()),
 });
 
+export const SignAuthEntryParams = object({
+  /** Base64-encoded SorobanAuthorizationEntry XDR. */
+  authEntry: string(),
+  networkPassphrase: optional(string()),
+  address: optional(string()),
+});
+
 export const SetNetworkParams = object({
   network: enums(NETWORK_NAMES),
 });

@@ -96,6 +96,70 @@ export const NetworkDialog: SnapComponent<NetworkDialogProps> = ({
   </Box>
 );
 
+export type SignAuthEntryDialogProps = {
+  origin: string;
+  network: NetworkName;
+  address: string;
+  /** Human-readable invocation tree, root first. */
+  invocations: string[];
+  nonce: string;
+  signatureExpirationLedger: number;
+};
+
+/**
+ * Soroban authorization-entry signing confirmation. The signature authorizes
+ * the displayed contract calls on behalf of the account, independent of the
+ * transaction envelope that will carry them.
+ *
+ * @param props - The dialog props.
+ * @param props.origin - The requesting dapp origin.
+ * @param props.network - The active network name.
+ * @param props.address - The authorizing account.
+ * @param props.invocations - Rendered invocation tree, root first.
+ * @param props.nonce - The entry's replay-protection nonce.
+ * @param props.signatureExpirationLedger - Ledger after which the signature
+ * expires.
+ * @returns The dialog content.
+ */
+export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
+  origin,
+  network,
+  address,
+  invocations,
+  nonce,
+  signatureExpirationLedger,
+}) => (
+  <Box>
+    <Heading>Authorize contract call</Heading>
+    <Text>
+      <Bold>{origin}</Bold> asks you to authorize the following Soroban contract
+      call(s) on behalf of your account (this signs the authorization only — a
+      transaction will carry it later).
+    </Text>
+    {network === 'PUBLIC' ? (
+      <Banner title="Mainnet" severity="warning">
+        <Text>This authorization is for the live Stellar network.</Text>
+      </Banner>
+    ) : (
+      <Banner title={network} severity="info">
+        <Text>{`This authorization is for the ${network} network.`}</Text>
+      </Banner>
+    )}
+    <Section>
+      <Text>Authorized calls</Text>
+      <Copyable value={invocations.join('\n')} />
+      <Row label="Expires at ledger">
+        <Text>{`${signatureExpirationLedger} (~5s per ledger)`}</Text>
+      </Row>
+      <Row label="Nonce">
+        <Text>{nonce}</Text>
+      </Row>
+      <Text>Authorizing account</Text>
+      <Copyable value={address} />
+    </Section>
+  </Box>
+);
+
 export type SignMessageDialogProps = {
   origin: string;
   address: string;

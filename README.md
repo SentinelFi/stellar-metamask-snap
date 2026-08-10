@@ -4,7 +4,7 @@ A MetaMask Snap bringing the **Stellar network (including Soroban smart contract
 
 > Independent software, not affiliated with or endorsed by the Stellar Development Foundation.
 
-**Status:** Phase 1 (core snap MVP) complete — SEP-43 wallet API with per-operation confirmation dialogs, origin grants, and network state; see [docs/PHASE-1.md](docs/PHASE-1.md). Phase 2 (Soroban depth) is next. Phase 0 feasibility results: [docs/PHASE-0.md](docs/PHASE-0.md).
+**Status:** Phase 2 (Soroban depth) core complete — Soroban transaction review with in-snap simulation, `signAuthEntry`, Stellar RPC client; see [docs/PHASE-2.md](docs/PHASE-2.md). Earlier phases: [docs/PHASE-1.md](docs/PHASE-1.md) (SEP-43 wallet API), [docs/PHASE-0.md](docs/PHASE-0.md) (feasibility).
 
 ## Development
 

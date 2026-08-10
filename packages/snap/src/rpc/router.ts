@@ -5,7 +5,7 @@ import { internalError } from './errors';
 import { getAddress, requestAccess } from '../handlers/access';
 import { getBalances, fund } from '../handlers/account';
 import { getNetwork, getNetworkDetails, setNetwork } from '../handlers/network';
-import { signMessage, signTransaction } from '../handlers/sign';
+import { signAuthEntry, signMessage, signTransaction } from '../handlers/sign';
 
 type Handler = (origin: string, params: unknown) => Promise<Json>;
 
@@ -20,6 +20,7 @@ const HANDLERS: Record<string, Handler> = {
   getNetworkDetails: async () => getNetworkDetails(),
   setNetwork: async (origin, params) => setNetwork(origin, params),
   signTransaction: async (origin, params) => signTransaction(origin, params),
+  signAuthEntry: async (origin, params) => signAuthEntry(origin, params),
   signMessage: async (origin, params) => signMessage(origin, params),
   fund: async (origin, params) => fund(origin, params),
   getBalances: async (origin, params) => getBalances(origin, params),
