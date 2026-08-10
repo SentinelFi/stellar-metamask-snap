@@ -92,6 +92,7 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 - [x] Multisig awareness (the Phase 2 deferral): insufficient-weight warning against the account's medium threshold.
 - [ ] `snap_getPreferences` locale → i18n scaffold — **deferred** (English-only acceptable for launch; extract a string catalog once copy stabilizes).
 - [ ] Optional later: SEP-7 URI handling, SEP-10 helper flow in connector, `snap_notify` tx-status notifications, muxed address (M...) display, guided restore-then-retry flow.
+- [ ] Emerging token standards (all drafts as of 2026-08; signing/authorization already works generically for every contract type): SEP-50 NFT-aware display (`owner_of`/enumeration; note snap dialogs render inline SVG only — no remote NFT images), SEP-56 vault share valuation (`convert_to_assets` alongside the share balance `addToken` can already track), SEP-57 T-REX (balances already trackable; compliance rejections surface via simulation).
 
 ## Upstream contribution (file early — external review latency)
 
