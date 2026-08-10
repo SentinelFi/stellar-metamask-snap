@@ -123,7 +123,7 @@ Cosmetic only — it does not affect derivation, security, or functionality — 
 ## Outstanding before Phase 1 sign-off
 
 - [ ] **Cross-wallet address confirmation.** Narrowly scoped now: the fixed-seed check above proves the SDK's crypto is identical under SES, and the automated tests prove SEP-5 vector conformance in the simulator. The single unverified link is whether **real MetaMask's `snap_getBip32Entropy` yields the same bytes as the simulator's** for a given mnemonic. Low risk (shared `key-tree` implementation), and closable either by restoring Flask with the published test mnemonic (expect `GDRXE2BQ…`) or importing the throwaway Flask phrase into Freighter and comparing.
-- [ ] File the upstream `derivation-paths.ts` PR for the "Stellar" label (above).
+- [x] ~~File the upstream `derivation-paths.ts` PR for the "Stellar" label~~ **Filed 2026-08-10: [MetaMask/snaps#4097](https://github.com/MetaMask/snaps/pull/4097)** (in review).
 - [x] ~~Add a snap icon (SVG)~~ **Done** — [packages/snap/images/icon.svg](../packages/snap/images/icon.svg): the Stellar slashed-circle mark recreated as original vector art in a distinct gold-on-navy colorway (the press kit ships no SVG of the network mark), wired into the manifest `iconPath` and npm `files`.
 - [ ] Companion `packages/site` is still the stock template — Phase 1/3 will rework it.
 

@@ -93,7 +93,7 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 
 ## Upstream contribution (file early — external review latency)
 
-- [ ] PR to [MetaMask/snaps](https://github.com/MetaMask/snaps) `packages/snaps-utils/src/derivation-paths.ts` adding `{ path: ['m', "44'", "148'"], curve: 'ed25519', name: 'Stellar' }` so the install prompt says "Manage **Stellar** accounts" instead of "Unknown network". Cosmetic but trust-relevant; see [PHASE-0.md](PHASE-0.md) for the root-cause analysis. Should land before allowlisting.
+- [x] **Filed:** [MetaMask/snaps#4097](https://github.com/MetaMask/snaps/pull/4097) — adds `{ path: ['m', "44'", "148'"], curve: 'ed25519', name: 'Stellar' }` to `packages/snaps-utils/src/derivation-paths.ts` (+ unit test) so the install prompt says "Manage **Stellar** accounts" instead of "Unknown network". Cosmetic but trust-relevant; see [PHASE-0.md](PHASE-0.md) for the root-cause analysis. **Track review; should land before allowlisting.**
 
 ## Phase 5 — Audit & distribution
 
