@@ -1,0 +1,82 @@
+import { describe, expect, it } from '@jest/globals';
+import { Asset, LiquidityPoolAsset, Memo } from '@stellar/stellar-sdk';
+
+import { formatAsset, formatMemo, stroopsToXlm, truncate } from './format';
+
+const ISSUER = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
+
+describe('truncate', () => {
+  it('leaves short strings unchanged', () => {
+    expect(truncate('GABC')).toBe('GABC');
+    expect(truncate('1234567890123')).toBe('1234567890123'); // exactly 6*2+1
+  });
+
+  it('truncates long strings with an ellipsis, keeping both ends', () => {
+    expect(truncate('GDRXE2BQUC3AZNPVFSCEZ')).toBe('GDRXE2…VFSCEZ');
+  });
+
+  it('honors a custom keep length', () => {
+    expect(truncate('ABCDEFGHIJKL', 3)).toBe('ABC…JKL');
+  });
+});
+
+describe('formatAsset', () => {
+  it('renders the native asset as XLM', () => {
+    expect(formatAsset(Asset.native())).toBe('XLM');
+  });
+
+  it('renders a credit asset as CODE (truncated issuer)', () => {
+    expect(formatAsset(new Asset('USDC', ISSUER))).toBe('USDC (GDRX…JUJ6)');
+  });
+
+  it('labels liquidity-pool assets', () => {
+    const pool = new LiquidityPoolAsset(
+      Asset.native(),
+      new Asset('USDC', ISSUER),
+      30,
+    );
+    expect(formatAsset(pool)).toBe('Liquidity pool shares');
+  });
+});
+
+describe('stroopsToXlm', () => {
+  it('converts whole XLM', () => {
+    expect(stroopsToXlm('10000000')).toBe('1');
+    expect(stroopsToXlm(0)).toBe('0');
+  });
+
+  it('converts fractional amounts and strips trailing zeros', () => {
+    expect(stroopsToXlm('15000000')).toBe('1.5');
+    expect(stroopsToXlm('12345670')).toBe('1.234567');
+    expect(stroopsToXlm('1')).toBe('0.0000001');
+  });
+
+  it('is BigInt-safe for large balances', () => {
+    // 1,000,000,000 XLM in stroops — beyond Number.MAX_SAFE_INTEGER.
+    expect(stroopsToXlm('10000000000000000')).toBe('1000000000');
+  });
+});
+
+describe('formatMemo', () => {
+  it('renders each memo type', () => {
+    expect(formatMemo(Memo.text('hello'))).toStrictEqual([
+      'Memo (text)',
+      'hello',
+    ]);
+    expect(formatMemo(Memo.id('42'))).toStrictEqual(['Memo (ID)', '42']);
+
+    const hash = Buffer.alloc(32, 1);
+    expect(formatMemo(Memo.hash(hash))).toStrictEqual([
+      'Memo (hash)',
+      hash.toString('hex'),
+    ]);
+    expect(formatMemo(Memo.return(hash))).toStrictEqual([
+      'Memo (return)',
+      hash.toString('hex'),
+    ]);
+  });
+
+  it('returns null for an empty memo', () => {
+    expect(formatMemo(Memo.none())).toBeNull();
+  });
+});
