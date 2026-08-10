@@ -50,6 +50,10 @@ node ./dist/index.js --path /abs/path/to/stelllar-metamask-snaps/packages/snap
 
 `--detectors` / `--ignoreDetectors` (select rules), `--htmlReport` (human-readable report to attach to the directory submission), `--logFile`, `--verbose`.
 
+## Where reports go
+
+Routine runs stay as **CI artifacts** (downloadable from the GitHub Actions run — see `.github/workflows/snapper.yml`). The report from the **frozen pre-publish / audited commit** is committed to [`audits/scans/`](../../audits/scans/) for the directory submission — kept separate from formal third-party audit reports (`audits/`), since a Snapper scan is tool output, not an audit.
+
 ## Scope note
 
 Scan **`packages/snap`** (the published snap). The connector and site are separate npm/dapp artifacts, not the allowlisted snap. Snapper's rule set list isn't published in the README; run with defaults first, then review the HTML report.
