@@ -29,6 +29,8 @@
   },
   "dependencies": {
     "@metamask/providers": "^22.1.0",
+    "@stellar/stellar-sdk": "^16.2.0",
+    "buffer": "^6.0.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-is": "^18.2.0",

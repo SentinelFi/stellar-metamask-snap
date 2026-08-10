@@ -4,12 +4,12 @@
 
 ## Summary
 
-| Spike | Question | Result |
-|---|---|---|
-| Scaffold | Does the official template work here? | ✅ Monorepo scaffolded, builds, tests pass |
-| A — SDK under SES | Does `@stellar/stellar-sdk` bundle & run in the snap sandbox? | ✅ Builds, passes `mm-snap eval`, executes at runtime; bundle 505 KB |
-| B — SEP-5 derivation | Can we reproduce standard Stellar addresses from the MetaMask SRP? | ✅ **Exact match with official SEP-0005 test vectors** |
-| C — CORS | Do Stellar endpoints accept snap fetches (`Origin: null`)? | ✅ All tested endpoints pass, including preflight |
+| Spike                | Question                                                           | Result                                                               |
+| -------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| Scaffold             | Does the official template work here?                              | ✅ Monorepo scaffolded, builds, tests pass                           |
+| A — SDK under SES    | Does `@stellar/stellar-sdk` bundle & run in the snap sandbox?      | ✅ Builds, passes `mm-snap eval`, executes at runtime; bundle 505 KB |
+| B — SEP-5 derivation | Can we reproduce standard Stellar addresses from the MetaMask SRP? | ✅ **Exact match with official SEP-0005 test vectors**               |
+| C — CORS             | Do Stellar endpoints accept snap fetches (`Origin: null`)?         | ✅ All tested endpoints pass, including preflight                    |
 
 ## Scaffold
 
@@ -39,16 +39,16 @@
 
 Snap `fetch` runs in a sandboxed iframe ⇒ requests carry `Origin: null`. Probed with both simple requests and `OPTIONS` preflight (`Access-Control-Request-Method: POST`, `Access-Control-Request-Headers: content-type`):
 
-| Endpoint | Simple ACAO | Preflight |
-|---|---|---|
-| horizon-testnet.stellar.org | `null` (echo) | 204, ACAO `null`, POST allowed |
-| horizon.stellar.org (SDF mainnet) | `null` (echo) | — |
-| soroban-testnet.stellar.org | `null` (echo) | 204, ACAO `*`, POST |
-| soroban-rpc.mainnet.stellar.gateway.fm | `*` | 200, ACAO `*`, POST |
-| rpc.ankr.com/stellar_soroban | `*` | 204, ACAO `*`, POST |
-| stellar.api.onfinality.io/public | `*` | 200, ACAO `*`, POST |
-| rpc.lightsail.network | `*` | 204, ACAO `*`, POST |
-| friendbot.stellar.org | `*` (on 400 without addr) | — |
+| Endpoint                               | Simple ACAO               | Preflight                      |
+| -------------------------------------- | ------------------------- | ------------------------------ |
+| horizon-testnet.stellar.org            | `null` (echo)             | 204, ACAO `null`, POST allowed |
+| horizon.stellar.org (SDF mainnet)      | `null` (echo)             | —                              |
+| soroban-testnet.stellar.org            | `null` (echo)             | 204, ACAO `*`, POST            |
+| soroban-rpc.mainnet.stellar.gateway.fm | `*`                       | 200, ACAO `*`, POST            |
+| rpc.ankr.com/stellar_soroban           | `*`                       | 204, ACAO `*`, POST            |
+| stellar.api.onfinality.io/public       | `*`                       | 200, ACAO `*`, POST            |
+| rpc.lightsail.network                  | `*`                       | 204, ACAO `*`, POST            |
+| friendbot.stellar.org                  | `*` (on 400 without addr) | —                              |
 
 **No proxy needed** — every candidate endpoint, testnet and mainnet, is usable directly from the snap. (Re-verify the chosen mainnet provider's policy before launch; provider CORS policies can change.)
 
@@ -72,7 +72,10 @@ The path, curve, and snap name render correctly. **Finding: MetaMask labels our 
 `stellar_getAddress` against the real extension returned a well-formed account:
 
 ```json
-{ "address": "GCI7TJ7M62U6T3CAINS3NVONXSPJEGQINP6FR25JHXCC4WCH2HHVHU57", "index": 0 }
+{
+  "address": "GCI7TJ7M62U6T3CAINS3NVONXSPJEGQINP6FR25JHXCC4WCH2HHVHU57",
+  "index": 0
+}
 ```
 
 Validated with `StrKey`: 56 characters, valid ed25519 `G` strkey (CRC16 checksum passes), decodes to exactly 32 key bytes, and re-encodes identically. So the full chain — real MetaMask vault → `snap_getBip32Entropy` → SLIP-10 child derivation → `Keypair` → strkey encoding — works outside the simulator. (This wallet was created with a fresh random phrase, so the value differs from the SEP-5 test vector by design.)
@@ -101,7 +104,7 @@ Cause is in `@metamask/snaps-utils` [`derivation-paths.ts`](../node_modules/@met
 2. `getSnapDerivationPathName()` falls back to the SLIP-44 registry only `if (curve === 'secp256k1')`. Our curve is ed25519, so the fallback never runs — even though the registry does know the coin type:
 
 ```js
-require('@metamask/slip44')['148']
+require('@metamask/slip44')['148'];
 // => { index: '148', hex: '0x80000094', symbol: 'XLM', name: 'Stellar Lumens' }
 ```
 

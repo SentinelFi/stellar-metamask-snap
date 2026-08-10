@@ -52,6 +52,16 @@ const config = createConfig([
   },
 
   {
+    // Snap source runs in the SES sandbox where the `buffer` npm polyfill is
+    // provided by the snaps-cli webpack config; importing it explicitly is
+    // the sanctioned alternative to the (restricted) Buffer global.
+    files: ['packages/snap/src/**'],
+    rules: {
+      'import-x/no-nodejs-modules': ['error', { allow: ['buffer'] }],
+    },
+  },
+
+  {
     files: ['**/*.test.ts', '**/*.test.tsx', '**/*.test.js'],
     extends: [jest, nodejs],
 

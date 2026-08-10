@@ -1,5 +1,16 @@
 import { expect } from '@jest/globals';
 import { installSnap } from '@metamask/snaps-jest';
+import type { Transaction } from '@stellar/stellar-sdk';
+import {
+  Account,
+  Asset,
+  hash,
+  Keypair,
+  Memo,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk';
 
 /**
  * Official SEP-0005 test vector 1 (no passphrase):
@@ -9,62 +20,446 @@ const SEP5_MNEMONIC =
   'illness spike retreat truth genius clock brain pass fit cave bargain toe';
 const SEP5_ADDRESS_0 =
   'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
-const SEP5_ADDRESS_1 =
-  'GBAW5XGWORWVFE2XTJYDTLDHXTY2Q2MO73HYCGB3XMFMQ562Q2W2GJQX';
 
-describe('onRpcRequest', () => {
-  describe('stellar_getAddress (Spike B: SEP-0005 derivation)', () => {
-    it('derives the official SEP-0005 test vector address at index 0', async () => {
-      const { request } = await installSnap({
-        options: { secretRecoveryPhrase: SEP5_MNEMONIC },
-      });
+const ORIGIN = 'https://dapp.example';
 
-      const response = await request({ method: 'stellar_getAddress' });
-      expect(response).toRespondWith({ address: SEP5_ADDRESS_0, index: 0 });
+/**
+ * Installs the snap with the SEP-5 test mnemonic.
+ *
+ * @returns The snaps-jest request helper.
+ */
+async function install() {
+  return installSnap({ options: { secretRecoveryPhrase: SEP5_MNEMONIC } });
+}
+
+/**
+ * Extracts the JSON-RPC error object from a snaps-jest response.
+ *
+ * @param response - The awaited request response.
+ * @returns The error object.
+ */
+function getError(response: unknown): {
+  code: number;
+  message: string;
+  data?: { code?: number };
+} {
+  return (response as { response: { error: never } }).response.error;
+}
+
+/**
+ * Extracts the JSON-RPC result from a snaps-jest response.
+ *
+ * @param response - The awaited request response.
+ * @returns The result value.
+ */
+function getResult<Type>(response: unknown): Type {
+  return (response as { response: { result: Type } }).response.result;
+}
+
+/**
+ * Builds a classic payment transaction from the SEP-5 account.
+ *
+ * @param options - Optional overrides.
+ * @param options.sequence - The account sequence before the transaction.
+ * @param options.memo - Optional memo text.
+ * @returns The base64 transaction envelope XDR.
+ */
+function buildPaymentXdr({
+  sequence = '1',
+  memo,
+}: {
+  sequence?: string;
+  memo?: string;
+} = {}): string {
+  const builder = new TransactionBuilder(
+    new Account(SEP5_ADDRESS_0, sequence),
+    { fee: '100', networkPassphrase: Networks.TESTNET },
+  )
+    .addOperation(
+      Operation.payment({
+        destination: SEP5_ADDRESS_0,
+        asset: Asset.native(),
+        amount: '1.5',
+      }),
+    )
+    .setTimeout(300);
+  if (memo) {
+    builder.addMemo(Memo.text(memo));
+  }
+  return builder.build().toXDR();
+}
+
+/**
+ * Runs requestAccess and approves the dialog.
+ *
+ * @param request - The snaps-jest request helper.
+ */
+async function connect(
+  request: Awaited<ReturnType<typeof install>>['request'],
+) {
+  const pending = request({ origin: ORIGIN, method: 'requestAccess' });
+  const ui = await pending.getInterface();
+  await (ui as { ok: () => Promise<void> }).ok();
+  await pending;
+}
+
+describe('requestAccess / getAddress', () => {
+  it('grants access after approval and derives the SEP-5 address', async () => {
+    const { request } = await install();
+
+    const pending = request({ origin: ORIGIN, method: 'requestAccess' });
+    const ui = await pending.getInterface();
+    expect(JSON.stringify(ui.content)).toContain('Connect to Stellar');
+    await (ui as { ok: () => Promise<void> }).ok();
+
+    expect(await pending).toRespondWith({ address: SEP5_ADDRESS_0 });
+
+    // Once granted, requestAccess is silent and getAddress returns the address.
+    expect(
+      await request({ origin: ORIGIN, method: 'requestAccess' }),
+    ).toRespondWith({ address: SEP5_ADDRESS_0 });
+    expect(
+      await request({ origin: ORIGIN, method: 'getAddress' }),
+    ).toRespondWith({ address: SEP5_ADDRESS_0 });
+  });
+
+  it('rejecting the connect dialog returns SEP-43 code -4', async () => {
+    const { request } = await install();
+
+    const pending = request({ origin: ORIGIN, method: 'requestAccess' });
+    const ui = await pending.getInterface();
+    await (ui as { cancel: () => Promise<void> }).cancel();
+
+    const error = getError(await pending);
+    expect(error.message).toBe('The user rejected this request.');
+    expect(error.data?.code).toBe(-4);
+  });
+
+  it('getAddress is silent and empty for unconnected origins', async () => {
+    const { request } = await install();
+    expect(
+      await request({ origin: ORIGIN, method: 'getAddress' }),
+    ).toRespondWith({ address: '' });
+  });
+});
+
+describe('getNetwork / getNetworkDetails / setNetwork', () => {
+  it('defaults to TESTNET', async () => {
+    const { request } = await install();
+    expect(
+      await request({ origin: ORIGIN, method: 'getNetwork' }),
+    ).toRespondWith({
+      network: 'TESTNET',
+      networkPassphrase: Networks.TESTNET,
     });
-
-    it('derives the official SEP-0005 test vector address at index 1', async () => {
-      const { request } = await installSnap({
-        options: { secretRecoveryPhrase: SEP5_MNEMONIC },
-      });
-
-      const response = await request({
-        method: 'stellar_getAddress',
-        params: { index: 1 },
-      });
-      expect(response).toRespondWith({ address: SEP5_ADDRESS_1, index: 1 });
+    expect(
+      await request({ origin: ORIGIN, method: 'getNetworkDetails' }),
+    ).toRespondWith({
+      network: 'TESTNET',
+      networkPassphrase: Networks.TESTNET,
+      networkUrl: 'https://horizon-testnet.stellar.org',
+      sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
     });
   });
 
-  describe('stellar_sdkSmoke (Spike A: stellar-sdk under SES)', () => {
-    it('builds, signs, verifies, and round-trips a transaction', async () => {
-      const { request } = await installSnap();
+  it('switches networks after confirmation', async () => {
+    const { request } = await install();
 
-      const response = await request({ method: 'stellar_sdkSmoke' });
+    const pending = request({
+      origin: ORIGIN,
+      method: 'setNetwork',
+      params: { network: 'FUTURENET' },
+    });
+    const ui = await pending.getInterface();
+    expect(JSON.stringify(ui.content)).toContain('FUTURENET');
+    await (ui as { ok: () => Promise<void> }).ok();
 
-      expect(response).toRespondWith(
-        expect.objectContaining({
-          strKeyRoundTrip: true,
-          signatureValid: true,
-          xdrRoundTrip: true,
-          envelopeType: 'envelopeTypeTx',
-          memo: 'phase-0 spike',
-          address: expect.stringMatching(/^G[A-Z2-7]{55}$/u),
-          txHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    const result = getResult<{ network: string }>(await pending);
+    expect(result.network).toBe('FUTURENET');
+
+    expect(
+      await request({ origin: ORIGIN, method: 'getNetwork' }),
+    ).toRespondWith({
+      network: 'FUTURENET',
+      networkPassphrase: Networks.FUTURENET,
+    });
+  });
+
+  it('rejects unknown networks with SEP-43 code -3', async () => {
+    const { request } = await install();
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'setNetwork',
+        params: { network: 'DOGENET' },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+  });
+});
+
+describe('signTransaction', () => {
+  it('signs a payment after approval; signature verifies against SEP-5 key', async () => {
+    const { request } = await install();
+    const xdr = buildPaymentXdr({ memo: 'phase-1' });
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signTransaction',
+      params: { xdr, networkPassphrase: Networks.TESTNET },
+    });
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    expect(content).toContain('Sign transaction');
+    expect(content).toContain('Payment');
+    expect(content).toContain('1.5');
+    expect(content).toContain('phase-1');
+    await (ui as { ok: () => Promise<void> }).ok();
+
+    const result = getResult<{ signedTxXdr: string; signerAddress: string }>(
+      await pending,
+    );
+    expect(result.signerAddress).toBe(SEP5_ADDRESS_0);
+
+    const signed = TransactionBuilder.fromXDR(
+      result.signedTxXdr,
+      Networks.TESTNET,
+    ) as Transaction;
+    const [signature] = signed.signatures;
+    expect(signature).toBeDefined();
+    expect(
+      Keypair.fromPublicKey(SEP5_ADDRESS_0).verify(
+        signed.hash(),
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        signature!.signature(),
+      ),
+    ).toBe(true);
+
+    // An approved signature also grants the origin connection.
+    expect(
+      await request({ origin: ORIGIN, method: 'getAddress' }),
+    ).toRespondWith({ address: SEP5_ADDRESS_0 });
+  });
+
+  it('rejection returns SEP-43 code -4', async () => {
+    const { request } = await install();
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signTransaction',
+      params: { xdr: buildPaymentXdr() },
+    });
+    const ui = await pending.getInterface();
+    await (ui as { cancel: () => Promise<void> }).cancel();
+
+    const error = getError(await pending);
+    expect(error.message).toBe('The user rejected this request.');
+    expect(error.data?.code).toBe(-4);
+  });
+
+  it('rejects malformed XDR with SEP-43 code -3', async () => {
+    const { request } = await install();
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: { xdr: 'not-xdr' },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('parse');
+  });
+
+  it('rejects a network passphrase mismatch with SEP-43 code -3', async () => {
+    const { request } = await install();
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: { xdr: buildPaymentXdr(), networkPassphrase: Networks.PUBLIC },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('Network mismatch');
+  });
+
+  it('rejects signing for an unknown address with SEP-43 code -3', async () => {
+    const { request } = await install();
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: {
+          xdr: buildPaymentXdr(),
+          address: 'GBAW5XGWORWVFE2XTJYDTLDHXTY2Q2MO73HYCGB3XMFMQ562Q2W2GJQX',
+        },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('Unknown address');
+  });
+
+  it('frames sequence-0 transactions as SEP-10 authentication', async () => {
+    const { request } = await install();
+    const xdr = new TransactionBuilder(new Account(SEP5_ADDRESS_0, '-1'), {
+      fee: '100',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(
+        Operation.manageData({ name: 'dapp.example auth', value: 'nonce' }),
+      )
+      .setTimeout(300)
+      .build()
+      .toXDR();
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signTransaction',
+      params: { xdr },
+    });
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    expect(content).toContain('Authentication request');
+    expect(content).toContain('does not move funds');
+    await (ui as { ok: () => Promise<void> }).ok();
+    await pending;
+  });
+
+  it('shows an explicit warning for undecoded operation types', async () => {
+    const { request } = await install();
+    const xdr = new TransactionBuilder(new Account(SEP5_ADDRESS_0, '1'), {
+      fee: '100',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(Operation.bumpSequence({ bumpTo: '999' }))
+      .setTimeout(300)
+      .build()
+      .toXDR();
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signTransaction',
+      params: { xdr },
+    });
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    expect(content).toContain('bumpSequence');
+    expect(content).toContain('not decoded');
+    await (ui as { cancel: () => Promise<void> }).cancel();
+    await pending;
+  });
+
+  it('flags accountMerge as dangerous', async () => {
+    const { request } = await install();
+    const xdr = new TransactionBuilder(new Account(SEP5_ADDRESS_0, '1'), {
+      fee: '100',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(
+        Operation.accountMerge({
+          destination:
+            'GBAW5XGWORWVFE2XTJYDTLDHXTY2Q2MO73HYCGB3XMFMQ562Q2W2GJQX',
         }),
-      );
+      )
+      .setTimeout(300)
+      .build()
+      .toXDR();
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signTransaction',
+      params: { xdr },
     });
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    expect(content).toContain('Account merge');
+    expect(content).toContain('cannot be undone');
+    await (ui as { cancel: () => Promise<void> }).cancel();
+    await pending;
+  });
+});
+
+describe('signMessage', () => {
+  it('produces a valid SEP-53 signature', async () => {
+    const { request } = await install();
+    const message = 'Hello, Stellar Snap!';
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signMessage',
+      params: { message },
+    });
+    const ui = await pending.getInterface();
+    expect(JSON.stringify(ui.content)).toContain('Sign message');
+    await (ui as { ok: () => Promise<void> }).ok();
+
+    const result = getResult<{ signedMessage: string; signerAddress: string }>(
+      await pending,
+    );
+    expect(result.signerAddress).toBe(SEP5_ADDRESS_0);
+
+    const payload = hash(
+      Buffer.concat([
+        Buffer.from('Stellar Signed Message:\n', 'utf8'),
+        Buffer.from(message, 'utf8'),
+      ]),
+    );
+    expect(
+      Keypair.fromPublicKey(SEP5_ADDRESS_0).verify(
+        payload,
+        Buffer.from(result.signedMessage, 'base64'),
+      ),
+    ).toBe(true);
   });
 
-  it('throws an error if the requested method does not exist', async () => {
-    const { request } = await installSnap();
-
-    const response = await request({ method: 'foo' });
-
-    expect(response).toRespondWithError({
-      code: -32603,
-      message: 'Method not found.',
-      stack: expect.any(String),
+  it('rejection returns SEP-43 code -4', async () => {
+    const { request } = await install();
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signMessage',
+      params: { message: 'nope' },
     });
+    const ui = await pending.getInterface();
+    await (ui as { cancel: () => Promise<void> }).cancel();
+
+    const error = getError(await pending);
+    expect(error.data?.code).toBe(-4);
+  });
+});
+
+describe('fund / getBalances', () => {
+  it('require a connected origin (SEP-43 code -3)', async () => {
+    const { request } = await install();
+    for (const method of ['fund', 'getBalances']) {
+      const error = getError(await request({ origin: ORIGIN, method }));
+      expect(error.data?.code).toBe(-3);
+      expect(error.message).toContain('not connected');
+    }
+  });
+
+  it('fund is refused on PUBLIC', async () => {
+    const { request } = await install();
+    await connect(request);
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'setNetwork',
+      params: { network: 'PUBLIC' },
+    });
+    const ui = await pending.getInterface();
+    expect(JSON.stringify(ui.content)).toContain('Mainnet');
+    await (ui as { ok: () => Promise<void> }).ok();
+    await pending;
+
+    const error = getError(await request({ origin: ORIGIN, method: 'fund' }));
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('Friendbot is not available');
+  });
+});
+
+describe('unknown methods', () => {
+  it('are rejected with method-not-found', async () => {
+    const { request } = await install();
+    const error = getError(await request({ origin: ORIGIN, method: 'foo' }));
+    expect(error.message).toContain('Method not found');
   });
 });

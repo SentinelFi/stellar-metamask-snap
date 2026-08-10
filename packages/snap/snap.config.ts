@@ -4,12 +4,13 @@ import { dirname, resolve } from 'path';
 
 // Use the exact webpack instance bundled with snaps-cli — a second webpack
 // copy in the tree produces plugins that cannot tap the CLI's compiler.
-// eslint-disable-next-line @typescript-eslint/no-require-imports, import-x/no-dynamic-require, @typescript-eslint/no-unsafe-assignment
+/* eslint-disable @typescript-eslint/no-require-imports, import-x/no-dynamic-require, n/no-extraneous-require */
 const webpack = require(
   require.resolve('webpack', {
     paths: [dirname(require.resolve('@metamask/snaps-cli/package.json'))],
   }),
 );
+/* eslint-enable @typescript-eslint/no-require-imports, import-x/no-dynamic-require, n/no-extraneous-require */
 
 // Insecure randomness must never be used in this snap. The only occurrences
 // in the dependency graph are inside bignumber.js's `BigNumber.random()`

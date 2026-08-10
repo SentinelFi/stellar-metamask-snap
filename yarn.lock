@@ -3491,6 +3491,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@metamask/superstruct@npm:^3.4.1":
+  version: 3.4.1
+  resolution: "@metamask/superstruct@npm:3.4.1"
+  checksum: 8b7060b2289da0de84d69082448784d91bd2b80463c2b6568aff84b5995b6d8226a83efc1761abbf5c4bc4dffc7c3ab39d68e5aabcb088cdd5f20cb6aedb2c88
+  languageName: node
+  linkType: hard
+
 "@metamask/utils@npm:^11.0.1, @metamask/utils@npm:^11.1.0, @metamask/utils@npm:^11.4.0, @metamask/utils@npm:^11.4.2, @metamask/utils@npm:^11.8.1, @metamask/utils@npm:^11.9.0":
   version: 11.9.0
   resolution: "@metamask/utils@npm:11.9.0"
@@ -17734,6 +17741,7 @@ __metadata:
   resolution: "site@workspace:packages/site"
   dependencies:
     "@metamask/providers": ^22.1.0
+    "@stellar/stellar-sdk": ^16.2.0
     "@svgr/webpack": ^6.4.0
     "@testing-library/dom": ^8.17.1
     "@testing-library/jest-dom": ^5.16.4
@@ -17743,6 +17751,7 @@ __metadata:
     "@types/react": ^18.0.15
     "@types/react-dom": ^18.0.6
     "@types/styled-components": ^5.1.25
+    buffer: ^6.0.3
     eslint: ^9.11.0
     gatsby: ^5.14.5
     gatsby-plugin-manifest: ^5.14.0
@@ -18125,6 +18134,7 @@ __metadata:
     "@metamask/snaps-cli": ^8.3.0
     "@metamask/snaps-jest": ^9.8.0
     "@metamask/snaps-sdk": ~10.3.0
+    "@metamask/superstruct": ^3.4.1
     "@stellar/stellar-sdk": ^16.2.0
     "@types/react": 18.2.4
     "@types/react-dom": 18.2.4

@@ -9,12 +9,17 @@ import {
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk';
+import { Buffer } from 'buffer';
 
 /**
- * Phase 0 / Spike A: exercise the signing-critical parts of
+ * Phase 0 / Spike A reference: exercises the signing-critical parts of
  * `@stellar/stellar-sdk` inside the SES sandbox — keypair construction,
  * strkey round-trips, transaction building, ed25519 signing, signature
  * verification, and XDR (de)serialization.
+ *
+ * Kept for reference and as a diagnostic; NOT wired into the RPC surface
+ * since Phase 1 (nothing imports it, so it is excluded from the bundle).
+ * Results from the real extension are recorded in docs/PHASE-0.md.
  *
  * @returns A summary of each check so snaps-jest can assert on it.
  */

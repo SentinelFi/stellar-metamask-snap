@@ -1,4 +1,11 @@
-import { useState } from 'react';
+import {
+  Account,
+  Asset,
+  Memo,
+  Operation,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk/base';
+import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 
 import {
@@ -91,6 +98,11 @@ const Result = styled.pre`
   word-break: break-all;
 `;
 
+const SuccessNotice = styled(Notice)`
+  background-color: ${({ theme }) => theme.colors.success?.muted};
+  border-color: ${({ theme }) => theme.colors.success?.default};
+`;
+
 const ErrorMessage = styled.div`
   background-color: ${({ theme }) => theme.colors.error?.muted};
   border: 1px solid ${({ theme }) => theme.colors.error?.default};
@@ -114,39 +126,134 @@ const Index = () => {
   const { isFlask, snapsDetected, installedSnap } = useMetaMask();
   const requestSnap = useRequestSnap();
   const invokeSnap = useInvokeSnap();
+  const [address, setAddress] = useState('');
   const [result, setResult] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const isMetaMaskReady = isLocalSnap(defaultSnapOrigin)
     ? isFlask
     : snapsDetected;
 
-  const handleGetAddressClick = async () => {
-    setResult(null);
-    const response = await invokeSnap({
-      method: 'stellar_getAddress',
-      params: { index: 0 },
-    });
-    setResult(JSON.stringify(response, null, 2));
+  // If this origin already holds a grant, the silent getAddress recovers the
+  // address after a page reload (no dialog for ungranted origins — it just
+  // returns an empty string).
+  useEffect(() => {
+    if (!installedSnap) {
+      return;
+    }
+    invokeSnap({ method: 'getAddress' })
+      .then((response) => {
+        const value = (response as { address?: string } | null)?.address;
+        if (value) {
+          setAddress(value);
+        }
+        return null;
+      })
+      .catch(() => null);
+  }, [installedSnap]);
+
+  /**
+   * Serializes snap requests: MetaMask shows one dialog at a time, so the
+   * test bench disables actions while a request is in flight rather than
+   * stacking a second call (which the snap would reject as an internal
+   * error).
+   *
+   * @param work - The async request(s) to run.
+   * @returns The work's result.
+   */
+  const run = async <Type,>(
+    work: () => Promise<Type>,
+  ): Promise<Type | null> => {
+    if (busy) {
+      return null;
+    }
+    setBusy(true);
+    try {
+      return await work();
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleSdkSmokeClick = async () => {
-    setResult(null);
-    const response = await invokeSnap({ method: 'stellar_sdkSmoke' });
-    setResult(JSON.stringify(response, null, 2));
+  /**
+   * Invokes a snap method and renders the JSON result.
+   *
+   * @param method - The RPC method name.
+   * @param params - Optional params.
+   * @returns The parsed result, or null on error/rejection.
+   */
+  const call = async (method: string, params?: Record<string, unknown>) =>
+    run(async () => {
+      setResult(null);
+      const response = await invokeSnap(
+        params ? { method, params } : { method },
+      );
+      if (response !== null) {
+        setResult(JSON.stringify(response, null, 2));
+      }
+      return response as Record<string, unknown> | null;
+    });
+
+  const handleRequestAccess = async () => {
+    const response = await call('requestAccess');
+    if (response && typeof response.address === 'string') {
+      setAddress(response.address);
+    }
   };
+
+  const handleSignPayment = async () =>
+    run(async () => {
+      setResult(null);
+      const details = (await invokeSnap({
+        method: 'getNetworkDetails',
+      })) as { networkPassphrase: string } | null;
+      const balances = (await invokeSnap({ method: 'getBalances' })) as {
+        funded: boolean;
+        sequence: string | null;
+      } | null;
+      if (!details || !balances) {
+        return null;
+      }
+
+      // An unfunded account cannot submit anyway; any sequence demonstrates
+      // the signing flow.
+      const sequence =
+        balances.funded && balances.sequence ? balances.sequence : '1';
+      const transaction = new TransactionBuilder(
+        new Account(address, sequence),
+        {
+          fee: '100',
+          networkPassphrase: details.networkPassphrase,
+        },
+      )
+        .addOperation(
+          Operation.payment({
+            destination: address,
+            asset: Asset.native(),
+            amount: '1.5',
+          }),
+        )
+        .addMemo(Memo.text('snap phase-1 demo'))
+        .setTimeout(300)
+        .build();
+
+      const response = await invokeSnap({
+        method: 'signTransaction',
+        params: { xdr: transaction.toXDR() },
+      });
+      if (response !== null) {
+        setResult(JSON.stringify(response, null, 2));
+      }
+      return null;
+    });
 
   return (
     <Container>
       <Heading>
         <Span>Stellar Soroban</Span> Snap
       </Heading>
-      <Subtitle>Phase 0 — feasibility verification</Subtitle>
+      <Subtitle>Phase 1 — SEP-43 wallet API test bench</Subtitle>
       <CardContainer>
-        {error && (
-          <ErrorMessage>
-            <b>An error happened:</b> {error.message}
-          </ErrorMessage>
-        )}
         {!isMetaMaskReady && (
           <Card
             content={{
@@ -162,8 +269,7 @@ const Index = () => {
           <Card
             content={{
               title: 'Connect',
-              description:
-                'Get started by connecting to and installing the example snap.',
+              description: 'Install the Stellar Soroban snap into MetaMask.',
               button: (
                 <ConnectButton
                   onClick={requestSnap}
@@ -192,48 +298,160 @@ const Index = () => {
         )}
         <Card
           content={{
-            title: 'Get Stellar address',
+            title: 'Request access',
             description:
-              "Derive the SEP-0005 account m/44'/148'/0' from your MetaMask recovery phrase.",
+              'Connect this origin to the wallet (SEP-43 requestAccess). First call shows a consent dialog.',
             button: (
               <ActionButton
-                onClick={handleGetAddressClick}
-                disabled={!installedSnap}
+                onClick={handleRequestAccess}
+                disabled={!installedSnap || busy}
+              >
+                Request access
+              </ActionButton>
+            ),
+          }}
+          disabled={!installedSnap || busy}
+        />
+        <Card
+          content={{
+            title: 'Get address',
+            description:
+              'Silent read (Freighter semantics): empty string until access is granted.',
+            button: (
+              <ActionButton
+                onClick={async () => call('getAddress')}
+                disabled={!installedSnap || busy}
               >
                 Get address
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap}
+          disabled={!installedSnap || busy}
         />
         <Card
           content={{
-            title: 'Run SDK smoke test',
+            title: 'Network',
+            description: 'Read network details or switch (dialog-confirmed).',
+            button: (
+              <>
+                <ActionButton
+                  onClick={async () => call('getNetworkDetails')}
+                  disabled={!installedSnap || busy}
+                >
+                  Details
+                </ActionButton>
+                <ActionButton
+                  onClick={async () =>
+                    call('setNetwork', { network: 'TESTNET' })
+                  }
+                  disabled={!installedSnap || busy}
+                >
+                  Testnet
+                </ActionButton>
+                <ActionButton
+                  onClick={async () =>
+                    call('setNetwork', { network: 'FUTURENET' })
+                  }
+                  disabled={!installedSnap || busy}
+                >
+                  Futurenet
+                </ActionButton>
+                <ActionButton
+                  onClick={async () =>
+                    call('setNetwork', { network: 'PUBLIC' })
+                  }
+                  disabled={!installedSnap || busy}
+                >
+                  Public (mainnet)
+                </ActionButton>
+              </>
+            ),
+          }}
+          disabled={!installedSnap || busy}
+        />
+        <Card
+          content={{
+            title: 'Fund (friendbot)',
             description:
-              'Build, sign, and XDR round-trip a transaction inside the snap sandbox.',
+              'Fund the wallet account on the active test network. Requires access.',
             button: (
               <ActionButton
-                onClick={handleSdkSmokeClick}
-                disabled={!installedSnap}
+                onClick={async () => call('fund')}
+                disabled={!installedSnap || busy}
               >
-                Run smoke test
+                Fund
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap}
+          disabled={!installedSnap || busy}
         />
+        <Card
+          content={{
+            title: 'Get balances',
+            description:
+              'Horizon balances and sequence for the wallet account. Requires access.',
+            button: (
+              <ActionButton
+                onClick={async () => call('getBalances')}
+                disabled={!installedSnap || busy}
+              >
+                Balances
+              </ActionButton>
+            ),
+          }}
+          disabled={!installedSnap || busy}
+        />
+        <Card
+          content={{
+            title: 'Sign payment',
+            description:
+              'Builds a 1.5 XLM self-payment and requests a signature — review the decoded dialog in MetaMask.',
+            button: (
+              <ActionButton
+                onClick={handleSignPayment}
+                disabled={!installedSnap || !address || busy}
+              >
+                Sign payment
+              </ActionButton>
+            ),
+          }}
+          disabled={!installedSnap || !address || busy}
+        />
+        <Card
+          content={{
+            title: 'Sign message',
+            description: 'SEP-53 message signature over a demo string.',
+            button: (
+              <ActionButton
+                onClick={async () =>
+                  call('signMessage', {
+                    message: 'Hello from the Stellar Soroban Snap!',
+                  })
+                }
+                disabled={!installedSnap || busy}
+              >
+                Sign message
+              </ActionButton>
+            ),
+          }}
+          disabled={!installedSnap || busy}
+        />
+        {error && (
+          <ErrorMessage>
+            <b>An error happened:</b> {error.message}
+          </ErrorMessage>
+        )}
         {result && (
-          <Notice>
+          <SuccessNotice>
             <Result>{result}</Result>
-          </Notice>
+          </SuccessNotice>
         )}
         <Notice>
           <p>
-            Expected address for the published SEP-0005 test mnemonic
-            (&ldquo;illness spike retreat&hellip;&rdquo;):{' '}
-            <b>GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6</b>. Any
-            other recovery phrase yields its own address &mdash; compare it with
-            Freighter using the same phrase.
+            Sign payment requires access first (it needs your address). Expected
+            address for the published SEP-0005 test mnemonic (&ldquo;illness
+            spike retreat&hellip;&rdquo;):{' '}
+            <b>GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6</b>.
           </p>
         </Notice>
       </CardContainer>

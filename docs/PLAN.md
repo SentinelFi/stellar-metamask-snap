@@ -9,6 +9,16 @@
 2. **`packages/connector`** — TypeScript dapp library: Freighter-compatible client + **Stellar Wallets Kit module**.
 3. **`packages/site`** — companion dapp: install/connect, balances, send, friendbot, network switcher; doubles as the manual test bench.
 
+## Process rule: tag every completed phase
+
+When a phase is complete — and **before** starting the next one — create an annotated git tag on the phase's final commit and push it (`git push --tags`):
+
+```bash
+git tag -a phase-N <commit> -m "Phase N complete: <one-line summary>"
+```
+
+Each tag preserves the exact snap + companion-dapp pair for that phase, so anyone can `git checkout phase-N && yarn install && yarn start` to run it as it was. This is the historical record; old phase methods/UI are NOT kept alive on `main` (dead RPC surface in a key-handling snap is an audit liability). Existing tags: `phase-0` (0cc70cf).
+
 ## Phase 0 — Feasibility spikes — ✅ DONE 2026-08-08 (results: [PHASE-0.md](PHASE-0.md))
 
 - [x] Scaffold with `@metamask/create-snap`; template builds & tests green (monorepo merged into repo root).
@@ -18,9 +28,12 @@
 
 Exit criteria: simulator-signed payment + vector-matched addresses ✅; **manual Flask check still outstanding** (needs a browser with Flask — see PHASE-0.md).
 
-## Phase 1 — Core snap MVP (testnet, Flask)
+## Phase 1 — Core snap MVP (testnet, Flask) — ✅ DONE 2026-08-10 (notes: [PHASE-1.md](PHASE-1.md))
+
+All items below implemented as specified (19 tests green, lint clean, SES eval passing). Deviations: strict network-passphrase mismatch error instead of Freighter's warn-and-sign; approved signatures auto-grant the origin; `submit: true` is best-effort pending the Phase 2 RPC client. Fee-bump display, planned for Phase 2, shipped early.
 
 Manifest:
+
 ```json
 "initialPermissions": {
   "snap_dialog": {},
@@ -32,6 +45,7 @@ Manifest:
 ```
 
 Modules:
+
 - `keys/` — derivation (account index x'), strkey helpers; keys re-derived per request, zeroized after use where possible.
 - `rpc/` — router with per-method Superstruct/zod validation; sanitized errors (NEAR pattern: internal details never leak); origin metadata on every handler.
 - `state/` — versioned state schema `{ version, activeNetwork, networks[], origins: { [origin]: { connectedAt, grants } } }` via `snap_manageState`.
@@ -61,7 +75,7 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 - [ ] `signTransaction` for Soroban txs: enforce single-op/MEMO_NONE, **re-simulate in-snap before dialog** → show resource fee vs inclusion fee, decoded invocation (contract C-address, function, `scValToNative` args), events summary, `restorePreamble` handling (offer restore-then-retry flow).
 - [ ] `signAuthEntry`: decode entry, render invocation tree + nonce + `signatureExpirationLedger` (with ledger→time estimate), sign HashIdPreimage. Support the `authorizeEntry` callback shape.
 - [ ] Token balances via Stellar Asset Contract / `getLedgerEntries` for SAC + custom tokens; `addToken({ contractId })` Freighter-parity method.
-- [ ] Fee-bump envelope support (display inner tx + who pays).
+- [x] Fee-bump envelope support (display inner tx + who pays) — shipped early in Phase 1.
 - [ ] Multisig awareness: if account thresholds not met by our key, return signed XDR with an "insufficient weight — pass to co-signers" notice instead of failing.
 
 ## Phase 3 — Connector package + Wallets Kit module

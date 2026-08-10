@@ -15,6 +15,7 @@
 ## 2. Project anatomy
 
 ### snap.manifest.json (template example)
+
 ```json
 {
   "version": "0.1.0",
@@ -24,20 +25,29 @@
   "source": {
     "shasum": "<computed by mm-snap build>",
     "location": {
-      "npm": { "filePath": "dist/bundle.js", "packageName": "snap", "registry": "https://registry.npmjs.org/" }
+      "npm": {
+        "filePath": "dist/bundle.js",
+        "packageName": "snap",
+        "registry": "https://registry.npmjs.org/"
+      }
     }
   },
-  "initialPermissions": { "snap_dialog": {}, "endowment:rpc": { "dapps": true, "snaps": false } },
+  "initialPermissions": {
+    "snap_dialog": {},
+    "endowment:rpc": { "dapps": true, "snaps": false }
+  },
   "platformVersion": "10.3.0",
   "manifestVersion": "0.1"
 }
 ```
+
 - `version` must match `package.json` (update package.json first; build syncs manifest).
 - `source.shasum` = bundle integrity hash, recomputed by `mm-snap build` / `mm-snap manifest --fix`; verified at install.
 - `initialConnections` — dapp origins auto-connected without a confirmation prompt: `"initialConnections": { "https://mydapp.example": {} }`.
 - `package.json`: `name` must match `source.location.npm.packageName`, `repository.url` must be the real repo.
 
 ### Tooling
+
 - Scaffold: `yarn create @metamask/snap <name>` → TypeScript+React monorepo: `packages/snap` + `packages/site` (companion dapp). Prereqs: **MetaMask Flask**, Node ≥ 20.11, Yarn.
 - CLI `@metamask/snaps-cli` (`mm-snap`): `build` (webpack, `--analyze`), `watch`, `serve` (default port 8081; template wires 8080), `eval` (run bundle in SES to catch incompatibilities), `manifest --fix`, `sandbox` (interactive test UI, ≥7.1.0).
 - `snap.config.ts`: `{ input, output: { path }, server: { port }, sourceMap, polyfills, environment, customizeWebpackConfig, ... }`.
@@ -46,26 +56,29 @@
 ## 3. Permissions reference
 
 ### Endowments
-| Permission | Grants | Manifest shape |
-|---|---|---|
-| `endowment:rpc` | `onRpcRequest` | `{"dapps": true, "snaps": false}` or `{"allowedOrigins": [...]}` |
-| `endowment:keyring` | Keyring API / `onKeyringRequest` | `{"allowedOrigins": ["https://dapp"]}` |
-| `endowment:transaction-insight` | `onTransaction` (EVM txs) | `{"allowTransactionOrigin": true}` |
-| `endowment:signature-insight` | `onSignature` (EVM sigs) | `{"allowSignatureOrigin": true}` |
-| `endowment:cronjob` | `onCronjob` | `{"jobs": [{"expression": "* * * * *", "request": {"method": "..."}}]}` |
-| `endowment:page-home` | `onHomePage` | `{}` |
-| `endowment:lifecycle-hooks` | `onInstall` / `onUpdate` | `{}` |
-| `endowment:network-access` | global `fetch` | `{}` |
-| `endowment:ethereum-provider` | `ethereum` global (read-only) | `{}` |
-| `endowment:name-lookup` | `onNameLookup` | `{"chains": ["eip155:1"], "matchers": {...}}` |
-| `endowment:webassembly` | `WebAssembly` | `{}` |
+
+| Permission                      | Grants                           | Manifest shape                                                          |
+| ------------------------------- | -------------------------------- | ----------------------------------------------------------------------- |
+| `endowment:rpc`                 | `onRpcRequest`                   | `{"dapps": true, "snaps": false}` or `{"allowedOrigins": [...]}`        |
+| `endowment:keyring`             | Keyring API / `onKeyringRequest` | `{"allowedOrigins": ["https://dapp"]}`                                  |
+| `endowment:transaction-insight` | `onTransaction` (EVM txs)        | `{"allowTransactionOrigin": true}`                                      |
+| `endowment:signature-insight`   | `onSignature` (EVM sigs)         | `{"allowSignatureOrigin": true}`                                        |
+| `endowment:cronjob`             | `onCronjob`                      | `{"jobs": [{"expression": "* * * * *", "request": {"method": "..."}}]}` |
+| `endowment:page-home`           | `onHomePage`                     | `{}`                                                                    |
+| `endowment:lifecycle-hooks`     | `onInstall` / `onUpdate`         | `{}`                                                                    |
+| `endowment:network-access`      | global `fetch`                   | `{}`                                                                    |
+| `endowment:ethereum-provider`   | `ethereum` global (read-only)    | `{}`                                                                    |
+| `endowment:name-lookup`         | `onNameLookup`                   | `{"chains": ["eip155:1"], "matchers": {...}}`                           |
+| `endowment:webassembly`         | `WebAssembly`                    | `{}`                                                                    |
 
 `maxRequestTime` caveat applies to: cronjob, keyring, lifecycle-hooks, name-lookup, page-home, rpc, transaction-insight.
 
 > `endowment:page-settings` / `onSettingsPage`: exists in MetaMask source (preinstalled snaps) but **not in public docs** as of Aug 2026 — treat as unavailable to third parties.
 
-### Restricted methods (snap_*)
+### Restricted methods (snap\_\*)
+
 `snap_dialog`, `snap_manageState`, `snap_notify`, `snap_getPreferences` (supersedes `snap_getLocale`), `snap_getFile`, `snap_manageAccounts`, entropy methods:
+
 ```json
 "snap_getBip32Entropy":   [{ "path": ["m", "44'", "148'"], "curve": "ed25519" }],
 "snap_getBip32PublicKey": [{ "path": ["m", "44'", "148'", "0'"], "curve": "ed25519" }],
@@ -77,17 +90,17 @@
 
 All named exports; types from `@metamask/snaps-sdk`.
 
-| Handler | Permission | Params → Returns |
-|---|---|---|
-| `onRpcRequest` | `endowment:rpc` | `{ origin, request }` → any JSON |
-| `onTransaction` | transaction-insight | `{ transaction, chainId, transactionOrigin? }` → `{ content }` or `{ id }`, optional `severity: 'critical'` |
-| `onSignature` | signature-insight | `{ signature, signatureOrigin? }` → `{ content, severity? }` |
-| `onCronjob` | cronjob | `{ request }` → Promise |
-| `onHomePage` | page-home | none → `{ content }` or `{ id }` |
-| `onInstall` / `onUpdate` | lifecycle-hooks | none → Promise (welcome dialog / migrations) |
-| `onUserInput` | (with interactive UI) | `{ id, event: { type, name?, value? }, context }` |
-| `onKeyringRequest` | keyring | `{ origin, request }` → route to `handleKeyringRequest` |
-| `onNameLookup` | name-lookup | `{ chainId, address?\|domain? }` → resolutions or null |
+| Handler                  | Permission            | Params → Returns                                                                                            |
+| ------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `onRpcRequest`           | `endowment:rpc`       | `{ origin, request }` → any JSON                                                                            |
+| `onTransaction`          | transaction-insight   | `{ transaction, chainId, transactionOrigin? }` → `{ content }` or `{ id }`, optional `severity: 'critical'` |
+| `onSignature`            | signature-insight     | `{ signature, signatureOrigin? }` → `{ content, severity? }`                                                |
+| `onCronjob`              | cronjob               | `{ request }` → Promise                                                                                     |
+| `onHomePage`             | page-home             | none → `{ content }` or `{ id }`                                                                            |
+| `onInstall` / `onUpdate` | lifecycle-hooks       | none → Promise (welcome dialog / migrations)                                                                |
+| `onUserInput`            | (with interactive UI) | `{ id, event: { type, name?, value? }, context }`                                                           |
+| `onKeyringRequest`       | keyring               | `{ origin, request }` → route to `handleKeyringRequest`                                                     |
+| `onNameLookup`           | name-lookup           | `{ chainId, address?\|domain? }` → resolutions or null                                                      |
 
 Not public yet (in-flight SIPs / preinstalled-only): `onSettingsPage`, `onProtocolRequest`, `onAssetsLookup`/`onAssetsConversion`.
 
@@ -99,6 +112,7 @@ Not public yet (in-flight SIPs / preinstalled-only): `onSettingsPage`, `onProtoc
 - **`snap_getEntropy`** — snap-specific 256-bit entropy from SRP+snapId+salt. Good for snap-private secrets (e.g. nothing chain-interoperable). This is what the incumbent stellar-snap misuses for accounts.
 
 Security rules (from docs, binding for audit):
+
 - The manifest path caveat is the only thing limiting which chains' keys a snap can derive — auditors check path matches stated purpose.
 - Never return private keys via RPC/network; display secrets only in dialogs; informed consent for irreversible ops; "choose friction over convenience."
 
@@ -111,10 +125,12 @@ Security rules (from docs, binding for audit):
 - **Data**: `Address` (hex or CAIP-10), `Avatar`, `Row` (label/value + variants), `Value`, `Card`, `Copyable` (also the anti-phishing container for untrusted strings), `Banner` (danger/info/success/warning), `Icon`, `Image` (inline SVG only), `Tooltip`, `Spinner`, `Skeleton`.
 
 ### Dialogs (`snap_dialog`)
+
 - `alert` → null; `confirmation` → boolean; `prompt` → string; **custom** (no `type`) → resolved via `snap_resolveInterface`.
 - Don't work while MetaMask is locked.
 
 ### Interactive interface lifecycle
+
 - `snap_createInterface { ui, context? }` → `id`; use in `snap_dialog { id }` or return `{ id }` from `onHomePage`/`onTransaction`.
 - `snap_updateInterface { id, ui, context? }` — e.g. Spinner → fetch → update.
 - `snap_getInterfaceState` (form values), `snap_getInterfaceContext`, `snap_resolveInterface { id, value }`.
@@ -147,13 +163,14 @@ const res = await window.ethereum.request({
 // discover (only snaps connected to THIS dapp)
 const snaps = await ethereum.request({ method: 'wallet_getSnaps' })
 ```
+
 - Snap IDs: `npm:<packageName>` (published), `local:http://localhost:8080` (dev).
 - Rejection: `{ code: 4001, message: 'User rejected the request.' }`.
 - **Detection**: EIP-6963 `eip6963:announceProvider`, rdns exact-match `io.metamask` / `io.metamask.flask` / `io.metamask.mmi` (never `includes()` — spoofable). Probe snaps support via `wallet_getSnaps` (method-not-found ⇒ unsupported). Unlisted snaps require Flask; allowlisted snaps run on stable MetaMask.
 
 ## 10. Keyring API status (why we don't use it)
 
-- Keyring API (`endowment:keyring` + `snap_manageAccounts`, `@metamask/keyring-api`) makes snap accounts first-class in MetaMask UI — but the documented allowlistable surface is **EVM-only** (`eip155:eoa`, `eip155:erc4337`), and docs state: *"MetaMask is not currently accepting allowlisting requests for Custom EVM Account Snaps."*
+- Keyring API (`endowment:keyring` + `snap_manageAccounts`, `@metamask/keyring-api`) makes snap accounts first-class in MetaMask UI — but the documented allowlistable surface is **EVM-only** (`eip155:eoa`, `eip155:erc4337`), and docs state: _"MetaMask is not currently accepting allowlisting requests for Custom EVM Account Snaps."_
 - Non-EVM account types (`solana:data-account`, bip122) exist in keyring-api but are used only by MetaMask's own **preinstalled** snaps (native Solana/Bitcoin support, shipped 2025 via multichain accounts). Not open to third parties.
 - ⇒ A Stellar snap manages accounts internally (entropy + own state) and exposes its own RPC API — the pattern used by every non-EVM snap in the directory.
 
@@ -161,15 +178,17 @@ const snaps = await ethereum.request({ method: 'wallet_getSnaps' })
 
 - **Local**: `yarn start` → snap at `localhost:8080`, dapp at `localhost:8000`; install into Flask with snap ID `local:http://localhost:8080`.
 - **`@metamask/snaps-jest`**: `preset: '@metamask/snaps-jest'`; tests run against the built bundle.
+
 ```js
-const { request, onHomePage } = await installSnap()
-const response = await request({ origin: 'https://dapp', method: 'foo' })
-expect(response).toRespondWith('bar')
+const { request, onHomePage } = await installSnap();
+const response = await request({ origin: 'https://dapp', method: 'foo' });
+expect(response).toRespondWith('bar');
 // dialog interaction:
-const pending = request({ method: 'sign' })
-const ui = await pending.getInterface()
-await ui.ok()   // or ui.cancel(), ui.clickElement(name), ui.typeInField(...)
+const pending = request({ method: 'sign' });
+const ui = await pending.getInterface();
+await ui.ok(); // or ui.cancel(), ui.clickElement(name), ui.typeInField(...)
 ```
+
 - Matchers: `toRespondWith`, `toRespondWithError`, `toRender`, `toSendNotification`.
 - `mm-snap eval` catches SES incompatibilities at build time — run it in CI.
 
