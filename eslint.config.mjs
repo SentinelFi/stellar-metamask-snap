@@ -74,6 +74,13 @@ const config = createConfig([
     files: ['packages/site/src/**'],
     extends: [browser],
   },
+
+  {
+    // The connector is a browser-targeted dapp library (EIP-6963 discovery
+    // needs `window`).
+    files: ['packages/connector/src/**'],
+    extends: [browser],
+  },
 ]);
 
 export default config;

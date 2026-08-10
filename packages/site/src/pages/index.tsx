@@ -7,7 +7,8 @@ import {
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk/base';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { StellarSnap } from 'stellar-soroban-snap-connector';
 import styled from 'styled-components';
 
 import {
@@ -16,14 +17,10 @@ import {
   InstallFlaskButton,
   ReconnectButton,
   Card,
+  SnapLogo,
 } from '../components';
 import { defaultSnapOrigin } from '../config';
-import {
-  useMetaMask,
-  useInvokeSnap,
-  useMetaMaskContext,
-  useRequestSnap,
-} from '../hooks';
+import { useMetaMask, useMetaMaskContext, useRequestSnap } from '../hooks';
 import { isLocalSnap, shouldDisplayReconnectButton } from '../utils';
 
 const Container = styled.div`
@@ -105,6 +102,43 @@ const SuccessNotice = styled(Notice)`
   border-color: ${({ theme }) => theme.colors.success?.default};
 `;
 
+const ButtonGroup = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+`;
+
+const StatusCard = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  background-color: ${({ theme }) => theme.colors.card?.default};
+  border: 1px solid ${({ theme }) => theme.colors.border?.default};
+  border-radius: ${({ theme }) => theme.radii.default};
+  padding: 1.6rem 2.4rem;
+  margin-top: 2.4rem;
+  max-width: 64.8rem;
+  width: 100%;
+  box-shadow: ${({ theme }) => theme.shadows.default};
+  ${({ theme }) => theme.mediaQueries.small} {
+    padding: 1.2rem 1.6rem;
+    gap: 1.2rem;
+  }
+`;
+
+const StatusInfo = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: ${({ theme }) => theme.fontSizes.small};
+  word-break: break-all;
+`;
+
+const StatusLabel = styled.span`
+  font-weight: bold;
+  margin-right: 0.6rem;
+`;
+
 const ErrorMessage = styled.div`
   background-color: ${({ theme }) => theme.colors.error?.muted};
   border: 1px solid ${({ theme }) => theme.colors.error?.default};
@@ -124,98 +158,115 @@ const ErrorMessage = styled.div`
 `;
 
 const Index = () => {
-  const { error } = useMetaMaskContext();
+  const { provider, error, setError } = useMetaMaskContext();
   const { isFlask, snapsDetected, installedSnap } = useMetaMask();
   const requestSnap = useRequestSnap();
-  const invokeSnap = useInvokeSnap();
   const [address, setAddress] = useState('');
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // The connector: a typed SEP-43 client over wallet_invokeSnap.
+  const snapClient = useMemo(
+    () =>
+      provider
+        ? new StellarSnap({ snapId: defaultSnapOrigin, provider })
+        : null,
+    [provider],
+  );
 
   const isMetaMaskReady = isLocalSnap(defaultSnapOrigin)
     ? isFlask
     : snapsDetected;
 
-  // If this origin already holds a grant, the silent getAddress recovers the
-  // address after a page reload (no dialog for ungranted origins — it just
-  // returns an empty string).
-  useEffect(() => {
-    if (!installedSnap) {
-      return;
-    }
-    invokeSnap({ method: 'getAddress' })
-      .then((response) => {
-        const value = (response as { address?: string } | null)?.address;
-        if (value) {
-          setAddress(value);
-        }
-        return null;
-      })
-      .catch(() => null);
-  }, [installedSnap]);
+  type WalletStatus = {
+    network: string;
+    address: string;
+    /** XLM balance; null when unknown (no grant / unfunded lookup failed). */
+    xlm: string | null;
+    funded: boolean | null;
+  };
+  const [status, setStatus] = useState<WalletStatus | null>(null);
 
   /**
-   * Serializes snap requests: MetaMask shows one dialog at a time, so the
-   * test bench disables actions while a request is in flight rather than
-   * stacking a second call (which the snap would reject as an internal
-   * error).
+   * Refreshes the wallet status strip (network, address, XLM balance) via
+   * silent connector calls. Runs on load and after every action.
+   */
+  const refreshStatus = useCallback(async () => {
+    if (!installedSnap || !snapClient) {
+      setStatus(null);
+      return;
+    }
+    try {
+      const [{ address: value }, details] = await Promise.all([
+        snapClient.getAddress(),
+        snapClient.getNetworkDetails(),
+      ]);
+      let xlm: string | null = null;
+      let funded: boolean | null = null;
+      if (value) {
+        setAddress(value);
+        try {
+          const summary = await snapClient.getBalances();
+          funded = summary.funded;
+          xlm = summary.funded
+            ? (summary.balances.find((line) => line.asset === 'XLM')?.balance ??
+              '0')
+            : '0';
+        } catch {
+          // No grant yet — balance stays unknown.
+        }
+      }
+      setStatus({ network: details.network, address: value, xlm, funded });
+    } catch {
+      setStatus(null);
+    }
+  }, [installedSnap, snapClient]);
+
+  useEffect(() => {
+    refreshStatus().catch(() => null);
+  }, [refreshStatus]);
+
+  /**
+   * Serializes snap requests (MetaMask shows one dialog at a time), renders
+   * the JSON result on success, and routes connector errors to the error box.
    *
-   * @param work - The async request(s) to run.
-   * @returns The work's result.
+   * @param work - The connector call(s) to run.
+   * @returns The result, or null on error.
    */
   const run = async <Type,>(
-    work: () => Promise<Type>,
+    work: (client: StellarSnap) => Promise<Type>,
   ): Promise<Type | null> => {
-    if (busy) {
+    if (busy || !snapClient) {
       return null;
     }
     setBusy(true);
+    setResult(null);
     try {
-      return await work();
+      const value = await work(snapClient);
+      setResult(JSON.stringify(value, null, 2));
+      await refreshStatus();
+      return value;
+    } catch (callError) {
+      setError(
+        callError instanceof Error ? callError : new Error(String(callError)),
+      );
+      return null;
     } finally {
       setBusy(false);
     }
   };
 
-  /**
-   * Invokes a snap method and renders the JSON result.
-   *
-   * @param method - The RPC method name.
-   * @param params - Optional params.
-   * @returns The parsed result, or null on error/rejection.
-   */
-  const call = async (method: string, params?: Record<string, unknown>) =>
-    run(async () => {
-      setResult(null);
-      const response = await invokeSnap(
-        params ? { method, params } : { method },
-      );
-      if (response !== null) {
-        setResult(JSON.stringify(response, null, 2));
-      }
-      return response as Record<string, unknown> | null;
-    });
-
   const handleRequestAccess = async () => {
-    const response = await call('requestAccess');
-    if (response && typeof response.address === 'string') {
+    const response = await run(async (client) => client.requestAccess());
+    if (response?.address) {
       setAddress(response.address);
     }
   };
 
   const handleSignPayment = async () =>
-    run(async () => {
-      setResult(null);
-      const details = (await invokeSnap({
-        method: 'getNetworkDetails',
-      })) as { networkPassphrase: string } | null;
-      const balances = (await invokeSnap({ method: 'getBalances' })) as {
-        funded: boolean;
-        sequence: string | null;
-      } | null;
-      if (!details || !balances) {
-        return null;
-      }
+    run(async (client) => {
+      const details = await client.getNetworkDetails();
+      const balances = await client.getBalances();
 
       // An unfunded account cannot submit anyway; any sequence demonstrates
       // the signing flow.
@@ -235,33 +286,17 @@ const Index = () => {
             amount: '1.5',
           }),
         )
-        .addMemo(Memo.text('snap phase-1 demo'))
+        .addMemo(Memo.text('snap phase-3 demo'))
         .setTimeout(300)
         .build();
 
-      const response = await invokeSnap({
-        method: 'signTransaction',
-        params: { xdr: transaction.toXDR() },
-      });
-      if (response !== null) {
-        setResult(JSON.stringify(response, null, 2));
-      }
-      return null;
+      return client.signTransaction(transaction.toXDR());
     });
 
   const handleSignSoroban = async () =>
-    run(async () => {
-      setResult(null);
-      const details = (await invokeSnap({
-        method: 'getNetworkDetails',
-      })) as { networkPassphrase: string } | null;
-      const balances = (await invokeSnap({ method: 'getBalances' })) as {
-        funded: boolean;
-        sequence: string | null;
-      } | null;
-      if (!details || !balances) {
-        return null;
-      }
+    run(async (client) => {
+      const details = await client.getNetworkDetails();
+      const balances = await client.getBalances();
 
       // The XLM Stellar Asset Contract address is deterministic per network.
       const contract = Asset.native().contractId(details.networkPassphrase);
@@ -269,8 +304,7 @@ const Index = () => {
         balances.funded && balances.sequence ? balances.sequence : '1';
 
       // 1 XLM self-transfer through the SAC — demonstrates the decoded
-      // invocation + in-snap simulation review (not meant for submission;
-      // the envelope is not simulation-assembled).
+      // invocation + in-snap simulation review (not meant for submission).
       const transaction = new TransactionBuilder(
         new Account(address, sequence),
         {
@@ -297,14 +331,7 @@ const Index = () => {
         .setTimeout(300)
         .build();
 
-      const response = await invokeSnap({
-        method: 'signTransaction',
-        params: { xdr: transaction.toXDR() },
-      });
-      if (response !== null) {
-        setResult(JSON.stringify(response, null, 2));
-      }
-      return null;
+      return client.signTransaction(transaction.toXDR());
     });
 
   return (
@@ -312,7 +339,32 @@ const Index = () => {
       <Heading>
         <Span>Stellar Soroban</Span> Snap
       </Heading>
-      <Subtitle>Phase 1 — SEP-43 wallet API test bench</Subtitle>
+      <Subtitle>Phase 3 — connector-powered test bench</Subtitle>
+      {installedSnap && (
+        <StatusCard>
+          <SnapLogo size={56} />
+          <StatusInfo>
+            <span>
+              <StatusLabel>Network</StatusLabel>
+              {status?.network ?? '—'}
+            </span>
+            <span>
+              <StatusLabel>Account</StatusLabel>
+              {status !== null && status.address !== '' ? (
+                status.address
+              ) : (
+                <i>not connected — use Request access</i>
+              )}
+            </span>
+            <span>
+              <StatusLabel>Balance</StatusLabel>
+              {status?.xlm !== null && status?.xlm !== undefined
+                ? `${status.xlm} XLM${status.funded === false ? ' (account not funded)' : ''}`
+                : '—'}
+            </span>
+          </StatusInfo>
+        </StatusCard>
+      )}
       <CardContainer>
         {!isMetaMaskReady && (
           <Card
@@ -379,7 +431,7 @@ const Index = () => {
               'Silent read (Freighter semantics): empty string until access is granted.',
             button: (
               <ActionButton
-                onClick={async () => call('getAddress')}
+                onClick={async () => run(async (client) => client.getAddress())}
                 disabled={!installedSnap || busy}
               >
                 Get address
@@ -393,16 +445,18 @@ const Index = () => {
             title: 'Network',
             description: 'Read network details or switch (dialog-confirmed).',
             button: (
-              <>
+              <ButtonGroup>
                 <ActionButton
-                  onClick={async () => call('getNetworkDetails')}
+                  onClick={async () =>
+                    run(async (client) => client.getNetworkDetails())
+                  }
                   disabled={!installedSnap || busy}
                 >
                   Details
                 </ActionButton>
                 <ActionButton
                   onClick={async () =>
-                    call('setNetwork', { network: 'TESTNET' })
+                    run(async (client) => client.setNetwork('TESTNET'))
                   }
                   disabled={!installedSnap || busy}
                 >
@@ -410,7 +464,7 @@ const Index = () => {
                 </ActionButton>
                 <ActionButton
                   onClick={async () =>
-                    call('setNetwork', { network: 'FUTURENET' })
+                    run(async (client) => client.setNetwork('FUTURENET'))
                   }
                   disabled={!installedSnap || busy}
                 >
@@ -418,13 +472,13 @@ const Index = () => {
                 </ActionButton>
                 <ActionButton
                   onClick={async () =>
-                    call('setNetwork', { network: 'PUBLIC' })
+                    run(async (client) => client.setNetwork('PUBLIC'))
                   }
                   disabled={!installedSnap || busy}
                 >
                   Public (mainnet)
                 </ActionButton>
-              </>
+              </ButtonGroup>
             ),
           }}
           disabled={!installedSnap || busy}
@@ -436,7 +490,7 @@ const Index = () => {
               'Fund the wallet account on the active test network. Requires access.',
             button: (
               <ActionButton
-                onClick={async () => call('fund')}
+                onClick={async () => run(async (client) => client.fund())}
                 disabled={!installedSnap || busy}
               >
                 Fund
@@ -452,7 +506,9 @@ const Index = () => {
               'Horizon balances and sequence for the wallet account. Requires access.',
             button: (
               <ActionButton
-                onClick={async () => call('getBalances')}
+                onClick={async () =>
+                  run(async (client) => client.getBalances())
+                }
                 disabled={!installedSnap || busy}
               >
                 Balances
@@ -500,9 +556,9 @@ const Index = () => {
             button: (
               <ActionButton
                 onClick={async () =>
-                  call('signMessage', {
-                    message: 'Hello from the Stellar Soroban Snap!',
-                  })
+                  run(async (client) =>
+                    client.signMessage('Hello from the Stellar Soroban Snap!'),
+                  )
                 }
                 disabled={!installedSnap || busy}
               >

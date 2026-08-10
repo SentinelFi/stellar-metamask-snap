@@ -6,9 +6,10 @@ import { ReactComponent as MetaMaskFox } from '../assets/metamask_fox.svg';
 
 const FooterWrapper = styled.footer`
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 1.2rem;
   padding-top: 2.4rem;
   padding-bottom: 2.4rem;
   border-top: 1px solid ${(props) => props.theme.colors.border?.default};
@@ -31,6 +32,22 @@ const PoweredByContainer = styled.div`
   margin-left: 1rem;
 `;
 
+const LegalNotice = styled.p`
+  margin: 0;
+  font-size: ${({ theme }) => theme.fontSizes.small};
+  color: ${({ theme }) => theme.colors.text?.muted};
+  text-align: center;
+
+  & a {
+    color: ${({ theme }) => theme.colors.primary?.default};
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+`;
+
 export const Footer = () => {
   const theme = useTheme();
 
@@ -43,6 +60,24 @@ export const Footer = () => {
           <MetaMask color={theme.colors.text?.default} />
         </PoweredByContainer>
       </PoweredByButton>
+      <LegalNotice>
+        © 2026 Stellar Soroban Snap — licensed under{' '}
+        <a
+          href="https://github.com/jeffnuclear/stelllar-metamask-snap/blob/main/LICENSE"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Apache 2.0
+        </a>{' '}
+        —{' '}
+        <a
+          href="https://github.com/jeffnuclear/stelllar-metamask-snap"
+          target="_blank"
+          rel="noreferrer"
+        >
+          GitHub
+        </a>
+      </LegalNotice>
     </FooterWrapper>
   );
 };

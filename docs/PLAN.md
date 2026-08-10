@@ -78,11 +78,11 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 - [x] Fee-bump envelope support (display inner tx + who pays) — shipped early in Phase 1.
 - [ ] Multisig awareness: if account thresholds not met by our key, return signed XDR with an "insufficient weight — pass to co-signers" notice instead of failing. **Deferred to Phase 4** (needs signer/threshold fetching + per-op source handling).
 
-## Phase 3 — Connector package + Wallets Kit module
+## Phase 3 — Connector package + Wallets Kit module — ✅ DONE 2026-08-10 (notes: [PHASE-3.md](PHASE-3.md))
 
-- [ ] `packages/connector` (`@<scope>/stellar-snap-connector`): EIP-6963 detection (exact rdns match), `wallet_requestSnaps` with version pinning, typed SEP-43 client, Freighter-API-compatible facade (drop-in for `@stellar/freighter-api` users), `WatchWalletChanges`-style polling helper.
-- [ ] **Stellar Wallets Kit ModuleInterface implementation** + upstream PR to Creit-Tech/Stellar-Wallets-Kit (this is the adoption lever — NEAR's wallet-selector module and Sui's wallet-standard adapter prove it).
-- [ ] Companion dapp built on the connector: connect, balances (XLM + trustlines + Soroban tokens), send with memo, network switch, friendbot, sign-message demo, a Soroban contract-invoke demo (testnet).
+- [x] `packages/connector` (`stellar-soroban-snap-connector`): EIP-6963 detection (exact rdns match), `wallet_requestSnaps` with version pinning, typed SEP-43 client (`StellarSnap`, throws `StellarSnapError` with SEP-43 codes), Freighter-API-compatible facade (`createFreighterApi`, `{ ...result, error? }` convention), `WatchWalletChanges` polling helper. Zero runtime deps; 8 unit tests over a mock provider.
+- [x] **Stellar Wallets Kit ModuleInterface implementation** (`StellarSnapKitModule`, structural — no kit dependency; verified against the kit's current interface). Upstream PR to Creit-Tech/Stellar-Wallets-Kit **deferred until the snap is npm-published + allowlisted** (the kit lists production wallets; `npm:stellar-soroban-snap` must resolve first).
+- [x] Companion dapp rebuilt on the connector: all actions through typed `StellarSnap` methods (raw `wallet_invokeSnap` plumbing removed).
 
 ## Phase 4 — Polish
 

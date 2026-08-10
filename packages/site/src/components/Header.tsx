@@ -1,4 +1,4 @@
-import styled, { useTheme } from 'styled-components';
+import styled from 'styled-components';
 
 import { HeaderButtons } from './Buttons';
 import { SnapLogo } from './SnapLogo';
@@ -41,12 +41,10 @@ export const Header = ({
 }: {
   handleToggleClick: () => void;
 }) => {
-  const theme = useTheme();
-
   return (
     <HeaderWrapper>
       <LogoWrapper>
-        <SnapLogo color={theme.colors.icon?.default} size={36} />
+        <SnapLogo size={36} />
         <Title>Stellar Soroban Snap</Title>
       </LogoWrapper>
       <RightContainer>

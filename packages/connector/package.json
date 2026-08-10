@@ -1,0 +1,47 @@
+{
+  "name": "stellar-soroban-snap-connector",
+  "version": "0.1.0",
+  "description": "Dapp connector for the Stellar Soroban MetaMask Snap: typed SEP-43 client, Freighter-compatible facade, and Stellar Wallets Kit module.",
+  "homepage": "https://github.com/jeffnuclear/stelllar-metamask-snap#readme",
+  "bugs": {
+    "url": "https://github.com/jeffnuclear/stelllar-metamask-snap/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jeffnuclear/stelllar-metamask-snap.git"
+  },
+  "license": "Apache-2.0",
+  "author": "jeffnuclear",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "clean": "rimraf dist",
+    "lint": "yarn lint:eslint",
+    "lint:eslint": "eslint . --cache",
+    "lint:fix": "yarn lint:eslint --fix",
+    "test": "jest"
+  },
+  "devDependencies": {
+    "@jest/globals": "^29.5.0",
+    "eslint": "^9.11.0",
+    "jest": "^29.5.0",
+    "rimraf": "^3.0.2",
+    "ts-jest": "^29.1.0",
+    "typescript": "~5.7.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
