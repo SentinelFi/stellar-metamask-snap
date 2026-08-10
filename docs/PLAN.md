@@ -100,7 +100,8 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 
 ## Phase 5 — Audit & distribution
 
-- [ ] Pre-audit hardening: remove console logs/TODOs/unused permissions (directory requirements), Snapper scan, threat-model doc (display-integrity claims, key lifecycle).
+- [ ] Pre-audit hardening: remove console logs/TODOs/unused permissions (directory requirements), threat-model doc (display-integrity claims, key lifecycle).
+- [ ] **Snapper security scan** ([Sayfer's tool](https://github.com/sayfer-io/Snapper), named in MetaMask's allowlisting requirements) against `packages/snap` on the frozen pre-publish commit; resolve findings, keep the HTML report for the directory submission. **Run via Docker** — the npm release currently fails to install (`workspace:` protocol bug). Assessment + how-to: [docs/research/snapper-security-scan.md](research/snapper-security-scan.md).
 - [ ] Third-party audit (entropy permission is audit-gated; candidates: OtterSec, Cure53, Halborn, Least Authority, Veridise — check current MetaMask wiki list). Pin audited commit.
 - [ ] npm publish (matching manifest/package fields, SVG icon), Directory Information form, allowlisting review (≥2 approvals, version-pinned — every release needs re-submission).
 - [ ] Mainnet RPC strategy final call (provider with `Origin: null` CORS, or our own proxy).
