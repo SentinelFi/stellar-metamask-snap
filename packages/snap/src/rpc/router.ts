@@ -3,7 +3,7 @@ import { MethodNotFoundError, SnapError } from '@metamask/snaps-sdk';
 
 import { internalError } from './errors';
 import { getAddress, requestAccess } from '../handlers/access';
-import { getBalances, fund } from '../handlers/account';
+import { addToken, getBalances, fund } from '../handlers/account';
 import { getNetwork, getNetworkDetails, setNetwork } from '../handlers/network';
 import { signAuthEntry, signMessage, signTransaction } from '../handlers/sign';
 
@@ -24,6 +24,7 @@ const HANDLERS: Record<string, Handler> = {
   signMessage: async (origin, params) => signMessage(origin, params),
   fund: async (origin, params) => fund(origin, params),
   getBalances: async (origin, params) => getBalances(origin, params),
+  addToken: async (origin, params) => addToken(origin, params),
 };
 
 /**

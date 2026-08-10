@@ -4,7 +4,7 @@ A MetaMask Snap bringing the **Stellar network (including Soroban smart contract
 
 > Independent software, not affiliated with or endorsed by the Stellar Development Foundation.
 
-**Status:** Phase 3 (connector package) complete — `stellar-soroban-snap-connector` ships the typed SEP-43 client, a Freighter-compatible facade, and the Stellar Wallets Kit module; see [docs/PHASE-3.md](docs/PHASE-3.md). Earlier phases: [docs/PHASE-2.md](docs/PHASE-2.md) (Soroban depth), [docs/PHASE-1.md](docs/PHASE-1.md) (SEP-43 wallet API), [docs/PHASE-0.md](docs/PHASE-0.md) (feasibility).
+**Status:** Phase 4 (polish) core complete — onInstall welcome, pre-sign safety warnings (SEP-29 / unfunded / multisig), and Soroban token support (`addToken` + token balances); see [docs/PHASE-4.md](docs/PHASE-4.md). Earlier phases: [docs/PHASE-3.md](docs/PHASE-3.md) (connector package), [docs/PHASE-2.md](docs/PHASE-2.md) (Soroban depth), [docs/PHASE-1.md](docs/PHASE-1.md) (SEP-43 wallet API), [docs/PHASE-0.md](docs/PHASE-0.md) (feasibility). Next: Phase 5 (audit & distribution).
 
 ## Development
 

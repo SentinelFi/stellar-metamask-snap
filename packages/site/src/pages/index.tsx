@@ -7,7 +7,7 @@ import {
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk/base';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { StellarSnap } from 'stellar-soroban-snap-connector';
 import styled from 'styled-components';
 
@@ -139,6 +139,73 @@ const StatusLabel = styled.span`
   margin-right: 0.6rem;
 `;
 
+const TokenInput = styled.input`
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 1.2rem;
+  padding: 0.8rem;
+  font-size: ${({ theme }) => theme.fontSizes.small};
+  border: 1px solid ${({ theme }) => theme.colors.border?.default};
+  border-radius: ${({ theme }) => theme.radii.default};
+  background-color: ${({ theme }) => theme.colors.background?.default};
+  color: ${({ theme }) => theme.colors.text?.default};
+`;
+
+const ReferenceHeading = styled.h3`
+  margin: 0 0 1rem;
+  font-size: ${({ theme }) => theme.fontSizes.small};
+  color: ${({ theme }) => theme.colors.text?.muted};
+`;
+
+const ReferenceList = styled.dl`
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1.2rem;
+  align-items: baseline;
+
+  & dt {
+    font-weight: bold;
+    white-space: nowrap;
+  }
+
+  & dd {
+    margin: 0;
+    font-family: monospace;
+    font-size: ${({ theme }) => theme.fontSizes.small};
+    word-break: break-all;
+  }
+
+  ${({ theme }) => theme.mediaQueries.small} {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+
+    & dd {
+      margin-bottom: 0.8rem;
+    }
+  }
+`;
+
+/** Known Stellar Asset Contract addresses, handy for the Add token demo. */
+const REFERENCE_ASSETS: { label: string; contractId: string }[] = [
+  {
+    label: 'Testnet USDC',
+    contractId: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+  },
+  {
+    label: 'Mainnet USDC',
+    contractId: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+  },
+  {
+    label: 'Testnet XLM',
+    contractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+  },
+  {
+    label: 'Mainnet XLM',
+    contractId: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA',
+  },
+];
+
 const ErrorMessage = styled.div`
   background-color: ${({ theme }) => theme.colors.error?.muted};
   border: 1px solid ${({ theme }) => theme.colors.error?.default};
@@ -164,6 +231,7 @@ const Index = () => {
   const [address, setAddress] = useState('');
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tokenContract, setTokenContract] = useState('');
 
   // The connector: a typed SEP-43 client over wallet_invokeSnap.
   const snapClient = useMemo(
@@ -551,6 +619,31 @@ const Index = () => {
         />
         <Card
           content={{
+            title: 'Add token',
+            description:
+              'Track a Soroban token (SAC/SEP-41) by contract ID so its balance shows in this wallet.',
+            button: (
+              <>
+                <TokenInput
+                  placeholder="Token contract ID (C…)"
+                  value={tokenContract}
+                  onChange={(event) => setTokenContract(event.target.value)}
+                />
+                <ActionButton
+                  onClick={async () =>
+                    run(async (client) => client.addToken(tokenContract.trim()))
+                  }
+                  disabled={!installedSnap || !tokenContract.trim() || busy}
+                >
+                  Add token
+                </ActionButton>
+              </>
+            ),
+          }}
+          disabled={!installedSnap || busy}
+        />
+        <Card
+          content={{
             title: 'Sign message',
             description: 'SEP-53 message signature over a demo string.',
             button: (
@@ -585,6 +678,19 @@ const Index = () => {
             spike retreat&hellip;&rdquo;):{' '}
             <b>GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6</b>.
           </p>
+        </Notice>
+        <Notice>
+          <ReferenceHeading>
+            Asset contract addresses (for Add token)
+          </ReferenceHeading>
+          <ReferenceList>
+            {REFERENCE_ASSETS.map((asset) => (
+              <Fragment key={asset.contractId}>
+                <dt>{asset.label}</dt>
+                <dd>{asset.contractId}</dd>
+              </Fragment>
+            ))}
+          </ReferenceList>
         </Notice>
       </CardContainer>
     </Container>

@@ -124,6 +124,82 @@ export async function submitTransaction(
   return { hash: body.hash };
 }
 
+export type AccountChecks = {
+  exists: boolean;
+  /** SEP-29: the account carries a `config.memo_required` data entry. */
+  memoRequired: boolean;
+  /** Ed25519 signers with weights (present when the account exists). */
+  signers: { key: string; weight: number }[];
+  /** Operation thresholds (present when the account exists). */
+  thresholds: { low: number; med: number; high: number } | null;
+};
+
+/**
+ * Fetches display-safety facts about an account (existence, SEP-29 memo
+ * requirement, signers/thresholds). Best-effort: returns null when Horizon
+ * cannot be reached in time — callers degrade gracefully.
+ *
+ * @param horizonUrl - The Horizon base URL for the active network.
+ * @param address - The account to check.
+ * @param timeoutMs - Bounded lookup time.
+ * @returns The checks, or null when unavailable.
+ */
+export async function getAccountChecks(
+  horizonUrl: string,
+  address: string,
+  timeoutMs = 5000,
+): Promise<AccountChecks | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${horizonUrl}/accounts/${address}`, {
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (response.status === 404) {
+      return {
+        exists: false,
+        memoRequired: false,
+        signers: [],
+        thresholds: null,
+      };
+    }
+    if (!response.ok) {
+      return null;
+    }
+    const account = (await response.json()) as {
+      data?: Record<string, string>;
+      signers?: { key: string; weight: number; type: string }[];
+      thresholds?: {
+        // eslint-disable-next-line @typescript-eslint/naming-convention
+        low_threshold: number;
+        // eslint-disable-next-line @typescript-eslint/naming-convention
+        med_threshold: number;
+        // eslint-disable-next-line @typescript-eslint/naming-convention
+        high_threshold: number;
+      };
+    };
+    return {
+      exists: true,
+      memoRequired: Boolean(account.data?.['config.memo_required']),
+      signers: (account.signers ?? [])
+        .filter((signer) => signer.type === 'ed25519_public_key')
+        .map(({ key, weight }) => ({ key, weight })),
+      thresholds: account.thresholds
+        ? {
+            low: account.thresholds.low_threshold,
+            med: account.thresholds.med_threshold,
+            high: account.thresholds.high_threshold,
+          }
+        : null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Requests testnet/futurenet funding from friendbot.
  *

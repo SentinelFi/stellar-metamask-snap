@@ -87,3 +87,14 @@ export type BalancesResult = {
 };
 
 export type FundResult = { funded: true; address: string };
+
+export type AddTokenResult = {
+  contractId: string;
+  symbol: string;
+  decimals: number;
+};
+
+export type SignTransactionResultWithWarnings = SignTransactionResult & {
+  /** Advisory safety warnings the snap surfaced (may be absent). */
+  warnings?: string[];
+};

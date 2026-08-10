@@ -84,12 +84,14 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 - [x] **Stellar Wallets Kit ModuleInterface implementation** (`StellarSnapKitModule`, structural — no kit dependency; verified against the kit's current interface). Upstream PR to Creit-Tech/Stellar-Wallets-Kit **deferred until the snap is npm-published + allowlisted** (the kit lists production wallets; `npm:stellar-soroban-snap` must resolve first).
 - [x] Companion dapp rebuilt on the connector: all actions through typed `StellarSnap` methods (raw `wallet_invokeSnap` plumbing removed).
 
-## Phase 4 — Polish
+## Phase 4 — Polish — ✅ CORE DONE 2026-08-10 (notes: [PHASE-4.md](PHASE-4.md))
 
-- [ ] `onInstall` welcome dialog (link to companion dapp). ~~`onHomePage`: address + balances + network~~ — **done early in Phase 2** (see [PHASE-2.md](PHASE-2.md)).
-- [ ] `snap_getPreferences` locale → i18n scaffold (XRPL/NEAR pattern); English first.
-- [ ] SEP-29 memo-required warning; unfunded-destination detection (`payment` → suggest `createAccount`).
-- [ ] Optional later: SEP-7 URI handling, SEP-10 helper flow in connector, `snap_notify` tx-status notifications, muxed address (M...) display support.
+- [x] `onInstall` welcome dialog. ~~`onHomePage`: address + balances + network~~ — done early in Phase 2.
+- [x] SEP-29 memo-required warning; unfunded-destination detection; unfunded-source and multisig-weight warnings — advisory banners in the signing dialog ([stellar/safety.ts](../packages/snap/src/stellar/safety.ts)).
+- [x] **Token balances + `addToken`** (the Phase 2 deferral): per-network token registry in state, SEP-41 metadata/balance reads via simulation, home-page + `getBalances` display, connector method, dapp card.
+- [x] Multisig awareness (the Phase 2 deferral): insufficient-weight warning against the account's medium threshold.
+- [ ] `snap_getPreferences` locale → i18n scaffold — **deferred** (English-only acceptable for launch; extract a string catalog once copy stabilizes).
+- [ ] Optional later: SEP-7 URI handling, SEP-10 helper flow in connector, `snap_notify` tx-status notifications, muxed address (M...) display, guided restore-then-retry flow.
 
 ## Upstream contribution (file early — external review latency)
 

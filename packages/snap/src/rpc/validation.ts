@@ -64,3 +64,9 @@ export const SetNetworkParams = object({
 export const OptionalAddressParams = object({
   address: optional(string()),
 });
+
+export const AddTokenParams = object({
+  /** The Soroban token contract address (`C...`). */
+  contractId: string(),
+  networkPassphrase: optional(string()),
+});

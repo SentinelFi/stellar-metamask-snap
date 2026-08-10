@@ -5,12 +5,21 @@ import { NETWORKS } from './networks';
  * Versioned snap state, stored encrypted via `snap_manageState`.
  * Never contains key material — keys are derived on demand and discarded.
  */
+/** A tracked Soroban token (contract), scoped to a network. */
+export type TrackedToken = {
+  contractId: string;
+  symbol: string;
+  decimals: number;
+};
+
 export type SnapState = {
   version: 1;
   /** The active network. Defaults to TESTNET until mainnet UX hardens. */
   network: NetworkName;
   /** Origins the user has approved, with the grant timestamp. */
   origins: Record<string, { connectedAt: string }>;
+  /** Soroban tokens the user has added, keyed by network. */
+  tokens?: Partial<Record<NetworkName, TrackedToken[]>>;
 };
 
 /**
@@ -19,7 +28,7 @@ export type SnapState = {
  * @returns The default state object.
  */
 function defaultState(): SnapState {
-  return { version: 1, network: 'TESTNET', origins: {} };
+  return { version: 1, network: 'TESTNET', origins: {}, tokens: {} };
 }
 
 /**
@@ -83,4 +92,37 @@ export async function connectOrigin(origin: string): Promise<void> {
     state.origins[origin] = { connectedAt: new Date().toISOString() };
     await saveState(state);
   }
+}
+
+/**
+ * Lists the tokens tracked on a given network.
+ *
+ * @param network - The network name.
+ * @returns The tracked tokens (empty when none).
+ */
+export async function getTokens(network: NetworkName): Promise<TrackedToken[]> {
+  const state = await getState();
+  return state.tokens?.[network] ?? [];
+}
+
+/**
+ * Adds a token to a network's registry (idempotent by contract ID).
+ *
+ * @param network - The network name.
+ * @param token - The token to add.
+ * @returns True when newly added, false when already present.
+ */
+export async function addToken(
+  network: NetworkName,
+  token: TrackedToken,
+): Promise<boolean> {
+  const state = await getState();
+  const tokens = state.tokens ?? {};
+  const forNetwork = tokens[network] ?? [];
+  if (forNetwork.some((entry) => entry.contractId === token.contractId)) {
+    return false;
+  }
+  tokens[network] = [...forNetwork, token];
+  await saveState({ ...state, tokens });
+  return true;
 }

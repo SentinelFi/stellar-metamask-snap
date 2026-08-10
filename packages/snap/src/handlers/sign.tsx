@@ -19,6 +19,7 @@ import {
 import { connectOrigin, getActiveNetwork } from '../state';
 import { submitTransaction } from '../stellar/horizon';
 import { getLatestLedger, sendTransaction } from '../stellar/rpc';
+import { collectSafetyWarnings } from '../stellar/safety';
 import type { SimulationSummary } from '../stellar/soroban';
 import {
   decodeAuthEntry,
@@ -42,7 +43,13 @@ const SIGNED_MESSAGE_PREFIX = 'Stellar Signed Message:\n';
 export async function signTransaction(
   origin: string,
   params: unknown,
-): Promise<{ signedTxXdr: string; signerAddress: string; hash?: string }> {
+): Promise<{
+  signedTxXdr: string;
+  signerAddress: string;
+  hash?: string;
+  /** Advisory safety warnings also shown in the dialog. */
+  warnings?: string[];
+}> {
   const request = validate(params, SignTransactionParams);
   const network = await getActiveNetwork();
 
@@ -78,6 +85,13 @@ export async function signTransaction(
     simulation = await simulateForDisplay(network.sorobanRpcUrl, request.xdr);
   }
 
+  // Classic transactions get best-effort safety checks (unfunded
+  // destinations, SEP-29 memo requirements, multisig weight). Advisory only.
+  let warnings: string[] = [];
+  if (tx instanceof Transaction && !isSoroban && tx.sequence !== '0') {
+    warnings = await collectSafetyWarnings(tx, network, signerAddress);
+  }
+
   const approved = await snap.request({
     method: 'snap_dialog',
     params: {
@@ -88,6 +102,7 @@ export async function signTransaction(
         tx,
         xdr: request.xdr,
         simulation,
+        warnings,
       }),
     },
   });
@@ -100,22 +115,23 @@ export async function signTransaction(
 
   tx.sign(keypair);
   const signedTxXdr = tx.toXDR();
+  const warningsField = warnings.length > 0 ? { warnings } : {};
 
   if (request.submit) {
     // Soroban transactions must go through the RPC; classic ones use
     // Horizon's synchronous endpoint.
     if (isSoroban) {
       const sent = await sendTransaction(network.sorobanRpcUrl, signedTxXdr);
-      return { signedTxXdr, signerAddress, hash: sent.hash };
+      return { signedTxXdr, signerAddress, hash: sent.hash, ...warningsField };
     }
     const { hash: txHash } = await submitTransaction(
       network.horizonUrl,
       signedTxXdr,
     );
-    return { signedTxXdr, signerAddress, hash: txHash };
+    return { signedTxXdr, signerAddress, hash: txHash, ...warningsField };
   }
 
-  return { signedTxXdr, signerAddress };
+  return { signedTxXdr, signerAddress, ...warningsField };
 }
 
 /**

@@ -9,10 +9,11 @@ import {
 } from '@metamask/snaps-sdk/jsx';
 
 import { getWalletAddress } from '../keys';
-import { getActiveNetwork } from '../state';
+import { getActiveNetwork, getTokens } from '../state';
 import type { NetworkName } from '../state/networks';
 import type { AccountSummary } from '../stellar/horizon';
 import { getAccountSummary } from '../stellar/horizon';
+import { readTokenBalance } from '../stellar/token';
 
 export type HomePageProps = {
   network: NetworkName;
@@ -80,6 +81,30 @@ export async function homePage() {
     summary = await getAccountSummary(network.horizonUrl, address);
   } catch {
     summary = null;
+  }
+
+  // Append tracked-token balances (best-effort).
+  if (summary?.funded) {
+    const tokens = await getTokens(network.name);
+    const tokenBalances = (
+      await Promise.all(
+        tokens.map(async (token) => {
+          const balance = await readTokenBalance(
+            network,
+            token.contractId,
+            address,
+            token.decimals,
+          );
+          return balance === null ? null : { asset: token.symbol, balance };
+        }),
+      )
+    ).filter(
+      (entry): entry is { asset: string; balance: string } => entry !== null,
+    );
+    summary = {
+      ...summary,
+      balances: [...summary.balances, ...tokenBalances],
+    };
   }
 
   return {

@@ -384,7 +384,23 @@ export type SignTransactionDialogParams = {
   xdr: string;
   /** Present for Soroban transactions: display-verification simulation. */
   simulation?: SimulationSummary | null;
+  /** Advisory safety warnings (unfunded destination, SEP-29, multisig). */
+  warnings?: string[];
 };
+
+/**
+ * Renders advisory safety warnings as banners.
+ *
+ * @param warnings - The warning strings.
+ * @returns Banner elements.
+ */
+function renderWarnings(warnings: string[]): GenericSnapElement[] {
+  return warnings.map((warning) => (
+    <Banner title="Check before signing" severity="warning">
+      <Text>{warning}</Text>
+    </Banner>
+  ));
+}
 
 /**
  * Builds the full transaction-review dialog. The content is derived only
@@ -397,6 +413,7 @@ export type SignTransactionDialogParams = {
  * @param params.xdr - The raw base64 envelope XDR.
  * @param params.simulation - Display-verification simulation for Soroban
  * transactions, or null/absent for classic ones.
+ * @param params.warnings - Advisory safety warnings for classic transactions.
  * @returns The dialog content.
  */
 export function buildSignTransactionDialog({
@@ -405,6 +422,7 @@ export function buildSignTransactionDialog({
   tx,
   xdr,
   simulation,
+  warnings = [],
 }: SignTransactionDialogParams): JSXElement {
   const networkBanner =
     network === 'PUBLIC' ? (
@@ -480,6 +498,7 @@ export function buildSignTransactionDialog({
         <Bold>{origin}</Bold> asks you to sign a Stellar transaction.
       </Text>
       {networkBanner}
+      {renderWarnings(warnings)}
       {renderSummary(tx)}
       {tx.operations.map(renderOperation)}
       {renderSimulation(simulation ?? null)}

@@ -1,5 +1,6 @@
 import { getMetaMaskProvider, supportsSnaps } from './provider';
 import type {
+  AddTokenResult,
   BalancesResult,
   Eip1193Provider,
   FundResult,
@@ -12,7 +13,7 @@ import type {
   SignMessageOptions,
   SignMessageResult,
   SignTransactionOptions,
-  SignTransactionResult,
+  SignTransactionResultWithWarnings,
 } from './types';
 import { SEP43_ERROR_CODES, StellarSnapError } from './types';
 
@@ -221,8 +222,8 @@ export class StellarSnap {
   async signTransaction(
     xdr: string,
     options: SignTransactionOptions = {},
-  ): Promise<SignTransactionResult> {
-    return this.invoke<SignTransactionResult>('signTransaction', {
+  ): Promise<SignTransactionResultWithWarnings> {
+    return this.invoke<SignTransactionResultWithWarnings>('signTransaction', {
       xdr,
       ...options,
     });
@@ -273,7 +274,8 @@ export class StellarSnap {
   }
 
   /**
-   * Balances + sequence via Horizon (requires a connected origin).
+   * Balances + sequence via Horizon, plus tracked Soroban token balances
+   * (requires a connected origin).
    *
    * @param address - Optional address; defaults to the wallet account.
    * @returns The account summary.
@@ -283,5 +285,23 @@ export class StellarSnap {
       'getBalances',
       address ? { address } : {},
     );
+  }
+
+  /**
+   * Tracks a Soroban token (SAC/SEP-41) for balance display, after a
+   * user confirmation (Freighter-parity `addToken`).
+   *
+   * @param contractId - The token contract address (`C...`).
+   * @param networkPassphrase - Optional expected passphrase.
+   * @returns The tracked token's contract ID and metadata.
+   */
+  async addToken(
+    contractId: string,
+    networkPassphrase?: string,
+  ): Promise<AddTokenResult> {
+    return this.invoke<AddTokenResult>('addToken', {
+      contractId,
+      ...(networkPassphrase ? { networkPassphrase } : {}),
+    });
   }
 }

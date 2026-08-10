@@ -1,9 +1,11 @@
 import type {
   OnHomePageHandler,
+  OnInstallHandler,
   OnRpcRequestHandler,
 } from '@metamask/snaps-sdk';
 
 import { homePage } from './handlers/home';
+import { installWelcome } from './handlers/install';
 import { route } from './rpc/router';
 
 /**
@@ -27,3 +29,10 @@ export const onRpcRequest: OnRpcRequestHandler = async ({ origin, request }) =>
  * @returns The home page content.
  */
 export const onHomePage: OnHomePageHandler = async () => homePage();
+
+/**
+ * One-time welcome dialog after installation.
+ *
+ * @returns Resolves when dismissed.
+ */
+export const onInstall: OnInstallHandler = async () => installWelcome();

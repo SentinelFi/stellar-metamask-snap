@@ -160,6 +160,54 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
   </Box>
 );
 
+export type AddTokenDialogProps = {
+  origin: string;
+  network: NetworkName;
+  contractId: string;
+  symbol: string;
+  decimals: number;
+};
+
+/**
+ * Confirmation for tracking a Soroban token (SAC/SEP-41) for balance
+ * display. Metadata shown is read from the contract, not supplied by the
+ * dapp.
+ *
+ * @param props - The dialog props.
+ * @param props.origin - The requesting dapp origin.
+ * @param props.network - The active network name.
+ * @param props.contractId - The token contract address.
+ * @param props.symbol - The token symbol read from the contract.
+ * @param props.decimals - The token decimals read from the contract.
+ * @returns The dialog content.
+ */
+export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
+  origin,
+  network,
+  contractId,
+  symbol,
+  decimals,
+}) => (
+  <Box>
+    <Heading>Add token</Heading>
+    <Text>
+      <Bold>{origin}</Bold> wants to track a Soroban token so its balance shows
+      in this wallet on <Bold>{network}</Bold>. This does not grant any spending
+      permission.
+    </Text>
+    <Section>
+      <Row label="Symbol">
+        <Text>{symbol}</Text>
+      </Row>
+      <Row label="Decimals">
+        <Text>{String(decimals)}</Text>
+      </Row>
+      <Text>Contract</Text>
+      <Copyable value={contractId} />
+    </Section>
+  </Box>
+);
+
 export type SignMessageDialogProps = {
   origin: string;
   address: string;
