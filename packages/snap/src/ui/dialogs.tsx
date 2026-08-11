@@ -212,6 +212,8 @@ export type SignMessageDialogProps = {
   origin: string;
   address: string;
   message: string;
+  /** The message contains control/bidi characters that can spoof display. */
+  hasHiddenCharacters: boolean;
 };
 
 /**
@@ -221,12 +223,15 @@ export type SignMessageDialogProps = {
  * @param props.origin - The requesting dapp origin.
  * @param props.address - The wallet's Stellar address.
  * @param props.message - The message to sign.
+ * @param props.hasHiddenCharacters - Whether the message contains hidden
+ * characters (the exact bytes are signed either way; the user is warned).
  * @returns The dialog content.
  */
 export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
   origin,
   address,
   message,
+  hasHiddenCharacters,
 }) => (
   <Box>
     <Heading>Sign message</Heading>
@@ -235,6 +240,15 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
       you control this account. It does not move funds and cannot be submitted
       as a transaction.
     </Text>
+    {hasHiddenCharacters ? (
+      <Banner title="Hidden characters" severity="warning">
+        <Text>
+          This message contains invisible or direction-altering characters —
+          what you read here may not be what the site intends. Only sign if you
+          trust the requesting site.
+        </Text>
+      </Banner>
+    ) : null}
     <Section>
       <Text>Message</Text>
       <Copyable value={message} />

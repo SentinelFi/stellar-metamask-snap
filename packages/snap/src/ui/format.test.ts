@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { Asset, LiquidityPoolAsset, Memo } from '@stellar/stellar-sdk';
 
 import {
+  containsHiddenCharacters,
   formatAsset,
   formatMemo,
   formatTokenAsset,
@@ -76,6 +77,29 @@ describe('stroopsToXlm', () => {
   it('is BigInt-safe for large balances', () => {
     // 1,000,000,000 XLM in stroops — beyond Number.MAX_SAFE_INTEGER.
     expect(stroopsToXlm('10000000000000000')).toBe('1000000000');
+  });
+});
+
+describe('containsHiddenCharacters', () => {
+  it('accepts ordinary text including line breaks and tabs', () => {
+    expect(containsHiddenCharacters('hello world')).toBe(false);
+    expect(containsHiddenCharacters('line one\nline two\ttabbed\r\n')).toBe(
+      false,
+    );
+    expect(containsHiddenCharacters('unicode is fine: héllo ✓ 漢字')).toBe(
+      false,
+    );
+  });
+
+  it('flags control and direction-altering characters', () => {
+    // U+202E right-to-left override.
+    expect(containsHiddenCharacters('pay 1\u202E001 XLM')).toBe(true);
+    // U+200B zero-width space.
+    expect(containsHiddenCharacters('admin\u200B@site')).toBe(true);
+    // U+0007 bell (C0 control).
+    expect(containsHiddenCharacters('beep\u0007')).toBe(true);
+    // U+00AD soft hyphen (format character).
+    expect(containsHiddenCharacters('soft\u00ADhyphen')).toBe(true);
   });
 });
 

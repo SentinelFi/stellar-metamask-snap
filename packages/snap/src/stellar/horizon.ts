@@ -60,7 +60,7 @@ export async function getAccountSummary(
   address: string,
 ): Promise<AccountSummary> {
   const response = await safeFetch(
-    `${horizonUrl}/accounts/${address}`,
+    `${horizonUrl}/accounts/${encodeURIComponent(address)}`,
     { headers: { accept: 'application/json' } },
     'Horizon',
   );
@@ -152,10 +152,13 @@ export async function getAccountChecks(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${horizonUrl}/accounts/${address}`, {
-      headers: { accept: 'application/json' },
-      signal: controller.signal,
-    });
+    const response = await fetch(
+      `${horizonUrl}/accounts/${encodeURIComponent(address)}`,
+      {
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      },
+    );
     if (response.status === 404) {
       return {
         exists: false,

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Keeps packages/snap/snap.manifest.json's shasum in sync with the source.
+#
+# The manifest seals the built bundle; committing snap source without
+# rebuilding leaves a stale shasum that CI rejects ("Verify committed
+# manifest matches the built bundle"). When a staged change affects the
+# published bundle, rebuild and stage the refreshed manifest.
+#
+# One-time activation per clone:  git config core.hooksPath .githooks
+
+set -e
+
+staged=$(git diff --cached --name-only)
+
+affects_bundle=$(printf '%s\n' "$staged" \
+  | grep -E '^packages/snap/(src/|snap\.config\.ts|package\.json|images/)' \
+  | grep -vE '\.test\.tsx?$' || true)
+
+if [ -n "$affects_bundle" ]; then
+  echo "pre-commit: snap source changed; rebuilding to sync the manifest shasum..."
+  yarn workspace stellar-soroban-snap build
+  git add packages/snap/snap.manifest.json
+fi

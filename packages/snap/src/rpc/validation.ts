@@ -5,11 +5,24 @@ import {
   enums,
   object,
   optional,
+  refine,
   string,
 } from '@metamask/superstruct';
+import { StrKey } from '@stellar/stellar-sdk';
 
 import { invalidRequest } from './errors';
 import { NETWORK_NAMES } from '../state/networks';
+
+/**
+ * A classic `G...` ed25519 account address. Callers interpolate addresses
+ * into Horizon URL paths, so shape validation here doubles as an injection
+ * guard.
+ */
+export const StellarAddress = refine(string(), 'StellarAddress', (value) =>
+  StrKey.isValidEd25519PublicKey(value)
+    ? true
+    : 'Expected a Stellar account address (G...).',
+);
 
 /**
  * Validates request params against a struct, converting validation failures
@@ -62,7 +75,7 @@ export const SetNetworkParams = object({
 });
 
 export const OptionalAddressParams = object({
-  address: optional(string()),
+  address: optional(StellarAddress),
 });
 
 export const AddTokenParams = object({

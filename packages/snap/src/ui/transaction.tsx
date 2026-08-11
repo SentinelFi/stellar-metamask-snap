@@ -446,6 +446,7 @@ export function buildSignTransactionDialog({
           transaction.
         </Text>
         {networkBanner}
+        {renderWarnings(warnings)}
         <Section>
           <Row label="Fee source">
             <Text>{truncate(tx.feeSource)}</Text>

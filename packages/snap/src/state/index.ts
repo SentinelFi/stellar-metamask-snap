@@ -1,5 +1,17 @@
+import {
+  array,
+  enums,
+  is,
+  literal,
+  number,
+  object,
+  optional,
+  record,
+  string,
+} from '@metamask/superstruct';
+
 import type { NetworkConfig, NetworkName } from './networks';
-import { NETWORKS } from './networks';
+import { NETWORK_NAMES, NETWORKS } from './networks';
 
 /**
  * Versioned snap state, stored encrypted via `snap_manageState`.
@@ -22,6 +34,21 @@ export type SnapState = {
   tokens?: Partial<Record<NetworkName, TrackedToken[]>>;
 };
 
+/** Structural schema for persisted state — see {@link parseState}. */
+const SnapStateStruct = object({
+  version: literal(1),
+  network: enums(NETWORK_NAMES),
+  origins: record(string(), object({ connectedAt: string() })),
+  tokens: optional(
+    record(
+      enums(NETWORK_NAMES),
+      array(
+        object({ contractId: string(), symbol: string(), decimals: number() }),
+      ),
+    ),
+  ),
+});
+
 /**
  * Builds a fresh default state.
  *
@@ -29,6 +56,19 @@ export type SnapState = {
  */
 function defaultState(): SnapState {
   return { version: 1, network: 'TESTNET', origins: {}, tokens: {} };
+}
+
+/**
+ * Validates raw stored state. The snap is the only writer, but the store can
+ * still surprise: a downgrade after a future version bump, or corruption.
+ * Anything that does not match the version-1 schema resets to defaults
+ * rather than flowing unchecked into signing and display paths.
+ *
+ * @param stored - The raw value from `snap_manageState`.
+ * @returns The validated state, or a fresh default state.
+ */
+export function parseState(stored: unknown): SnapState {
+  return is(stored, SnapStateStruct) ? (stored as SnapState) : defaultState();
 }
 
 /**
@@ -44,8 +84,7 @@ export async function getState(): Promise<SnapState> {
   if (!stored) {
     return defaultState();
   }
-  // The snap is the only writer; `version` gates future migrations.
-  return stored as unknown as SnapState;
+  return parseState(stored);
 }
 
 /**
@@ -92,6 +131,44 @@ export async function connectOrigin(origin: string): Promise<void> {
     state.origins[origin] = { connectedAt: new Date().toISOString() };
     await saveState(state);
   }
+}
+
+/**
+ * Removes a tracked token from a network's registry (idempotent).
+ *
+ * @param network - The network name.
+ * @param contractId - The token contract to stop tracking.
+ */
+export async function removeToken(
+  network: NetworkName,
+  contractId: string,
+): Promise<void> {
+  const state = await getState();
+  const forNetwork = state.tokens?.[network] ?? [];
+  const remaining = forNetwork.filter(
+    (entry) => entry.contractId !== contractId,
+  );
+  if (remaining.length !== forNetwork.length) {
+    await saveState({
+      ...state,
+      tokens: { ...state.tokens, [network]: remaining },
+    });
+  }
+}
+
+/**
+ * Removes an origin's connection grant (idempotent).
+ *
+ * @param origin - The dapp origin to disconnect.
+ */
+export async function disconnectOrigin(origin: string): Promise<void> {
+  const state = await getState();
+  if (!state.origins[origin]) {
+    return;
+  }
+  const origins = { ...state.origins };
+  delete origins[origin];
+  await saveState({ ...state, origins });
 }
 
 /**

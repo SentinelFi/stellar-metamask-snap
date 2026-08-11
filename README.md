@@ -44,6 +44,12 @@ A sandboxed extension that adds new capabilities to MetaMask. Learn more at [met
 yarn install
 ```
 
+One-time per clone: activates the repo's git hooks (a pre-commit hook rebuilds the snap and refreshes the `snap.manifest.json` shasum whenever staged changes affect the bundle, so CI's manifest check cannot fail on a stale checksum):
+
+```bash
+yarn setup:hooks
+```
+
 ```bash
 yarn workspace stellar-soroban-snap build
 ```

@@ -62,6 +62,19 @@ export function stroopsToXlm(stroops: string | number): string {
 }
 
 /**
+ * Whether a string contains hidden or direction-altering characters
+ * (controls, bidi overrides, zero-width marks) that could make the rendered
+ * text differ from what is actually signed. Ordinary line breaks and tabs
+ * are allowed.
+ *
+ * @param value - The string to inspect.
+ * @returns True when hidden characters are present.
+ */
+export function containsHiddenCharacters(value: string): boolean {
+  return /[\p{Cc}\p{Cf}]/u.test(value.replace(/[\t\n\r]/gu, ''));
+}
+
+/**
  * Renders a memo for display.
  *
  * @param memo - The transaction memo.

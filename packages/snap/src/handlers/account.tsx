@@ -21,6 +21,13 @@ import {
 import { AddTokenDialog } from '../ui/dialogs';
 
 /**
+ * Cap on tracked tokens per network — every tracked token adds a simulation
+ * round-trip to `getBalances` and each home-page render. Tokens can be
+ * removed from the snap home page, so the cap is housekeeping, not a wall.
+ */
+export const MAX_TRACKED_TOKENS = 30;
+
+/**
  * Guard for companion-dapp methods: the origin must hold a connection grant.
  *
  * @param origin - The requesting dapp origin.
@@ -126,6 +133,16 @@ export async function addToken(
   }
   if (!isContractId(request.contractId)) {
     throw invalidRequest('Invalid contract ID.');
+  }
+
+  const tracked = await getTokens(network.name);
+  const alreadyTracked = tracked.some(
+    (entry) => entry.contractId === request.contractId,
+  );
+  if (!alreadyTracked && tracked.length >= MAX_TRACKED_TOKENS) {
+    throw invalidRequest(
+      `Token limit reached: at most ${MAX_TRACKED_TOKENS} tracked tokens per network.`,
+    );
   }
 
   const metadata = await readTokenMetadata(network, request.contractId);

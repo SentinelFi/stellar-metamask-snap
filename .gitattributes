@@ -1,0 +1,2 @@
+# Git hooks are POSIX shell scripts — CRLF breaks sh even on Windows.
+.githooks/* text eol=lf

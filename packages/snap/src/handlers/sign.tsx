@@ -1,3 +1,4 @@
+import { SnapError } from '@metamask/snaps-sdk';
 import type { FeeBumpTransaction } from '@stellar/stellar-sdk';
 import {
   authorizeEntry,
@@ -27,6 +28,7 @@ import {
   simulateForDisplay,
 } from '../stellar/soroban';
 import { SignAuthEntryDialog, SignMessageDialog } from '../ui/dialogs';
+import { containsHiddenCharacters } from '../ui/format';
 import { buildSignTransactionDialog } from '../ui/transaction';
 
 /** SEP-53 signed-message prefix. */
@@ -87,9 +89,11 @@ export async function signTransaction(
 
   // Classic transactions get best-effort safety checks (unfunded
   // destinations, SEP-29 memo requirements, multisig weight). Advisory only.
+  // Fee bumps get the same checks against their inner transaction.
+  const classicTx = tx instanceof Transaction ? tx : tx.innerTransaction;
   let warnings: string[] = [];
-  if (tx instanceof Transaction && !isSoroban && tx.sequence !== '0') {
-    warnings = await collectSafetyWarnings(tx, network, signerAddress);
+  if (getSorobanOperation(classicTx) === null && classicTx.sequence !== '0') {
+    warnings = await collectSafetyWarnings(classicTx, network, signerAddress);
   }
 
   const approved = await snap.request({
@@ -118,17 +122,42 @@ export async function signTransaction(
   const warningsField = warnings.length > 0 ? { warnings } : {};
 
   if (request.submit) {
-    // Soroban transactions must go through the RPC; classic ones use
-    // Horizon's synchronous endpoint.
-    if (isSoroban) {
-      const sent = await sendTransaction(network.sorobanRpcUrl, signedTxXdr);
-      return { signedTxXdr, signerAddress, hash: sent.hash, ...warningsField };
+    try {
+      // Soroban transactions must go through the RPC; classic ones use
+      // Horizon's synchronous endpoint.
+      if (isSoroban) {
+        const sent = await sendTransaction(network.sorobanRpcUrl, signedTxXdr);
+        return {
+          signedTxXdr,
+          signerAddress,
+          hash: sent.hash,
+          ...warningsField,
+        };
+      }
+      const { hash: txHash } = await submitTransaction(
+        network.horizonUrl,
+        signedTxXdr,
+      );
+      return { signedTxXdr, signerAddress, hash: txHash, ...warningsField };
+    } catch (error) {
+      // The user did sign — surface the signature alongside the submission
+      // failure. On a Horizon timeout the transaction may still land, so
+      // the dapp needs the envelope to poll or retry.
+      if (error instanceof SnapError) {
+        const data =
+          typeof error.data === 'object' &&
+          error.data !== null &&
+          !Array.isArray(error.data)
+            ? error.data
+            : {};
+        throw new SnapError(error.message, {
+          ...data,
+          signedTxXdr,
+          signerAddress,
+        });
+      }
+      throw error;
     }
-    const { hash: txHash } = await submitTransaction(
-      network.horizonUrl,
-      signedTxXdr,
-    );
-    return { signedTxXdr, signerAddress, hash: txHash, ...warningsField };
   }
 
   return { signedTxXdr, signerAddress, ...warningsField };
@@ -253,6 +282,7 @@ export async function signMessage(
           origin={origin}
           address={signerAddress}
           message={request.message}
+          hasHiddenCharacters={containsHiddenCharacters(request.message)}
         />
       ),
     },

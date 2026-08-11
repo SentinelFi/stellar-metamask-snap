@@ -22,6 +22,7 @@
     "lint:eslint": "eslint . --cache",
     "lint:fix": "yarn lint:eslint --fix && yarn lint:misc --write",
     "lint:misc": "prettier '**/*.json' '**/*.md' '**/*.yml' '!.yarnrc.yml' --ignore-path .gitignore --no-error-on-unmatched-pattern",
+    "setup:hooks": "git config core.hooksPath .githooks",
     "start": "yarn workspaces foreach --parallel --interlaced --verbose run start",
     "test": "yarn workspace stellar-soroban-snap run test"
   },
