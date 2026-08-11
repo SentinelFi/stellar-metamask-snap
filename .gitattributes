@@ -1,2 +1,19 @@
+# Normalize every text file to LF in the repo and the working tree, so line
+# endings are identical on every OS regardless of each contributor's
+# core.autocrlf.
+* text=auto eol=lf
+
+# Binary assets Git must never touch. Audit PDFs will land here later.
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.mp4   binary
+
 # Git hooks are POSIX shell scripts — CRLF breaks sh even on Windows.
 .githooks/* text eol=lf
