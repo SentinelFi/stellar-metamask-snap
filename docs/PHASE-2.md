@@ -46,8 +46,8 @@ New **"Sign Soroban invoke"** card: builds a 1 XLM self-`transfer` invocation ag
 
 ## Deferred from the Phase 2 plan (tracked in [PLAN.md](PLAN.md))
 
-- **Token balances + `addToken`** (SAC/custom token metadata via simulated `name()`/`symbol()`/`decimals()`/`balance()` calls, per-network token registry in state): deferred — it is companion-dapp/home-page sugar rather than dapp-compatibility surface, and belongs with the Phase 4 home-page work where balances get displayed.
-- **Multisig awareness** (detect insufficient signature weight and label the result "pass to co-signers"): deferred — needs account signer/threshold fetching and careful per-op source handling; scheduled with Phase 4 polish.
+- **Token balances + `addToken`** (SAC/custom token metadata via simulated `name()`/`symbol()`/`decimals()`/`balance()` calls, per-network token registry in state): deferred — it is companion-dapp/home-page sugar rather than dapp-compatibility surface, and belongs with the Phase 4 home-page work where balances get displayed. **Subsequently shipped in Phase 4.**
+- **Multisig awareness** (detect insufficient signature weight and label the result "pass to co-signers"): deferred — needs account signer/threshold fetching and careful per-op source handling; scheduled with Phase 4 polish. **Subsequently shipped in Phase 4.**
 - **Restore-then-retry flow** (offering to submit a `restoreFootprint` transaction before the real one): the dialog warns loudly on `restorePreamble` today; the guided flow needs its own consent UX.
 
 ## Manual test drive

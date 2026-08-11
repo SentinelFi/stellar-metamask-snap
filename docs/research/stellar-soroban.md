@@ -244,10 +244,12 @@ Challenge tx with **sequence 0** (unrunnable), 15-min timebounds, ManageData ops
 
 ## Must-support checklist for the snap
 
-- [ ] SEP-5 derivation `m/44'/148'/x'` passing official test vectors
-- [ ] Sign: classic txs, **seq-0 SEP-10 challenges** (flagged as auth in UI), fee-bump envelopes, Soroban txs (single op, MEMO_NONE), address-credential auth entries, SEP-53 messages
-- [ ] Parse & display XDR (ops, amounts, memo, fees, invocation trees) — XDR is the only source of truth
-- [ ] Sequence fetch + simulation via RPC; honor `restorePreamble`
-- [ ] Network passphrase pinning per network; mismatch warnings
-- [ ] createAccount vs payment detection for unfunded destinations; friendbot on testnet
-- [ ] SEP-29 memo-required warning
+> All seven shipped and verified as of 2026-08-11 (Phases 1, 2, and 4). Implementing module noted per item.
+
+- [x] SEP-5 derivation `m/44'/148'/x'` passing official test vectors (`src/keys/index.ts`; vectors asserted in `index.test.tsx`, `phase4.test.tsx`, `soroban.test.tsx`)
+- [x] Sign: classic txs, **seq-0 SEP-10 challenges** (flagged as auth in UI), fee-bump envelopes, Soroban txs (single op, MEMO_NONE), address-credential auth entries, SEP-53 messages (`src/handlers/sign.tsx`; seq-0 and fee-bump branches in `src/ui/transaction.tsx`)
+- [x] Parse & display XDR (ops, amounts, memo, fees, invocation trees) — XDR is the only source of truth (`src/ui/transaction.tsx`, `src/stellar/soroban.ts`)
+- [x] Sequence fetch + simulation via RPC; honor `restorePreamble` (`src/stellar/rpc.ts`, `src/stellar/soroban.ts`). Note: a required restore is surfaced as an explicit dialog banner; the guided restore-then-retry flow remains deferred (see PHASE-4 parking lot)
+- [x] Network passphrase pinning per network; mismatch warnings (`src/handlers/sign.tsx`, which rejects a mismatching passphrase with SEP-43 `-3` rather than only warning)
+- [x] createAccount vs payment detection for unfunded destinations; friendbot on testnet (`src/stellar/safety.ts`, `src/handlers/account.tsx`)
+- [x] SEP-29 memo-required warning (`src/stellar/safety.ts`)

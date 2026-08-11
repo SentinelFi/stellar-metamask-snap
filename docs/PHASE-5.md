@@ -3,7 +3,7 @@
 > Prepared 2026-08-10. Plan reference: [PLAN.md](PLAN.md) Phase 5. Predecessors: Phases 0–4.
 > Status: **preparation complete — the remaining steps are external** (audit engagement, npm publish, directory submission) and listed in the checklist at the bottom.
 
-Unlike Phases 0–4, this phase is mostly process: the code is feature-complete and verified (31 snap + 8 connector tests, CI green). What follows is what was prepared, the decisions taken, and exactly what remains to do outside this repository.
+Unlike Phases 0–4, this phase is mostly process: the code is feature-complete and verified (79 snap + 8 connector tests, CI green). What follows is what was prepared, the decisions taken, and exactly what remains to do outside this repository.
 
 ## Hardening sweep (done)
 

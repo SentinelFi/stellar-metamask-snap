@@ -74,9 +74,9 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 
 - [x] `signTransaction` for Soroban txs: **in-snap display-verification simulation before the dialog** → estimated resource fee, decoded invocation (contract C-address, function, `scValToNative` args), required auth signers, `restorePreamble` **warning** (guided restore-then-retry flow deferred to Phase 4). Simulation failure renders a warning, never blocks review.
 - [x] `signAuthEntry`: decodes the entry, renders the invocation tree + nonce + `signatureExpirationLedger`, signs the HashIdPreimage via the SDK's `authorizeEntry`; preserves the dapp's expiration (defaults to latest+60 when unset).
-- [ ] Token balances via SAC simulation + `addToken({ contractId })` — **deferred to Phase 4** (belongs with home-page balance display; not dapp-compatibility surface).
+- [x] Token balances via SAC simulation + `addToken({ contractId })`: deferred from Phase 2 to Phase 4 (belongs with home-page balance display; not dapp-compatibility surface), **shipped in Phase 4** (`src/stellar/token.ts`, `src/handlers/account.tsx`).
 - [x] Fee-bump envelope support (display inner tx + who pays) — shipped early in Phase 1.
-- [ ] Multisig awareness: if account thresholds not met by our key, return signed XDR with an "insufficient weight — pass to co-signers" notice instead of failing. **Deferred to Phase 4** (needs signer/threshold fetching + per-op source handling).
+- [x] Multisig awareness: if account thresholds are not met by our key, return signed XDR with an "insufficient weight, pass to co-signers" notice instead of failing. Deferred from Phase 2 to Phase 4 (needed signer/threshold fetching plus per-op source handling), **shipped in Phase 4** (`src/stellar/safety.ts`; surfaced as a dialog banner and in the `warnings` result field).
 
 ## Phase 3 — Connector package + Wallets Kit module — ✅ DONE 2026-08-10 (notes: [PHASE-3.md](PHASE-3.md))
 
