@@ -62,12 +62,11 @@ yarn workspace stellar-soroban-snap test
 
 ## Documentation
 
-- [docs/MENTAL-MAP.md](docs/MENTAL-MAP.md) — architecture, key decisions, and risk map
-- [docs/PLAN.md](docs/PLAN.md) — phased implementation plan
+- [docs/MENTAL-MAP.md](docs/MENTAL-MAP.md): architecture, key decisions, and risk map
+- [docs/PLAN.md](docs/PLAN.md): phased implementation plan
 - Knowledge base ([docs/research/](docs/research/)):
-  - [metamask-snaps-platform.md](docs/research/metamask-snaps-platform.md) — Snaps runtime, permissions, entry points, UI, testing, allowlisting
-  - [stellar-soroban.md](docs/research/stellar-soroban.md) — Stellar accounts/transactions, SEP-5 derivation, Soroban simulation & auth entries, wallet interop SEPs
-  - [example-snaps-analysis.md](docs/research/example-snaps-analysis.md) — code analysis of the XRPL, Sui, and NEAR snaps + the existing `stellar-snap`
+  - [metamask-snaps-platform.md](docs/research/metamask-snaps-platform.md): Snaps runtime, permissions, entry points, UI, testing, allowlisting
+  - [stellar-soroban.md](docs/research/stellar-soroban.md): Stellar accounts/transactions, SEP-5 derivation, Soroban simulation and auth entries, wallet interop SEPs
 
 ## Approach
 
