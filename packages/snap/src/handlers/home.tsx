@@ -14,6 +14,7 @@ import type { NetworkName } from '../state/networks';
 import type { AccountSummary } from '../stellar/horizon';
 import { getAccountSummary } from '../stellar/horizon';
 import { readTokenBalance } from '../stellar/token';
+import { formatTokenAsset } from '../ui/format';
 
 export type HomePageProps = {
   network: NetworkName;
@@ -95,7 +96,12 @@ export async function homePage() {
             address,
             token.decimals,
           );
-          return balance === null ? null : { asset: token.symbol, balance };
+          return balance === null
+            ? null
+            : {
+                asset: formatTokenAsset(token.symbol, token.contractId),
+                balance,
+              };
         }),
       )
     ).filter(

@@ -1,7 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 import { Asset, LiquidityPoolAsset, Memo } from '@stellar/stellar-sdk';
 
-import { formatAsset, formatMemo, stroopsToXlm, truncate } from './format';
+import {
+  formatAsset,
+  formatMemo,
+  formatTokenAsset,
+  stroopsToXlm,
+  truncate,
+} from './format';
 
 const ISSUER = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
 
@@ -36,6 +42,22 @@ describe('formatAsset', () => {
       30,
     );
     expect(formatAsset(pool)).toBe('Liquidity pool shares');
+  });
+});
+
+describe('formatTokenAsset', () => {
+  const CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+
+  it('pairs the symbol with a truncated contract ID', () => {
+    expect(formatTokenAsset('USDC', CONTRACT)).toBe('USDC (CDLZ…CYSC)');
+  });
+
+  it('keeps a token calling itself XLM distinguishable from the native row', () => {
+    // Regression: the home page used to render the bare contract-reported
+    // symbol, letting a hostile token impersonate the native XLM balance.
+    const label = formatTokenAsset('XLM', CONTRACT);
+    expect(label).not.toBe('XLM');
+    expect(label).toContain('CDLZ');
   });
 });
 

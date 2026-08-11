@@ -32,6 +32,20 @@ export function formatAsset(asset: unknown): string {
 }
 
 /**
+ * Display label for a tracked Soroban token: symbol plus truncated contract
+ * ID (`SYM (CDLZ…CYSC)`). The symbol is contract-reported and untrusted, so
+ * it is never shown bare — a token calling itself `XLM` must remain
+ * distinguishable from the native balance row.
+ *
+ * @param symbol - The token's contract-reported symbol.
+ * @param contractId - The token's contract address.
+ * @returns The display label.
+ */
+export function formatTokenAsset(symbol: string, contractId: string): string {
+  return `${symbol} (${truncate(contractId, 4)})`;
+}
+
+/**
  * Converts a stroop count to a decimal XLM string (BigInt-safe).
  *
  * @param stroops - Amount in stroops (1 XLM = 10,000,000 stroops).

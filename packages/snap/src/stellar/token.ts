@@ -76,11 +76,47 @@ async function readContract(
 export type TokenMetadata = { symbol: string; decimals: number };
 
 /**
+ * Upper bound for token decimals (i128 fits 38 digits). Larger values are
+ * hostile: `10n ** BigInt(decimals)` grows without bound.
+ */
+export const MAX_TOKEN_DECIMALS = 38;
+
+/** Symbols must be short printable ASCII — no control/bidi spoofing chars. */
+const SYMBOL_PATTERN = /^[!-~]{1,12}$/u;
+
+/**
+ * Validates contract-reported token metadata. The contract is chosen by the
+ * dapp and fully attacker-controllable, so its answers are untrusted input:
+ * an oversized `decimals` would hang balance formatting, and an unprintable
+ * or overlong `symbol` could spoof the balance display.
+ *
+ * @param symbol - The contract-reported symbol.
+ * @param decimals - The contract-reported decimals.
+ * @returns The validated metadata, or null when out of bounds.
+ */
+export function sanitizeTokenMetadata(
+  symbol: unknown,
+  decimals: unknown,
+): TokenMetadata | null {
+  if (
+    typeof symbol !== 'string' ||
+    !SYMBOL_PATTERN.test(symbol) ||
+    typeof decimals !== 'number' ||
+    !Number.isInteger(decimals) ||
+    decimals < 0 ||
+    decimals > MAX_TOKEN_DECIMALS
+  ) {
+    return null;
+  }
+  return { symbol, decimals };
+}
+
+/**
  * Reads a token's SEP-41 metadata (`symbol`, `decimals`) via simulation.
  *
  * @param network - The active network config.
  * @param contractId - The token contract address.
- * @returns The metadata, or null when it cannot be read.
+ * @returns The metadata, or null when it cannot be read or fails validation.
  */
 export async function readTokenMetadata(
   network: NetworkConfig,
@@ -90,10 +126,7 @@ export async function readTokenMetadata(
     readContract(network, contractId, 'symbol', []),
     readContract(network, contractId, 'decimals', []),
   ]);
-  if (typeof symbol !== 'string' || typeof decimals !== 'number') {
-    return null;
-  }
-  return { symbol, decimals };
+  return sanitizeTokenMetadata(symbol, decimals);
 }
 
 /**
@@ -112,6 +145,15 @@ export async function readTokenBalance(
   address: string,
   decimals: number,
 ): Promise<string | null> {
+  // Defense in depth against corrupt state: metadata is validated when the
+  // token is added, but the exponentiation below must never see a bad value.
+  if (
+    !Number.isInteger(decimals) ||
+    decimals < 0 ||
+    decimals > MAX_TOKEN_DECIMALS
+  ) {
+    return null;
+  }
   const raw = await readContract(network, contractId, 'balance', [
     new Address(address).toScVal(),
   ]);
