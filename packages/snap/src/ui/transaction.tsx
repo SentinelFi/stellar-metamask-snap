@@ -14,7 +14,13 @@ import type { FeeBumpTransaction, OperationRecord } from '@stellar/stellar-sdk';
 import { Transaction } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
-import { formatAsset, formatMemo, stroopsToXlm, truncate } from './format';
+import {
+  formatAsset,
+  formatMemo,
+  sanitizeInlineText,
+  stroopsToXlm,
+  truncate,
+} from './format';
 import type { NetworkName } from '../state/networks';
 import type { SimulationSummary } from '../stellar/soroban';
 import { decodeHostFunction } from '../stellar/soroban';
@@ -134,13 +140,18 @@ function renderOperation(
             <Bold>{`${title}: Manage data`}</Bold>
           </Text>
           <Row label="Key">
-            <Text>{operation.name}</Text>
+            <Text>{sanitizeInlineText(operation.name)}</Text>
           </Row>
           <Row label="Value">
             <Text>
               {operation.value === undefined
                 ? 'Delete entry'
-                : truncate(Buffer.from(operation.value).toString('utf8'), 24)}
+                : truncate(
+                    sanitizeInlineText(
+                      Buffer.from(operation.value).toString('utf8'),
+                    ),
+                    24,
+                  )}
             </Text>
           </Row>
         </Section>
@@ -235,7 +246,7 @@ function renderOperation(
           <Text>Contract</Text>
           <Copyable value={decoded.contract ?? ''} />
           <Row label="Function">
-            <Text>{decoded.functionName ?? ''}</Text>
+            <Text>{sanitizeInlineText(decoded.functionName ?? '')}</Text>
           </Row>
           {decoded.args.length > 0 ? (
             <Text>Arguments</Text>

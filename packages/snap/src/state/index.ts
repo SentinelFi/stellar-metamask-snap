@@ -110,6 +110,42 @@ export async function getActiveNetwork(): Promise<NetworkConfig> {
 }
 
 /**
+ * Object keys that resolve to inherited properties.
+ * MetaMask supplies real URL origins, so
+ * these never occur in practice — the guard is defense in depth.
+ */
+const FORBIDDEN_STATE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Whether a string is safe to use as a state-object key.
+ *
+ * @param key - The candidate key (an origin).
+ * @returns False for keys that would touch the prototype chain.
+ */
+export function isSafeStateKey(key: string): boolean {
+  return !FORBIDDEN_STATE_KEYS.has(key);
+}
+
+/**
+ * Whether `origins` holds an own grant for this origin. Uses `hasOwnProperty`
+ * (not `origins[origin]`) so a crafted origin such as `__proto__` cannot
+ * report a phantom grant via the prototype chain.
+ *
+ * @param origins - The origins map from state.
+ * @param origin - The dapp origin.
+ * @returns True when an own grant exists.
+ */
+export function originHasGrant(
+  origins: SnapState['origins'],
+  origin: string,
+): boolean {
+  return (
+    isSafeStateKey(origin) &&
+    Object.prototype.hasOwnProperty.call(origins, origin)
+  );
+}
+
+/**
  * Whether the origin has a standing connection grant.
  *
  * @param origin - The dapp origin.
@@ -117,7 +153,7 @@ export async function getActiveNetwork(): Promise<NetworkConfig> {
  */
 export async function isOriginConnected(origin: string): Promise<boolean> {
   const state = await getState();
-  return Boolean(state.origins[origin]);
+  return originHasGrant(state.origins, origin);
 }
 
 /**
@@ -126,8 +162,11 @@ export async function isOriginConnected(origin: string): Promise<boolean> {
  * @param origin - The dapp origin the user approved.
  */
 export async function connectOrigin(origin: string): Promise<void> {
+  if (!isSafeStateKey(origin)) {
+    return;
+  }
   const state = await getState();
-  if (!state.origins[origin]) {
+  if (!originHasGrant(state.origins, origin)) {
     state.origins[origin] = { connectedAt: new Date().toISOString() };
     await saveState(state);
   }
@@ -163,7 +202,7 @@ export async function removeToken(
  */
 export async function disconnectOrigin(origin: string): Promise<void> {
   const state = await getState();
-  if (!state.origins[origin]) {
+  if (!originHasGrant(state.origins, origin)) {
     return;
   }
   const origins = { ...state.origins };

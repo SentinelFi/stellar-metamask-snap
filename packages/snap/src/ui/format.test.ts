@@ -6,6 +6,7 @@ import {
   formatAsset,
   formatMemo,
   formatTokenAsset,
+  sanitizeInlineText,
   stroopsToXlm,
   truncate,
 } from './format';
@@ -103,6 +104,30 @@ describe('containsHiddenCharacters', () => {
   });
 });
 
+describe('sanitizeInlineText', () => {
+  it('leaves ordinary text unchanged', () => {
+    expect(sanitizeInlineText('transfer')).toBe('transfer');
+    expect(sanitizeInlineText('héllo 漢字 ✓')).toBe('héllo 漢字 ✓');
+  });
+
+  it('strips newlines so a memo cannot forge extra dialog lines', () => {
+    expect(sanitizeInlineText('sign data\n\n**Spoofed field**: x')).toBe(
+      'sign data **Spoofed field**: x',
+    );
+  });
+
+  it('replaces control, format, and bidi characters with a space', () => {
+    expect(sanitizeInlineText('pay 1\u202E001')).toBe('pay 1 001');
+    expect(sanitizeInlineText('a\u200Bb')).toBe('a b');
+    expect(sanitizeInlineText('beep\u0007')).toBe('beep');
+    expect(sanitizeInlineText('soft\u00ADhyphen')).toBe('soft hyphen');
+  });
+
+  it('collapses runs of whitespace and trims', () => {
+    expect(sanitizeInlineText('  a\t\t b  ')).toBe('a b');
+  });
+});
+
 describe('formatMemo', () => {
   it('renders each memo type', () => {
     expect(formatMemo(Memo.text('hello'))).toStrictEqual([
@@ -124,5 +149,9 @@ describe('formatMemo', () => {
 
   it('returns null for an empty memo', () => {
     expect(formatMemo(Memo.none())).toBeNull();
+  });
+
+  it('sanitizes dapp-controlled text memos', () => {
+    expect(formatMemo(Memo.text('a\nb'))).toStrictEqual(['Memo (text)', 'a b']);
   });
 });

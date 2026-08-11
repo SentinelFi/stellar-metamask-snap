@@ -75,6 +75,25 @@ export function containsHiddenCharacters(value: string): boolean {
 }
 
 /**
+ * Sanitizes a dapp-controlled string for inline display in a dialog `Text`
+ * or `Row`. Control, format, and direction-altering characters (newlines,
+ * bidi overrides, zero-width marks) are replaced with a space and runs of
+ * whitespace collapsed, so an attacker cannot forge extra dialog lines or
+ * fake fields. Free-form fields that
+ * must survive verbatim (e.g. the signed message) belong in `Copyable`,
+ * which ignores markup, rather than here.
+ *
+ * @param value - The untrusted string to display.
+ * @returns The display-safe string.
+ */
+export function sanitizeInlineText(value: string): string {
+  return value
+    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+/**
  * Renders a memo for display.
  *
  * @param memo - The transaction memo.
@@ -83,7 +102,7 @@ export function containsHiddenCharacters(value: string): boolean {
 export function formatMemo(memo: Memo): [string, string] | null {
   switch (memo.type) {
     case 'text':
-      return ['Memo (text)', memo.value?.toString() ?? ''];
+      return ['Memo (text)', sanitizeInlineText(memo.value?.toString() ?? '')];
     case 'id':
       return ['Memo (ID)', String(memo.value)];
     case 'hash':
