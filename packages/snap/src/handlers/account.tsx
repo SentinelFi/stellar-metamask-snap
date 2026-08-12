@@ -75,11 +75,32 @@ export async function fund(
 }
 
 /**
+ * Resolves a dapp-requested address to one of the wallet's revealed
+ * accounts, failing closed on anything else.
+ *
+ * @param requested - The dapp-supplied `address` option.
+ * @returns The matching owned address.
+ * @throws An invalid-request error when the wallet does not hold it.
+ */
+async function resolveOwnedAddress(requested: string): Promise<string> {
+  const owned = await getOwnedAccounts();
+  const match = owned.find((entry) => entry.address === requested);
+  if (!match) {
+    throw invalidRequest(
+      'getBalances can only target an account of this wallet.',
+    );
+  }
+  return match.address;
+}
+
+/**
  * `getBalances` — classic Horizon balances plus tracked Soroban token
- * balances (read via simulation) for the active network.
+ * balances (read via simulation) for the active network. Like `fund`, only
+ * the wallet's own accounts may be queried: the wallet is not a lookup
+ * proxy for arbitrary third-party accounts.
  *
  * @param origin - The requesting dapp origin.
- * @param params - Optional `{ address }`; defaults to the wallet address.
+ * @param params - Optional `{ address }`; must be a wallet account address.
  * @returns The account summary (`funded: false` when not on-ledger).
  */
 export async function getBalances(
@@ -90,7 +111,11 @@ export async function getBalances(
   const request = validate(params ?? {}, OptionalAddressParams);
   const network = await getActiveNetwork();
 
-  const address = request.address ?? (await getWalletAddress());
+  const active = await getWalletAddress();
+  const address =
+    request.address === undefined || request.address === active
+      ? active
+      : await resolveOwnedAddress(request.address);
   const summary = await getAccountSummary(network.horizonUrl, address);
 
   // Append tracked-token balances (best-effort; failures are skipped).

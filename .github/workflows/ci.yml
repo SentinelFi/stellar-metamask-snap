@@ -44,6 +44,12 @@ jobs:
       - name: Verify bundle contains no insecure randomness
         run: "! grep -qE 'Math\\.random|Math\\[.random' packages/snap/dist/bundle.js"
 
+      # Direct runtime dependencies must stay advisory-free. The transitive
+      # graph is analyzed separately (docs/THREAT-MODEL.md §5): advisories
+      # there are checked against the built bundle, not gated here.
+      - name: Audit snap runtime dependencies
+        run: yarn workspace stellar-soroban-snap npm audit --environment production
+
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
 

@@ -283,6 +283,15 @@ export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
       grant any spending permission.
     </Text>
     {originCautionBanner(origin)}
+    {symbol.toUpperCase() === 'XLM' ? (
+      <Banner title="Not the native asset" severity="warning">
+        <Text>
+          This contract calls itself XLM, but it is not the native lumen asset.
+          Its balance rows always show the contract address next to the symbol
+          so the two stay distinguishable.
+        </Text>
+      </Banner>
+    ) : null}
     <Section>
       <Row label="Symbol">
         <Text>{symbol}</Text>

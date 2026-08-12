@@ -470,6 +470,23 @@ describe('fund / getBalances', () => {
     expect(error.message).toContain('an account of this wallet');
   });
 
+  it('getBalances rejects an address the wallet does not hold', async () => {
+    const { request } = await install();
+    await connect(request);
+
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'getBalances',
+        params: {
+          address: 'GBAW5XGWORWVFE2XTJYDTLDHXTY2Q2MO73HYCGB3XMFMQ562Q2W2GJQX',
+        },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('an account of this wallet');
+  });
+
   it('fund is refused on PUBLIC', async () => {
     const { request } = await install();
     await connect(request);
@@ -510,4 +527,32 @@ describe('unknown methods', () => {
     const error = getError(await request({ origin: ORIGIN, method: 'foo' }));
     expect(error.message).toContain('Method not found');
   });
+});
+
+describe('dialog cooldown', () => {
+  it('throttles an origin after three consecutive rejections', async () => {
+    const { request } = await install();
+
+    for (let i = 0; i < 3; i++) {
+      const pending = request({
+        origin: ORIGIN,
+        method: 'signMessage',
+        params: { message: 'hello' },
+      });
+      const ui = await pending.getInterface();
+      await (ui as { cancel: () => Promise<void> }).cancel();
+      expect(getError(await pending).data?.code).toBe(-4);
+    }
+
+    // The fourth attempt is refused without a dialog.
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signMessage',
+        params: { message: 'hello' },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('Try again in');
+  }, 45000);
 });

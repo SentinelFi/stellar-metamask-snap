@@ -118,6 +118,20 @@ describe('formatScVal', () => {
     ).toBe('[u32(1), sym(a)]');
   });
 
+  it('tags the raw-XDR fallback and reports it like truncation', () => {
+    // A value that parses structurally but throws during rendering must not
+    // display as bare base64 (which could imitate a strkey address).
+    const broken = {
+      switch: () => {
+        throw new Error('unrenderable');
+      },
+      toXDR: () => 'AAAA',
+    } as unknown as xdr.ScVal;
+    const flags = { truncated: false };
+    expect(formatScVal(broken, 0, flags)).toBe('xdr(AAAA)');
+    expect(flags.truncated).toBe(true);
+  });
+
   it('stringifies BigInt-valued i128 without throwing', () => {
     const big = xdr.ScVal.scvI128(
       new xdr.Int128Parts({

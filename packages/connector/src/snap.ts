@@ -333,9 +333,11 @@ export class StellarSnap {
 
   /**
    * Balances + sequence via Horizon, plus tracked Soroban token balances
-   * (requires a connected origin).
+   * (requires a connected origin). Like `fund`, only the wallet's own
+   * accounts may be queried.
    *
-   * @param address - Optional address; defaults to the wallet account.
+   * @param address - Optional address; must be one of the wallet's revealed
+   * accounts. Defaults to the active account.
    * @returns The account summary.
    */
   async getBalances(address?: string): Promise<BalancesResult> {

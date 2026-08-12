@@ -77,8 +77,8 @@ type TruncationFlags = { truncated: boolean };
  * `bytes(6a6f…)`) so values of different types can never render
  * identically. Bounded in depth, item count, and byte length; truncation is
  * always marked explicitly and reported via `flags` so authorization
- * rendering can fail closed on it. Falls back to the raw base64 XDR when a
- * value cannot be decoded.
+ * rendering can fail closed on it. A value that cannot be rendered falls
+ * back to its raw XDR in tagged form, `xdr(<base64>)`.
  *
  * @param value - The ScVal to render.
  * @param depth - Current nesting depth.
@@ -93,7 +93,13 @@ export function formatScVal(
   try {
     return formatScValInner(value, depth, flags);
   } catch {
-    return value.toXDR('base64');
+    // The value parsed structurally but cannot be rendered. Tag the raw-XDR
+    // fallback so it can never imitate a typed rendering: bare base64 is
+    // attacker-influenced text whose alphabet covers strkey addresses, so an
+    // untagged fallback could be crafted to resemble a G.../C... address.
+    // Report it like a truncation so authorization contexts fail closed.
+    flags.truncated = true;
+    return `xdr(${value.toXDR('base64')})`;
   }
 }
 
