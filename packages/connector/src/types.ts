@@ -121,3 +121,20 @@ export type SignTransactionResultWithWarnings = SignTransactionResult & {
   /** Advisory safety warnings the snap surfaced (may be absent). */
   warnings?: string[];
 };
+
+/** A wallet account the user has revealed. */
+export type AccountInfo = {
+  /** The SEP-0005 account index (`x` in `m/44'/148'/x'`). */
+  index: number;
+  /** The account's `G...` address. */
+  address: string;
+};
+
+export type GetAccountsResult = {
+  /** Every revealed account, in index order. */
+  accounts: AccountInfo[];
+  /** The active account's index. */
+  activeIndex: number;
+};
+
+export type SetActiveAccountResult = AccountInfo;

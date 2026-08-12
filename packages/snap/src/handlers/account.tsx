@@ -1,4 +1,4 @@
-import { getWalletAddress } from '../keys';
+import { getOwnedAccounts, getWalletAddress } from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
 import {
   AddTokenParams,
@@ -38,12 +38,13 @@ export async function assertConnected(origin: string): Promise<void> {
 
 /**
  * `fund`: request friendbot funding (test networks only). Only the wallet's
- * own address may be funded: there is no per-call dialog, so accepting an
+ * own accounts may be funded: there is no per-call dialog, so accepting an
  * arbitrary address would let any connected origin drive friendbot traffic
- * to accounts the user never chose.
+ * to accounts the user never chose. Defaults to the active account; any
+ * revealed account's address is accepted.
  *
  * @param origin - The requesting dapp origin.
- * @param params - Optional `{ address }`; must equal the wallet address.
+ * @param params - Optional `{ address }`; must be a wallet account address.
  * @returns The funded address.
  */
 export async function fund(
@@ -60,12 +61,17 @@ export async function fund(
     );
   }
 
-  const walletAddress = await getWalletAddress();
-  if (request.address !== undefined && request.address !== walletAddress) {
-    throw invalidRequest('fund can only target the connected wallet address.');
+  let address = await getWalletAddress();
+  if (request.address !== undefined && request.address !== address) {
+    const owned = await getOwnedAccounts();
+    const match = owned.find((entry) => entry.address === request.address);
+    if (!match) {
+      throw invalidRequest('fund can only target an account of this wallet.');
+    }
+    address = match.address;
   }
-  await requestFriendbot(network.friendbotUrl, walletAddress);
-  return { funded: true, address: walletAddress };
+  await requestFriendbot(network.friendbotUrl, address);
+  return { funded: true, address };
 }
 
 /**

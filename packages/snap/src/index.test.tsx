@@ -452,10 +452,11 @@ describe('fund / getBalances', () => {
     }
   });
 
-  it('fund rejects an address other than the wallet address', async () => {
+  it('fund rejects an address the wallet does not hold', async () => {
     const { request } = await install();
     await connect(request);
 
+    // Index 1 is derivable but not revealed: fund must not target it.
     const error = getError(
       await request({
         origin: ORIGIN,
@@ -466,7 +467,7 @@ describe('fund / getBalances', () => {
       }),
     );
     expect(error.data?.code).toBe(-3);
-    expect(error.message).toContain('connected wallet address');
+    expect(error.message).toContain('an account of this wallet');
   });
 
   it('fund is refused on PUBLIC', async () => {

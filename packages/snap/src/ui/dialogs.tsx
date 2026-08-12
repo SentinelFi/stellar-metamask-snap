@@ -155,6 +155,8 @@ export type SignAuthEntryDialogProps = {
   origin: string;
   network: NetworkName;
   address: string;
+  /** The SEP-0005 index of the authorizing account. */
+  accountIndex: number;
   /** Human-readable invocation tree, root first. */
   invocations: string[];
   nonce: string;
@@ -189,6 +191,7 @@ function approxDuration(ledgers: number): string {
  * @param props.origin - The requesting dapp origin.
  * @param props.network - The active network name.
  * @param props.address - The authorizing account.
+ * @param props.accountIndex - The authorizing account's SEP-0005 index.
  * @param props.invocations - Rendered invocation tree, root first.
  * @param props.nonce - The entry's replay-protection nonce.
  * @param props.signatureExpirationLedger - Ledger after which the signature
@@ -200,6 +203,7 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
   origin,
   network,
   address,
+  accountIndex,
   invocations,
   nonce,
   signatureExpirationLedger,
@@ -244,7 +248,9 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
       <Row label="Nonce">
         <Text>{nonce}</Text>
       </Row>
-      <Text>Authorizing account</Text>
+      <Row label="Authorizing account">
+        <Text>{`Account ${accountIndex}`}</Text>
+      </Row>
       <Copyable value={address} />
     </Section>
     <ConnectionGrantNotice origin={origin} />
@@ -303,6 +309,8 @@ export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
 export type SignMessageDialogProps = {
   origin: string;
   address: string;
+  /** The SEP-0005 index of the signing account. */
+  accountIndex: number;
   message: string;
   /** The message contains control/bidi characters that can spoof display. */
   hasHiddenCharacters: boolean;
@@ -313,7 +321,8 @@ export type SignMessageDialogProps = {
  *
  * @param props - Origin, signing address, and the message.
  * @param props.origin - The requesting dapp origin.
- * @param props.address - The wallet's Stellar address.
+ * @param props.address - The signing account's Stellar address.
+ * @param props.accountIndex - The signing account's SEP-0005 index.
  * @param props.message - The message to sign.
  * @param props.hasHiddenCharacters - Whether the message contains hidden
  * characters (the exact bytes are signed either way; the user is warned).
@@ -322,6 +331,7 @@ export type SignMessageDialogProps = {
 export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
   origin,
   address,
+  accountIndex,
   message,
   hasHiddenCharacters,
 }) => (
@@ -345,9 +355,95 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
     <Section>
       <Text>Message</Text>
       <Copyable value={message} />
-      <Text>Signing account</Text>
+      <Row label="Signing account">
+        <Text>{`Account ${accountIndex}`}</Text>
+      </Row>
       <Copyable value={address} />
     </Section>
     <ConnectionGrantNotice origin={origin} />
+  </Box>
+);
+
+export type AddAccountDialogProps = {
+  index: number;
+  address: string;
+};
+
+/**
+ * Confirmation for revealing the next SEP-0005 account (home-page flow).
+ * Revealing an account makes it selectable for signing and visible to
+ * connected sites via account enumeration.
+ *
+ * @param props - The dialog props.
+ * @param props.index - The SEP-0005 index being revealed.
+ * @param props.address - The address derived for that index.
+ * @returns The dialog content.
+ */
+export const AddAccountDialog: SnapComponent<AddAccountDialogProps> = ({
+  index,
+  address,
+}) => (
+  <Box>
+    <Heading>Add account</Heading>
+    <Text>
+      {`This adds account ${index} (SEP-0005 path m/44'/148'/${index}') to this wallet. The same account appears in any SEP-0005 wallet restored from this secret recovery phrase.`}
+    </Text>
+    <Section>
+      <Row label="Account">
+        <Text>{`Account ${index}`}</Text>
+      </Row>
+      <Text>Address</Text>
+      <Copyable value={address} />
+    </Section>
+    <Text>
+      Connected sites that enumerate your accounts will see this address. If you
+      keep separate accounts to avoid linking activity, be aware they are
+      disclosed together.
+    </Text>
+  </Box>
+);
+
+export type SwitchAccountDialogProps = {
+  origin: string;
+  fromIndex: number;
+  toIndex: number;
+  toAddress: string;
+};
+
+/**
+ * Active-account switch confirmation (RPC `setActiveAccount`). Wallet-global,
+ * mirroring the network switch.
+ *
+ * @param props - The dialog props.
+ * @param props.origin - The requesting dapp origin.
+ * @param props.fromIndex - The currently active account index.
+ * @param props.toIndex - The requested account index.
+ * @param props.toAddress - The requested account's address.
+ * @returns The dialog content.
+ */
+export const SwitchAccountDialog: SnapComponent<SwitchAccountDialogProps> = ({
+  origin,
+  fromIndex,
+  toIndex,
+  toAddress,
+}) => (
+  <Box>
+    <Heading>Switch account</Heading>
+    <Text>
+      <Bold>{displayOrigin(origin)}</Bold> wants to switch the active account.
+      This setting is wallet-global: every connected site sees the new active
+      account, not just this one.
+    </Text>
+    {originCautionBanner(origin)}
+    <Section>
+      <Row label="From">
+        <Text>{`Account ${fromIndex}`}</Text>
+      </Row>
+      <Row label="To">
+        <Text>{`Account ${toIndex}`}</Text>
+      </Row>
+      <Text>New active address</Text>
+      <Copyable value={toAddress} />
+    </Section>
   </Box>
 );

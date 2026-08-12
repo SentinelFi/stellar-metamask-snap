@@ -12,6 +12,7 @@ import {
 import { StrKey } from '@stellar/stellar-sdk';
 
 import { invalidRequest } from './errors';
+import { AccountIndexStruct } from '../state';
 import { NETWORK_NAMES } from '../state/networks';
 
 /**
@@ -92,6 +93,11 @@ export const SignAuthEntryParams = object({
 
 export const SetNetworkParams = object({
   network: enums(NETWORK_NAMES),
+});
+
+export const SetActiveAccountParams = object({
+  /** A revealed SEP-0005 account index. */
+  index: AccountIndexStruct,
 });
 
 export const OptionalAddressParams = object({

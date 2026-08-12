@@ -9,7 +9,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
-import { deriveKeypair } from '../keys';
+import { resolveSigningKeypair } from '../keys';
 import {
   externalServiceError,
   invalidRequest,
@@ -84,11 +84,12 @@ export async function signTransaction(
     throw invalidRequest('Could not parse the transaction XDR.');
   }
 
-  const keypair = await deriveKeypair(0);
+  // SEP-43 `address` option: resolve to an owned, revealed account (or the
+  // active account when absent); a non-owned address is rejected.
+  const { keypair, index: accountIndex } = await resolveSigningKeypair(
+    request.address,
+  );
   const signerAddress = keypair.publicKey();
-  if (request.address !== undefined && request.address !== signerAddress) {
-    throw invalidRequest('Unknown address: this wallet cannot sign for it.');
-  }
 
   // Resolve the transaction that carries the operations: for a fee bump that
   // is the inner transaction, so a fee-bumped Soroban tx is still recognised
@@ -173,6 +174,7 @@ export async function signTransaction(
         tx,
         xdr: request.xdr,
         signingAddress: signerAddress,
+        accountIndex,
         simulation,
         warnings,
         submit: Boolean(request.submit),
@@ -293,16 +295,24 @@ export async function signAuthEntry(
     );
   }
 
-  const keypair = await deriveKeypair(0);
-  const signerAddress = keypair.publicKey();
-  if (request.address !== undefined && request.address !== signerAddress) {
-    throw invalidRequest('Unknown address: this wallet cannot sign for it.');
+  // The entry itself names the authorizing account, so it selects the
+  // signing account — resolved among owned, revealed accounts only. An
+  // explicit `address` option must agree with the entry.
+  if (request.address !== undefined && request.address !== decoded.address) {
+    throw invalidRequest(
+      'The address option does not match the account named by the authorization entry.',
+    );
   }
-  if (decoded.address !== signerAddress) {
+  let signer: Awaited<ReturnType<typeof resolveSigningKeypair>>;
+  try {
+    signer = await resolveSigningKeypair(decoded.address);
+  } catch {
     throw invalidRequest(
       'The authorization entry names a different account than this wallet.',
     );
   }
+  const { keypair, index: accountIndex } = signer;
+  const signerAddress = keypair.publicKey();
 
   // Bound the signature lifetime against the current ledger: reject
   // an already-expired entry and cap how far in the future it may reach, so
@@ -344,6 +354,7 @@ export async function signAuthEntry(
           origin={origin}
           network={network.name}
           address={signerAddress}
+          accountIndex={accountIndex}
           invocations={decoded.invocations}
           nonce={decoded.nonce ?? '0'}
           signatureExpirationLedger={validUntil}
@@ -383,11 +394,10 @@ export async function signMessage(
 ): Promise<{ signedMessage: string; signerAddress: string }> {
   const request = validate(params, SignMessageParams);
 
-  const keypair = await deriveKeypair(0);
+  const { keypair, index: accountIndex } = await resolveSigningKeypair(
+    request.address,
+  );
   const signerAddress = keypair.publicKey();
-  if (request.address !== undefined && request.address !== signerAddress) {
-    throw invalidRequest('Unknown address: this wallet cannot sign for it.');
-  }
 
   const approved = await snap.request({
     method: 'snap_dialog',
@@ -397,6 +407,7 @@ export async function signMessage(
         <SignMessageDialog
           origin={origin}
           address={signerAddress}
+          accountIndex={accountIndex}
           message={request.message}
           hasHiddenCharacters={containsHiddenCharacters(request.message)}
         />

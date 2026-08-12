@@ -110,7 +110,7 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 
 ## Open questions (resolve during Phase 0–1)
 
-1. Multiple accounts (index x' > 0) in v1, or single account like Sui? Leaning: support index param in API from day 1, UI for it later.
+1. Multiple accounts (index x' > 0) in v1, or single account like Sui? Leaning: support index param in API from day 1, UI for it later. Resolved 2026-08-12: implemented per [MULTI-ACCOUNT.md](MULTI-ACCOUNT.md) (account registry, home-page add/switch, `getAccounts`/`setActiveAccount`, SEP-43 `address` resolution).
 2. Submit-in-snap (`submit: true`) in v1 or leave broadcasting to dapps? Leaning: support both; connector defaults to dapp-side submit.
 3. Full stellar-sdk vs `/base`-only + hand-rolled fetch clients — decided by Spike A bundle size/SES result.
 4. snaps-jest: can we inject a fixed SRP for end-to-end derivation vector tests? If not, restructure so the SLIP-10 math is testable in isolation.

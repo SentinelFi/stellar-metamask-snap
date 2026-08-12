@@ -4,15 +4,21 @@ import {
   addToken,
   connectOrigin,
   isSafeStateKey,
+  MAX_ACCOUNT_INDEX,
   MAX_TRACKED_TOKENS,
+  nextAccountIndex,
   originHasGrant,
   parseState,
+  revealAccount,
+  setActiveAccount,
   setActiveNetwork,
 } from '.';
 
 const VALID_STATE = {
-  version: 1,
+  version: 2,
   network: 'TESTNET',
+  activeAccount: 0,
+  accounts: [0],
   origins: { 'https://dapp.example': { connectedAt: '2026-08-11T00:00:00Z' } },
   tokens: {
     TESTNET: [
@@ -25,9 +31,18 @@ const VALID_STATE = {
   },
 };
 
-const DEFAULT_STATE = {
+const V1_STATE = {
   version: 1,
   network: 'TESTNET',
+  origins: VALID_STATE.origins,
+  tokens: VALID_STATE.tokens,
+};
+
+const DEFAULT_STATE = {
+  version: 2,
+  network: 'TESTNET',
+  activeAccount: 0,
+  accounts: [0],
   origins: {},
   tokens: {},
 };
@@ -35,21 +50,63 @@ const DEFAULT_STATE = {
 describe('parseState', () => {
   it('passes valid state through unchanged', () => {
     expect(parseState(VALID_STATE)).toStrictEqual(VALID_STATE);
+    const multi = { ...VALID_STATE, activeAccount: 2, accounts: [0, 1, 2] };
+    expect(parseState(multi)).toStrictEqual(multi);
   });
 
   it('accepts state without the optional tokens map', () => {
     const withoutTokens = {
-      version: 1,
+      version: 2,
       network: 'TESTNET',
+      activeAccount: 0,
+      accounts: [0],
       origins: VALID_STATE.origins,
     };
     expect(parseState(withoutTokens)).toStrictEqual(withoutTokens);
   });
 
+  it('migrates a valid version-1 state in place', () => {
+    // A pre-multi-account wallet keeps its network, grants, and tokens, and
+    // gains the default account fields, rather than resetting.
+    expect(parseState(V1_STATE)).toStrictEqual(VALID_STATE);
+  });
+
   it('resets to defaults on an unknown version', () => {
     // Regression: stored state used to be cast unchecked, so a downgrade
     // from a future state version would flow into signing/display paths.
-    expect(parseState({ ...VALID_STATE, version: 2 })).toStrictEqual(
+    expect(parseState({ ...VALID_STATE, version: 3 })).toStrictEqual(
+      DEFAULT_STATE,
+    );
+  });
+
+  it('coerces a stray active account back to 0', () => {
+    // An activeAccount outside the revealed set must not be trusted into
+    // derivation and display paths.
+    expect(
+      parseState({ ...VALID_STATE, activeAccount: 5, accounts: [0, 1] }),
+    ).toStrictEqual({ ...VALID_STATE, activeAccount: 0, accounts: [0, 1] });
+  });
+
+  it('normalizes the account set (dedupe, sort, always include 0)', () => {
+    expect(
+      parseState({ ...VALID_STATE, activeAccount: 1, accounts: [2, 1, 1] }),
+    ).toStrictEqual({ ...VALID_STATE, activeAccount: 1, accounts: [0, 1, 2] });
+  });
+
+  it('resets on out-of-range or non-integer account indices', () => {
+    expect(
+      parseState({ ...VALID_STATE, accounts: [0, MAX_ACCOUNT_INDEX] }),
+    ).toStrictEqual(DEFAULT_STATE);
+    expect(parseState({ ...VALID_STATE, accounts: [0, -1] })).toStrictEqual(
+      DEFAULT_STATE,
+    );
+    expect(parseState({ ...VALID_STATE, accounts: [0, 1.5] })).toStrictEqual(
+      DEFAULT_STATE,
+    );
+    expect(parseState({ ...VALID_STATE, accounts: [] })).toStrictEqual(
+      DEFAULT_STATE,
+    );
+    expect(parseState({ ...VALID_STATE, activeAccount: -1 })).toStrictEqual(
       DEFAULT_STATE,
     );
   });
@@ -184,5 +241,56 @@ describe('locked state mutations', () => {
         decimals: 7,
       }),
     ).toBe(false);
+  });
+
+  it('reveals only the next contiguous account index', async () => {
+    await revealAccount(1);
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0, 1]);
+
+    // Re-revealing is a quiet no-op.
+    await revealAccount(1);
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0, 1]);
+
+    // A stale approval (the set moved while the dialog was open) must not
+    // add a different account than the one displayed.
+    await expect(revealAccount(3)).rejects.toThrow(
+      'The account list changed while the dialog was open.',
+    );
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0, 1]);
+  });
+
+  it('rejects revealing past the account cap', async () => {
+    stored = {
+      ...structuredClone(VALID_STATE),
+      activeAccount: 0,
+      accounts: Array.from({ length: MAX_ACCOUNT_INDEX }, (_, index) => index),
+    };
+    await expect(revealAccount(MAX_ACCOUNT_INDEX)).rejects.toThrow(
+      'Account limit reached',
+    );
+  });
+
+  it('switches only to revealed accounts', async () => {
+    stored = { ...structuredClone(VALID_STATE), accounts: [0, 1] };
+    await setActiveAccount(1);
+    expect((stored as { activeAccount: number }).activeAccount).toBe(1);
+
+    await expect(setActiveAccount(2)).rejects.toThrow('Unknown account index.');
+    expect((stored as { activeAccount: number }).activeAccount).toBe(1);
+  });
+
+  it('does not drop writes on concurrent add and switch', async () => {
+    stored = { ...structuredClone(VALID_STATE), accounts: [0, 1] };
+    await Promise.all([revealAccount(2), setActiveAccount(1)]);
+    const state = stored as { accounts: number[]; activeAccount: number };
+    expect(state.accounts).toStrictEqual([0, 1, 2]);
+    expect(state.activeAccount).toBe(1);
+  });
+
+  it('computes the next revealable index from the highest revealed one', () => {
+    expect(nextAccountIndex(parseState(VALID_STATE))).toBe(1);
+    expect(
+      nextAccountIndex(parseState({ ...VALID_STATE, accounts: [0, 1, 4] })),
+    ).toBe(5);
   });
 });

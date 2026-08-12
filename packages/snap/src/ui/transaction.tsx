@@ -740,6 +740,12 @@ export type SignTransactionDialogParams = {
   xdr: string;
   /** The wallet key that will sign, shown so the user sees who signs. */
   signingAddress: string;
+  /**
+   * The signing account's SEP-0005 index. Shown next to the address so a
+   * dapp selecting a non-active account via the `address` option stays
+   * visible ("what you see is what you sign", multi-account extension).
+   */
+  accountIndex: number;
   /** Present for Soroban transactions: display-verification simulation. */
   simulation?: SimulationSummary | null;
   /** Advisory safety warnings (unfunded destination, SEP-29, multisig). */
@@ -772,6 +778,7 @@ function renderWarnings(warnings: string[]): GenericSnapElement[] {
  * @param params.tx - The parsed transaction or fee-bump envelope.
  * @param params.xdr - The raw base64 envelope XDR.
  * @param params.signingAddress - The wallet key that will sign.
+ * @param params.accountIndex - The signing account's SEP-0005 index.
  * @param params.simulation - Display-verification simulation for Soroban
  * transactions, or null/absent for classic ones.
  * @param params.warnings - Advisory safety warnings for classic transactions.
@@ -784,6 +791,7 @@ export function buildSignTransactionDialog({
   tx,
   xdr,
   signingAddress,
+  accountIndex,
   simulation,
   warnings = [],
   submit = false,
@@ -801,7 +809,9 @@ export function buildSignTransactionDialog({
 
   const signingWith = (
     <Section>
-      <Text>Signing with</Text>
+      <Row label="Signing with">
+        <Text>{`Account ${accountIndex}`}</Text>
+      </Row>
       <Copyable value={signingAddress} />
     </Section>
   );

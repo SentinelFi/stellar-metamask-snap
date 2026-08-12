@@ -1,6 +1,6 @@
 # Multi-Account Support: Research and Design
 
-> Design research for adding multiple SEP-0005 accounts to the Stellar Soroban Snap. Written 2026-08-12. Status: proposal (no code yet). Scope: `packages/snap` plus the connector API surface.
+> Design research for adding multiple SEP-0005 accounts to the Stellar Soroban Snap. Written 2026-08-12. Status: implemented (2026-08-12), per the design below: the `addAccount` RPC was deferred (account creation is home-page only, see section 9.3) and phases 1 to 5 shipped together. Scope: `packages/snap` plus the connector API surface.
 
 ## 1. Summary
 

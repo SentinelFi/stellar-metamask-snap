@@ -5,17 +5,30 @@ import type {
   OnUserInputHandler,
 } from '@metamask/snaps-sdk';
 import { UserInputEventType } from '@metamask/snaps-sdk';
+import { Box, Text } from '@metamask/snaps-sdk/jsx';
 
 import {
+  ADD_ACCOUNT_BUTTON,
   DISCONNECT_PREFIX,
   REMOVE_TOKEN_PREFIX,
+  USE_ACCOUNT_PREFIX,
   homePage,
 } from './handlers/home';
 import { installWelcome } from './handlers/install';
+import { getAddressForIndex } from './keys';
 import { route } from './rpc/router';
-import { disconnectOrigin, removeToken } from './state';
+import {
+  disconnectOrigin,
+  getState,
+  MAX_ACCOUNT_INDEX,
+  nextAccountIndex,
+  removeToken,
+  revealAccount,
+  setActiveAccount,
+} from './state';
 import type { NetworkName } from './state/networks';
 import { NETWORK_NAMES } from './state/networks';
+import { AddAccountDialog } from './ui/dialogs';
 
 /**
  * Handle incoming JSON-RPC requests sent through `wallet_invokeSnap`.
@@ -47,9 +60,51 @@ export const onHomePage: OnHomePageHandler = async () => homePage();
 export const onInstall: OnInstallHandler = async () => installWelcome();
 
 /**
+ * Reveals the next contiguous SEP-0005 account after a confirmation dialog
+ * showing its index and address. The commit re-checks under the state lock
+ * that the set has not moved while the dialog was open.
+ *
+ * @returns True when an account was added.
+ */
+async function addAccountFlow(): Promise<boolean> {
+  const index = nextAccountIndex(await getState());
+  if (index >= MAX_ACCOUNT_INDEX) {
+    await snap.request({
+      method: 'snap_dialog',
+      params: {
+        type: 'alert',
+        content: (
+          <Box>
+            <Text>
+              {`Account limit reached: at most ${MAX_ACCOUNT_INDEX} accounts.`}
+            </Text>
+          </Box>
+        ),
+      },
+    });
+    return false;
+  }
+
+  const address = await getAddressForIndex(index);
+  const approved = await snap.request({
+    method: 'snap_dialog',
+    params: {
+      type: 'confirmation',
+      content: <AddAccountDialog index={index} address={address} />,
+    },
+  });
+  if (!approved) {
+    return false;
+  }
+  await revealAccount(index);
+  return true;
+}
+
+/**
  * Handle home-page interactions: "Disconnect" buttons revoke an origin's
- * connection grant, "Remove" buttons stop tracking a token. Either action
- * re-renders the page.
+ * connection grant, "Remove" buttons stop tracking a token, "Use" buttons
+ * switch the active account, and "Add account" reveals the next account
+ * after a confirmation. Every action re-renders the page.
  *
  * @param args - The user input handler args.
  * @param args.id - The interface ID to update.
@@ -73,6 +128,20 @@ export const onUserInput: OnUserInputHandler = async ({ id, event }) => {
       await removeToken(network as NetworkName, target.slice(separator + 1));
       changed = true;
     }
+  } else if (event.name.startsWith(USE_ACCOUNT_PREFIX)) {
+    // The button click is the user's own switch action; membership is
+    // enforced by the state helper, so a stale or malformed index is a no-op.
+    const index = Number(event.name.slice(USE_ACCOUNT_PREFIX.length));
+    if (Number.isInteger(index) && index >= 0 && index < MAX_ACCOUNT_INDEX) {
+      try {
+        await setActiveAccount(index);
+      } catch {
+        // Unknown index (stale page): fall through to a plain re-render.
+      }
+      changed = true;
+    }
+  } else if (event.name === ADD_ACCOUNT_BUTTON) {
+    changed = await addAccountFlow();
   }
 
   if (changed) {

@@ -7,6 +7,8 @@ import {
   object,
   optional,
   record,
+  refine,
+  size,
   string,
 } from '@metamask/superstruct';
 
@@ -32,10 +34,38 @@ export type TrackedToken = {
  */
 export const MAX_TRACKED_TOKENS = 30;
 
+/**
+ * Upper bound (exclusive) on SEP-0005 account indices. Derivation cost is
+ * trivial, so this is not a resource cap: it bounds what a corrupt or
+ * hostile state value could ever drive into key derivation, and it is
+ * comfortably above real multi-account usage.
+ */
+export const MAX_ACCOUNT_INDEX = 256;
+
+/**
+ * A SEP-0005 account index (`x` in `m/44'/148'/x'`): a non-negative integer
+ * below {@link MAX_ACCOUNT_INDEX}. Shared by the state schema and the
+ * `setActiveAccount` RPC params.
+ */
+export const AccountIndexStruct = refine(number(), 'AccountIndex', (value) =>
+  Number.isInteger(value) && value >= 0 && value < MAX_ACCOUNT_INDEX
+    ? true
+    : `Expected an integer account index between 0 and ${MAX_ACCOUNT_INDEX - 1}.`,
+);
+
 export type SnapState = {
-  version: 1;
+  version: 2;
   /** The active network. Defaults to TESTNET until mainnet UX hardens. */
   network: NetworkName;
+  /** The SEP-0005 index of the active account. Always in `accounts`. */
+  activeAccount: number;
+  /**
+   * The account indices the user has revealed, always including 0. An
+   * explicit registry (rather than derive-on-demand) bounds which addresses
+   * the wallet will ever act for: an origin can select among these via the
+   * SEP-43 `address` option, never an arbitrary never-revealed index.
+   */
+  accounts: number[];
   /** Origins the user has approved, with the grant timestamp. */
   origins: Record<string, { connectedAt: string }>;
   /** Soroban tokens the user has added, keyed by network. */
@@ -44,6 +74,27 @@ export type SnapState = {
 
 /** Structural schema for persisted state — see {@link parseState}. */
 const SnapStateStruct = object({
+  version: literal(2),
+  network: enums(NETWORK_NAMES),
+  activeAccount: AccountIndexStruct,
+  accounts: size(array(AccountIndexStruct), 1, MAX_ACCOUNT_INDEX),
+  origins: record(string(), object({ connectedAt: string() })),
+  tokens: optional(
+    record(
+      enums(NETWORK_NAMES),
+      array(
+        object({ contractId: string(), symbol: string(), decimals: number() }),
+      ),
+    ),
+  ),
+});
+
+/**
+ * Structural schema for legacy version-1 state, kept so a pre-multi-account
+ * wallet migrates in place instead of resetting (which would drop its
+ * connection grants and tracked tokens).
+ */
+const SnapStateV1Struct = object({
   version: literal(1),
   network: enums(NETWORK_NAMES),
   origins: record(string(), object({ connectedAt: string() })),
@@ -63,20 +114,57 @@ const SnapStateStruct = object({
  * @returns The default state object.
  */
 function defaultState(): SnapState {
-  return { version: 1, network: 'TESTNET', origins: {}, tokens: {} };
+  return {
+    version: 2,
+    network: 'TESTNET',
+    activeAccount: 0,
+    accounts: [0],
+    origins: {},
+    tokens: {},
+  };
+}
+
+/**
+ * Normalizes the account fields of a structurally valid state: the account
+ * set is deduplicated, sorted, and always contains index 0, and a stray
+ * `activeAccount` that is not a member coerces back to 0 rather than being
+ * trusted into derivation and display paths.
+ *
+ * @param state - A structurally valid version-2 state.
+ * @returns The state with canonical account fields.
+ */
+function normalizeAccounts(state: SnapState): SnapState {
+  const accounts = [...new Set([0, ...state.accounts])].sort(
+    (left, right) => left - right,
+  );
+  const activeAccount = accounts.includes(state.activeAccount)
+    ? state.activeAccount
+    : 0;
+  return { ...state, accounts, activeAccount };
 }
 
 /**
  * Validates raw stored state. The snap is the only writer, but the store can
  * still surprise: a downgrade after a future version bump, or corruption.
- * Anything that does not match the version-1 schema resets to defaults
- * rather than flowing unchecked into signing and display paths.
+ * A valid version-1 object migrates in place (accounts default to `[0]`,
+ * preserving grants and tokens); anything matching neither schema resets to
+ * defaults rather than flowing unchecked into signing and display paths.
  *
  * @param stored - The raw value from `snap_manageState`.
  * @returns The validated state, or a fresh default state.
  */
 export function parseState(stored: unknown): SnapState {
-  return is(stored, SnapStateStruct) ? (stored as SnapState) : defaultState();
+  if (is(stored, SnapStateStruct)) {
+    return normalizeAccounts(stored as SnapState);
+  }
+  if (is(stored, SnapStateV1Struct)) {
+    const legacy = stored as Omit<
+      SnapState,
+      'version' | 'activeAccount' | 'accounts'
+    > & { version: 1 };
+    return { ...legacy, version: 2, activeAccount: 0, accounts: [0] };
+  }
+  return defaultState();
 }
 
 /**
@@ -155,6 +243,67 @@ export async function setActiveNetwork(network: NetworkName): Promise<void> {
     const state = await getState();
     if (state.network !== network) {
       await saveState({ ...state, network });
+    }
+  });
+}
+
+/**
+ * The next account index the home-page "Add account" flow may reveal: always
+ * the next contiguous index after the highest revealed one, so the account
+ * set stays gap-free and portable with other SEP-0005 wallets.
+ *
+ * @param state - The current state.
+ * @returns The next revealable index.
+ */
+export function nextAccountIndex(state: SnapState): number {
+  return Math.max(...state.accounts) + 1;
+}
+
+/**
+ * Reveals (appends) an account index via a locked read-modify-write. Only
+ * the next contiguous index may be revealed; the caller derives and shows
+ * the address for that index in a confirmation dialog first, so the commit
+ * re-checks under the lock that the set has not moved meanwhile — a stale
+ * approval must never add a different account than the one displayed.
+ *
+ * @param index - The index the user approved (must still be the next one).
+ */
+export async function revealAccount(index: number): Promise<void> {
+  await withStateLock(async () => {
+    const state = await getState();
+    if (state.accounts.includes(index)) {
+      return;
+    }
+    if (index >= MAX_ACCOUNT_INDEX) {
+      throw invalidRequest(
+        `Account limit reached: at most ${MAX_ACCOUNT_INDEX} accounts.`,
+      );
+    }
+    if (index !== nextAccountIndex(state)) {
+      throw invalidRequest(
+        'The account list changed while the dialog was open. Try again.',
+      );
+    }
+    await saveState({ ...state, accounts: [...state.accounts, index] });
+  });
+}
+
+/**
+ * Switches the active account via a locked read-modify-write, mirroring
+ * {@link setActiveNetwork}. Membership is re-checked inside the lock: a
+ * stale pre-dialog snapshot can never activate an index that is no longer
+ * (or was never) revealed.
+ *
+ * @param index - The revealed account index to activate.
+ */
+export async function setActiveAccount(index: number): Promise<void> {
+  await withStateLock(async () => {
+    const state = await getState();
+    if (!state.accounts.includes(index)) {
+      throw invalidRequest('Unknown account index.');
+    }
+    if (state.activeAccount !== index) {
+      await saveState({ ...state, activeAccount: index });
     }
   });
 }

@@ -10,14 +10,14 @@ import {
   Text,
 } from '@metamask/snaps-sdk/jsx';
 
-import { getWalletAddress } from '../keys';
+import { getOwnedAccounts } from '../keys';
 import type { TrackedToken } from '../state';
 import { getActiveNetwork, getState, getTokens } from '../state';
 import type { NetworkName } from '../state/networks';
 import type { AccountSummary } from '../stellar/horizon';
 import { getAccountSummary } from '../stellar/horizon';
 import { readTokenBalance } from '../stellar/token';
-import { formatTokenAsset } from '../ui/format';
+import { formatTokenAsset, truncate } from '../ui/format';
 
 /** Button-name prefix for per-origin disconnect actions (`onUserInput`). */
 export const DISCONNECT_PREFIX = 'disconnect:';
@@ -28,11 +28,27 @@ export const DISCONNECT_PREFIX = 'disconnect:';
  */
 export const REMOVE_TOKEN_PREFIX = 'remove-token:';
 
+/**
+ * Button-name prefix for switching the active account (`onUserInput`). The
+ * full name is `use-account:<index>`.
+ */
+export const USE_ACCOUNT_PREFIX = 'use-account:';
+
+/** Button name for revealing the next account (`onUserInput`). */
+export const ADD_ACCOUNT_BUTTON = 'add-account';
+
+/** A revealed account, ready for display. */
+export type AccountRow = { index: number; address: string };
+
 export type HomePageProps = {
   network: NetworkName;
   address: string;
   /** Null when Horizon could not be reached. */
   summary: AccountSummary | null;
+  /** Every revealed account, in index order. */
+  accounts: AccountRow[];
+  /** The active account's SEP-0005 index. */
+  activeIndex: number;
   /** Origins holding a connection grant. */
   origins: string[];
   /** Tokens tracked on the active network. */
@@ -45,8 +61,10 @@ export type HomePageProps = {
  *
  * @param props - The home page props.
  * @param props.network - The active network name.
- * @param props.address - The wallet's Stellar address.
+ * @param props.address - The active account's Stellar address.
  * @param props.summary - Account balances, or null when unavailable.
+ * @param props.accounts - Every revealed account, in index order.
+ * @param props.activeIndex - The active account's SEP-0005 index.
  * @param props.origins - Origins holding a connection grant.
  * @param props.tokens - Tokens tracked on the active network.
  * @returns The home page content.
@@ -55,6 +73,8 @@ const HomePage: SnapComponent<HomePageProps> = ({
   network,
   address,
   summary,
+  accounts,
+  activeIndex,
   origins,
   tokens,
 }) => (
@@ -63,6 +83,9 @@ const HomePage: SnapComponent<HomePageProps> = ({
     <Section>
       <Row label="Network">
         <Text>{network}</Text>
+      </Row>
+      <Row label="Account">
+        <Text>{`Account ${activeIndex}`}</Text>
       </Row>
       <Text>Address</Text>
       <Copyable value={address} />
@@ -83,6 +106,25 @@ const HomePage: SnapComponent<HomePageProps> = ({
             </Row>
           ))
         : null}
+    </Section>
+    <Section>
+      <Text>
+        <Bold>Accounts</Bold>
+      </Text>
+      {accounts.map((account) => (
+        <Box>
+          <Text>
+            {`Account ${account.index} (${truncate(account.address)})${
+              account.index === activeIndex ? ' (active)' : ''
+            }`}
+          </Text>
+          <Copyable value={account.address} />
+          {account.index === activeIndex ? null : (
+            <Button name={`${USE_ACCOUNT_PREFIX}${account.index}`}>Use</Button>
+          )}
+        </Box>
+      ))}
+      <Button name={ADD_ACCOUNT_BUTTON}>Add account</Button>
     </Section>
     <Section>
       <Text>
@@ -129,8 +171,12 @@ const HomePage: SnapComponent<HomePageProps> = ({
  */
 export async function homePage() {
   const network = await getActiveNetwork();
-  const address = await getWalletAddress();
-  const origins = Object.keys((await getState()).origins);
+  const state = await getState();
+  const accounts = await getOwnedAccounts();
+  const activeIndex = state.activeAccount;
+  const address =
+    accounts.find((account) => account.index === activeIndex)?.address ?? '';
+  const origins = Object.keys(state.origins);
   const tokens = await getTokens(network.name);
 
   let summary: AccountSummary | null = null;
@@ -174,6 +220,8 @@ export async function homePage() {
         network={network.name}
         address={address}
         summary={summary}
+        accounts={accounts}
+        activeIndex={activeIndex}
         origins={origins}
         tokens={tokens}
       />

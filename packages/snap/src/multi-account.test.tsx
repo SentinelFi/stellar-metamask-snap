@@ -1,0 +1,478 @@
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { SLIP10Node } from '@metamask/key-tree';
+import { installSnap } from '@metamask/snaps-jest';
+import { UserInputEventType } from '@metamask/snaps-sdk';
+import {
+  Account,
+  hash,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk';
+
+import { onUserInput } from '.';
+
+/** Official SEP-0005 test vector 1 (no passphrase). */
+const SEP5_MNEMONIC =
+  'illness spike retreat truth genius clock brain pass fit cave bargain toe';
+const SEP5_ADDRESS_0 =
+  'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
+const SEP5_ADDRESS_1 =
+  'GBAW5XGWORWVFE2XTJYDTLDHXTY2Q2MO73HYCGB3XMFMQ562Q2W2GJQX';
+const SEP5_ADDRESS_2 =
+  'GAY5PRAHJ2HIYBYCLZXTHID6SPVELOOYH2LBPH3LD4RUMXUW3DOYTLXW';
+
+const ORIGIN = 'https://dapp.example';
+
+/** A state fragment granting {@link ORIGIN} a connection. */
+const CONNECTED = { [ORIGIN]: { connectedAt: '2026-08-12T00:00:00Z' } };
+
+/**
+ * Builds a version-2 state object.
+ *
+ * @param overrides - Field overrides.
+ * @returns The state object.
+ */
+function stateV2(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 2,
+    network: 'TESTNET',
+    activeAccount: 0,
+    accounts: [0],
+    origins: {},
+    tokens: {},
+    ...overrides,
+  };
+}
+
+/**
+ * Installs the snap with the SEP-5 test mnemonic.
+ *
+ * @param state - Optional initial snap state.
+ * @returns The snaps-jest helpers.
+ */
+async function install(state?: Record<string, unknown>) {
+  return installSnap({
+    options: {
+      secretRecoveryPhrase: SEP5_MNEMONIC,
+      ...(state ? { state: state as never } : {}),
+    },
+  });
+}
+
+/**
+ * Extracts the JSON-RPC error object from a snaps-jest response.
+ *
+ * @param response - The awaited request response.
+ * @returns The error object.
+ */
+function getError(response: unknown): {
+  message: string;
+  data?: { code?: number };
+} {
+  return (response as { response: { error: never } }).response.error;
+}
+
+/**
+ * Extracts the JSON-RPC result from a snaps-jest response. The result is
+ * JSON round-tripped so null-prototype objects compare as plain objects.
+ *
+ * @param response - The awaited request response.
+ * @returns The result value.
+ */
+function getResult<Type>(response: unknown): Type {
+  return JSON.parse(
+    JSON.stringify(
+      (response as { response: { result: Type } }).response.result,
+    ),
+  ) as Type;
+}
+
+describe('getAccounts', () => {
+  it('requires a connected origin', async () => {
+    const { request } = await install();
+    const error = getError(
+      await request({ origin: ORIGIN, method: 'getAccounts' }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('not connected');
+  }, 45000);
+
+  it('enumerates revealed accounts against the SEP-5 vectors', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1, 2], origins: CONNECTED }),
+    );
+    const result = getResult<{
+      accounts: { index: number; address: string }[];
+      activeIndex: number;
+    }>(await request({ origin: ORIGIN, method: 'getAccounts' }));
+
+    // Index 0..2 must match the official SEP-0005 test-vector addresses.
+    expect(result).toStrictEqual({
+      accounts: [
+        { index: 0, address: SEP5_ADDRESS_0 },
+        { index: 1, address: SEP5_ADDRESS_1 },
+        { index: 2, address: SEP5_ADDRESS_2 },
+      ],
+      activeIndex: 0,
+    });
+  }, 45000);
+});
+
+describe('setActiveAccount', () => {
+  it('switches after confirmation and getAddress reflects it', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], origins: CONNECTED }),
+    );
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'setActiveAccount',
+      params: { index: 1 },
+    });
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    expect(content).toContain('Switch account');
+    expect(content).toContain('Account 1');
+    expect(content).toContain(SEP5_ADDRESS_1);
+    await (ui as { ok: () => Promise<void> }).ok();
+
+    expect(getResult(await pending)).toStrictEqual({
+      index: 1,
+      address: SEP5_ADDRESS_1,
+    });
+
+    const address = getResult<{ address: string }>(
+      await request({ origin: ORIGIN, method: 'getAddress' }),
+    );
+    expect(address.address).toBe(SEP5_ADDRESS_1);
+  }, 45000);
+
+  it('rejects a non-revealed index without a dialog', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], origins: CONNECTED }),
+    );
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'setActiveAccount',
+        params: { index: 2 },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('Unknown account index');
+  }, 45000);
+
+  it('rejects a malformed index', async () => {
+    const { request } = await install(stateV2({ origins: CONNECTED }));
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'setActiveAccount',
+        params: { index: 1.5 },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+  }, 45000);
+
+  it('keeps the active account on user rejection', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], origins: CONNECTED }),
+    );
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'setActiveAccount',
+      params: { index: 1 },
+    });
+    const ui = await pending.getInterface();
+    await (ui as { cancel: () => Promise<void> }).cancel();
+    expect(getError(await pending).data?.code).toBe(-4);
+
+    const address = getResult<{ address: string }>(
+      await request({ origin: ORIGIN, method: 'getAddress' }),
+    );
+    expect(address.address).toBe(SEP5_ADDRESS_0);
+  }, 45000);
+});
+
+describe('signing with the address option', () => {
+  it('signMessage signs with the selected revealed account', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], origins: CONNECTED }),
+    );
+
+    const message = 'multi-account test';
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signMessage',
+      params: { message, address: SEP5_ADDRESS_1 },
+    });
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    // Display integrity: the dialog names the selected account.
+    expect(content).toContain('Account 1');
+    expect(content).toContain(SEP5_ADDRESS_1);
+    await (ui as { ok: () => Promise<void> }).ok();
+
+    const result = getResult<{ signedMessage: string; signerAddress: string }>(
+      await pending,
+    );
+    expect(result.signerAddress).toBe(SEP5_ADDRESS_1);
+
+    // The signature must actually come from account 1's key (SEP-53).
+    const payload = hash(
+      Buffer.concat([
+        Buffer.from('Stellar Signed Message:\n', 'utf8'),
+        Buffer.from(message, 'utf8'),
+      ]),
+    );
+    expect(
+      Keypair.fromPublicKey(SEP5_ADDRESS_1).verify(
+        payload,
+        Buffer.from(result.signedMessage, 'base64'),
+      ),
+    ).toBe(true);
+  }, 45000);
+
+  it('signMessage without an address signs with the active account', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], activeAccount: 1, origins: CONNECTED }),
+    );
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signMessage',
+      params: { message: 'hello' },
+    });
+    const ui = await pending.getInterface();
+    await (ui as { ok: () => Promise<void> }).ok();
+    const result = getResult<{ signerAddress: string }>(await pending);
+    expect(result.signerAddress).toBe(SEP5_ADDRESS_1);
+  }, 45000);
+
+  it('rejects an address the wallet does not hold', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], origins: CONNECTED }),
+    );
+
+    // Index 2 is derivable but not revealed: it must not be signable.
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signMessage',
+        params: { message: 'hello', address: SEP5_ADDRESS_2 },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('Unknown address');
+  }, 45000);
+
+  it('signTransaction resolves the address option to the revealed account', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], origins: CONNECTED }),
+    );
+
+    // A sequence-0 (challenge-style) transaction avoids network lookups.
+    const transaction = new TransactionBuilder(
+      new Account(SEP5_ADDRESS_1, '-1'),
+      {
+        fee: '100',
+        networkPassphrase: Networks.TESTNET,
+      },
+    )
+      .addOperation(Operation.manageData({ name: 'test auth', value: 'value' }))
+      .setTimeout(300)
+      .build();
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signTransaction',
+      params: { xdr: transaction.toXDR(), address: SEP5_ADDRESS_1 },
+    });
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    expect(content).toContain('Account 1');
+    await (ui as { ok: () => Promise<void> }).ok();
+
+    const result = getResult<{ signerAddress: string; signedTxXdr: string }>(
+      await pending,
+    );
+    expect(result.signerAddress).toBe(SEP5_ADDRESS_1);
+
+    const signed = TransactionBuilder.fromXDR(
+      result.signedTxXdr,
+      Networks.TESTNET,
+    );
+    const signature = signed.signatures[0]?.signature();
+    expect(signature).toBeDefined();
+    expect(
+      Keypair.fromPublicKey(SEP5_ADDRESS_1).verify(
+        signed.hash(),
+        signature as Buffer,
+      ),
+    ).toBe(true);
+  }, 45000);
+});
+
+describe('home page account management', () => {
+  it('lists accounts and switches the active one via Use', async () => {
+    const { request, onHomePage } = await install(
+      stateV2({ accounts: [0, 1], origins: CONNECTED }),
+    );
+
+    const home = (await onHomePage()) as unknown as {
+      getInterface: () => Promise<{
+        content: unknown;
+        clickElement: (name: string) => Promise<void>;
+      }>;
+    };
+    const ui = await home.getInterface();
+    const content = JSON.stringify(ui.content);
+    expect(content).toContain('Account 0');
+    expect(content).toContain('Account 1');
+    expect(content).toContain('add-account');
+
+    await ui.clickElement('use-account:1');
+
+    const address = getResult<{ address: string }>(
+      await request({ origin: ORIGIN, method: 'getAddress' }),
+    );
+    expect(address.address).toBe(SEP5_ADDRESS_1);
+  }, 45000);
+});
+
+/*
+ * The Add-account flow opens a confirmation dialog inside `onUserInput`,
+ * which snaps-jest cannot reach (its home-page `getInterface` is bound to
+ * the home page's interface ID). Exercise the handler directly against a
+ * mocked `snap` global instead, with real SLIP-10 derivation.
+ */
+describe('onUserInput add-account flow', () => {
+  let stored: unknown;
+  let dialogs: unknown[];
+  let dialogResponse: boolean;
+  let updates: number;
+
+  beforeEach(async () => {
+    const entropy = await SLIP10Node.fromDerivationPath({
+      derivationPath: [`bip39:${SEP5_MNEMONIC}`, `slip10:44'`, `slip10:148'`],
+      curve: 'ed25519',
+    });
+    stored = stateV2({ origins: CONNECTED });
+    dialogs = [];
+    dialogResponse = true;
+    updates = 0;
+    (globalThis as { snap?: unknown }).snap = {
+      request: async (args: {
+        method: string;
+        params: {
+          operation?: string;
+          newState?: unknown;
+          content?: unknown;
+        };
+      }) => {
+        await Promise.resolve();
+        switch (args.method) {
+          case 'snap_manageState':
+            if (args.params.operation === 'get') {
+              return stored;
+            }
+            stored = args.params.newState;
+            return null;
+          case 'snap_getBip32Entropy':
+            return entropy.toJSON();
+          case 'snap_dialog':
+            dialogs.push(args.params.content);
+            return dialogResponse;
+          case 'snap_updateInterface':
+            updates += 1;
+            return null;
+          default:
+            throw new Error(`Unexpected method: ${args.method}`);
+        }
+      },
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as { snap?: unknown }).snap;
+  });
+
+  /**
+   * Clicks a home-page button by invoking the snap's onUserInput handler.
+   *
+   * @param name - The button name.
+   */
+  async function click(name: string) {
+    await onUserInput({
+      id: 'test-interface',
+      event: { type: UserInputEventType.ButtonClickEvent, name },
+      context: null,
+    } as never);
+  }
+
+  it('reveals the next account after confirmation', async () => {
+    await click('add-account');
+
+    // The confirmation showed the derived index-1 address before commit.
+    expect(dialogs).toHaveLength(1);
+    const dialogContent = JSON.stringify(dialogs[0]);
+    expect(dialogContent).toContain('Add account');
+    expect(dialogContent).toContain(SEP5_ADDRESS_1);
+
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0, 1]);
+    expect(updates).toBe(1);
+  });
+
+  it('does not reveal an account when the dialog is rejected', async () => {
+    dialogResponse = false;
+    await click('add-account');
+
+    expect(dialogs).toHaveLength(1);
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0]);
+    expect(updates).toBe(0);
+  });
+
+  it('switches the active account via Use without a dialog', async () => {
+    stored = stateV2({ accounts: [0, 1], origins: CONNECTED });
+    await click('use-account:1');
+
+    expect(dialogs).toHaveLength(0);
+    expect((stored as { activeAccount: number }).activeAccount).toBe(1);
+    expect(updates).toBe(1);
+  });
+
+  it('ignores a malformed account index', async () => {
+    await click('use-account:oops');
+    expect((stored as { activeAccount: number }).activeAccount).toBe(0);
+    expect(updates).toBe(0);
+  });
+});
+
+describe('state migration', () => {
+  it('upgrades a version-1 state in place, preserving grants', async () => {
+    const { request } = await install({
+      version: 1,
+      network: 'TESTNET',
+      origins: CONNECTED,
+      tokens: {},
+    });
+
+    // The origin grant survives the migration: getAddress stays silent.
+    const address = getResult<{ address: string }>(
+      await request({ origin: ORIGIN, method: 'getAddress' }),
+    );
+    expect(address.address).toBe(SEP5_ADDRESS_0);
+
+    const result = getResult<{
+      accounts: { index: number; address: string }[];
+      activeIndex: number;
+    }>(await request({ origin: ORIGIN, method: 'getAccounts' }));
+    expect(result).toStrictEqual({
+      accounts: [{ index: 0, address: SEP5_ADDRESS_0 }],
+      activeIndex: 0,
+    });
+  }, 45000);
+});

@@ -4,10 +4,12 @@ import type {
   BalancesResult,
   Eip1193Provider,
   FundResult,
+  GetAccountsResult,
   GetAddressResult,
   NetworkDetailsResult,
   NetworkName,
   NetworkResult,
+  SetActiveAccountResult,
   SignAuthEntryOptions,
   SignAuthEntryResult,
   SignMessageOptions,
@@ -294,6 +296,29 @@ export class StellarSnap {
       message,
       ...options,
     });
+  }
+
+  /**
+   * Enumerates the accounts the user has revealed, with the active index
+   * (requires a connected origin). Accounts are added from the snap home
+   * page; the signing methods accept any revealed account via the SEP-43
+   * `address` option.
+   *
+   * @returns The revealed accounts and the active index.
+   */
+  async getAccounts(): Promise<GetAccountsResult> {
+    return this.invoke<GetAccountsResult>('getAccounts');
+  }
+
+  /**
+   * Switches the wallet-global active account (dialog-confirmed; requires a
+   * connected origin). Only accounts the user has revealed can be activated.
+   *
+   * @param index - The SEP-0005 account index to activate.
+   * @returns The new active account.
+   */
+  async setActiveAccount(index: number): Promise<SetActiveAccountResult> {
+    return this.invoke<SetActiveAccountResult>('setActiveAccount', { index });
   }
 
   /**

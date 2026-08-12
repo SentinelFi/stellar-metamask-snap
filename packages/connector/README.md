@@ -33,6 +33,22 @@ Errors throw `StellarSnapError { message, code }` with SEP-0043 codes (`-1` inte
 
 During snap development pass `{ snapId: 'local:http://localhost:8080' }`.
 
+### Multiple accounts
+
+The wallet can hold several SEP-0005 accounts (`m/44'/148'/x'`), added by the user from the snap home page. A connected dapp can enumerate them, switch the wallet-global active account (dialog-confirmed), and target any revealed account per request via the SEP-43 `address` option:
+
+```ts
+const { accounts, activeIndex } = await snap.getAccounts();
+// [{ index: 0, address: 'G...' }, { index: 1, address: 'G...' }]
+
+await snap.setActiveAccount(1); // user confirms; every site sees the switch
+
+// Or select a signing account per request, without switching:
+await snap.signTransaction(xdr, { address: accounts[1].address });
+```
+
+Requesting an address the wallet does not hold returns `-3`.
+
 ## 2. Freighter-compatible facade
 
 Same method names and `{ ...result, error? }` convention as `@stellar/freighter-api` — a near drop-in swap:

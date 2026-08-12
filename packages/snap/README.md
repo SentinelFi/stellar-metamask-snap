@@ -7,7 +7,8 @@ A MetaMask Snap that brings the **Stellar network** — including **Soroban smar
 ## What it does
 
 - Derives your Stellar account from the MetaMask Secret Recovery Phrase using **SEP-0005** (`m/44'/148'/x'`, ed25519) — the same standard as Freighter, Ledger, and Lobstr, so the same phrase yields the same `G...` address everywhere. Conformance is enforced against the official SEP-0005 test vectors.
-- Exposes the **SEP-0043** wallet API to dapps with Freighter-compatible semantics: `requestAccess`, `getAddress`, `getNetwork` / `getNetworkDetails`, `setNetwork`, `signTransaction`, `signAuthEntry`, `signMessage`, plus `fund` (test-network friendbot), `getBalances`, and `addToken`.
+- Exposes the **SEP-0043** wallet API to dapps with Freighter-compatible semantics: `requestAccess`, `getAddress`, `getNetwork` / `getNetworkDetails`, `setNetwork`, `signTransaction`, `signAuthEntry`, `signMessage`, plus `fund` (test-network friendbot), `getBalances`, `addToken`, `getAccounts`, and `setActiveAccount`.
+- Supports **multiple accounts**: add further SEP-0005 accounts (`m/44'/148'/1'`, `2'`, ...) from the snap home page and switch between them; dapps can target any added account per request via the SEP-43 `address` option, and every signing dialog names the account that signs.
 - **Reviews before it signs**: every transaction is decoded from its XDR (never from dapp-provided summaries) into a human-readable confirmation dialog. Soroban transactions get an in-snap display-verification simulation (estimated resource fee, required auth signers, restore warnings); classic payments get advisory safety checks (unfunded destination, SEP-29 memo-required, multisig weight).
 - Shows your address, network, and balances (XLM + tracked Soroban tokens) on the snap **home page**: MetaMask menu → Snaps → Stellar Soroban.
 
