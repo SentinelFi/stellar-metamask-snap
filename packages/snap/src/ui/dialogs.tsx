@@ -161,8 +161,8 @@ export type SignAuthEntryDialogProps = {
   invocations: string[];
   nonce: string;
   signatureExpirationLedger: number;
-  /** Ledgers until expiry, or null when the current ledger is unknown. */
-  ledgersRemaining: number | null;
+  /** Ledgers until expiry, verified against the current ledger. */
+  ledgersRemaining: number;
 };
 
 /**
@@ -196,7 +196,8 @@ function approxDuration(ledgers: number): string {
  * @param props.nonce - The entry's replay-protection nonce.
  * @param props.signatureExpirationLedger - Ledger after which the signature
  * expires.
- * @param props.ledgersRemaining - Ledgers until expiry, or null when unknown.
+ * @param props.ledgersRemaining - Ledgers until expiry, verified against the
+ * current ledger.
  * @returns The dialog content.
  */
 export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
@@ -226,23 +227,12 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
         <Text>{`This authorization is for the ${network} network.`}</Text>
       </Banner>
     )}
-    {ledgersRemaining === null ? (
-      <Banner title="Lifetime unverified" severity="warning">
-        <Text>
-          The Stellar RPC could not be reached, so the snap could not verify how
-          long this authorization stays valid. It may remain usable far longer
-          than the site claims. Only approve if you trust the requesting site.
-        </Text>
-      </Banner>
-    ) : null}
     <Section>
       <Text>Authorized calls</Text>
       <Copyable value={invocations.join('\n')} />
       <Row label="Expires in">
         <Text>
-          {ledgersRemaining === null
-            ? `at ledger ${signatureExpirationLedger} (lifetime unverified — RPC unreachable)`
-            : `${approxDuration(ledgersRemaining)} (ledger ${signatureExpirationLedger})`}
+          {`${approxDuration(ledgersRemaining)} (ledger ${signatureExpirationLedger})`}
         </Text>
       </Row>
       <Row label="Nonce">

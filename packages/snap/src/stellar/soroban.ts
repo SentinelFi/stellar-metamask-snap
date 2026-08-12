@@ -69,20 +69,29 @@ function formatSymbolName(name: string): string {
     : escapeHiddenCharacters(JSON.stringify(name));
 }
 
+/** Mutable truncation marker threaded through a rendering walk. */
+type TruncationFlags = { truncated: boolean };
+
 /**
  * Stringifies an ScVal in typed notation (`u32(5)`, `sym(transfer)`,
  * `bytes(6a6f…)`) so values of different types can never render
  * identically. Bounded in depth, item count, and byte length; truncation is
- * always marked explicitly. Falls back to the raw base64 XDR when a value
- * cannot be decoded.
+ * always marked explicitly and reported via `flags` so authorization
+ * rendering can fail closed on it. Falls back to the raw base64 XDR when a
+ * value cannot be decoded.
  *
  * @param value - The ScVal to render.
  * @param depth - Current nesting depth.
+ * @param flags - Walk flags; `truncated` is set when any limit is reached.
  * @returns A display string.
  */
-export function formatScVal(value: xdr.ScVal, depth = 0): string {
+export function formatScVal(
+  value: xdr.ScVal,
+  depth = 0,
+  flags: TruncationFlags = { truncated: false },
+): string {
   try {
-    return formatScValInner(value, depth);
+    return formatScValInner(value, depth, flags);
   } catch {
     return value.toXDR('base64');
   }
@@ -94,10 +103,16 @@ export function formatScVal(value: xdr.ScVal, depth = 0): string {
  *
  * @param value - The ScVal to render.
  * @param depth - Current nesting depth.
+ * @param flags - Walk flags; `truncated` is set when any limit is reached.
  * @returns A display string.
  */
-function formatScValInner(value: xdr.ScVal, depth: number): string {
+function formatScValInner(
+  value: xdr.ScVal,
+  depth: number,
+  flags: TruncationFlags,
+): string {
   if (depth >= MAX_SCVAL_DEPTH) {
+    flags.truncated = true;
     return '…(too deep)';
   }
   switch (value.switch().name) {
@@ -127,10 +142,11 @@ function formatScValInner(value: xdr.ScVal, depth: number): string {
     case 'scvBytes': {
       const bytes = value.bytes();
       const hexBytes = bytes.subarray(0, MAX_SCVAL_BYTES).toString('hex');
-      const suffix =
-        bytes.length > MAX_SCVAL_BYTES
-          ? ` …+${bytes.length - MAX_SCVAL_BYTES} bytes`
-          : '';
+      let suffix = '';
+      if (bytes.length > MAX_SCVAL_BYTES) {
+        flags.truncated = true;
+        suffix = ` …+${bytes.length - MAX_SCVAL_BYTES} bytes`;
+      }
       return `bytes(${hexBytes}${suffix})`;
     }
     case 'scvString':
@@ -146,8 +162,9 @@ function formatScValInner(value: xdr.ScVal, depth: number): string {
       const items = value.vec() ?? [];
       const shown = items
         .slice(0, MAX_SCVAL_ITEMS)
-        .map((item) => formatScVal(item, depth + 1));
+        .map((item) => formatScVal(item, depth + 1, flags));
       if (items.length > MAX_SCVAL_ITEMS) {
+        flags.truncated = true;
         shown.push(`…+${items.length - MAX_SCVAL_ITEMS} more`);
       }
       return `[${shown.join(', ')}]`;
@@ -158,12 +175,14 @@ function formatScValInner(value: xdr.ScVal, depth: number): string {
         .slice(0, MAX_SCVAL_ITEMS)
         .map(
           (entry) =>
-            `${formatScVal(entry.key(), depth + 1)}: ${formatScVal(
+            `${formatScVal(entry.key(), depth + 1, flags)}: ${formatScVal(
               entry.val(),
               depth + 1,
+              flags,
             )}`,
         );
       if (entries.length > MAX_SCVAL_ITEMS) {
+        flags.truncated = true;
         shown.push(`…+${entries.length - MAX_SCVAL_ITEMS} more`);
       }
       return `{${shown.join(', ')}}`;
@@ -195,10 +214,13 @@ export type DecodedHostFunction = {
  * constructor args) so a deployment is reviewable rather than a bare label.
  *
  * @param args - The XDR create-contract args (V1 or V2).
+ * @param flags - Walk flags; `truncated` is set when a rendering limit is
+ * reached.
  * @returns Display lines.
  */
 function describeCreateContractArgs(
   args: xdr.CreateContractArgs | xdr.CreateContractArgsV2,
+  flags: TruncationFlags = { truncated: false },
 ): string[] {
   const lines: string[] = [];
 
@@ -231,7 +253,7 @@ function describeCreateContractArgs(
     if (ctorArgs.length > 0) {
       lines.push(
         `Constructor args: ${ctorArgs
-          .map((value) => formatScVal(value))
+          .map((value) => formatScVal(value, 0, flags))
           .join(', ')}`,
       );
     }
@@ -301,10 +323,16 @@ export type DecodedAuthEntry = {
   invocations: string[];
   /** The entry contains a variant the snap cannot faithfully display. */
   unsupported: boolean;
+  /**
+   * A rendering limit (depth, item count, or byte length) was reached, so
+   * the display would not disclose everything being authorized. Signing
+   * paths must fail closed on this.
+   */
+  truncated: boolean;
 };
 
 /** Mutable flags threaded through an invocation-tree walk. */
-type InvocationFlags = { unsupported: boolean };
+type InvocationFlags = TruncationFlags & { unsupported: boolean };
 
 /**
  * Renders one authorized invocation as `contract.function(args)` with the
@@ -328,8 +356,9 @@ function describeInvocation(
       const rendered = args
         .args()
         .slice(0, MAX_SCVAL_ITEMS)
-        .map((value) => formatScVal(value));
+        .map((value) => formatScVal(value, 0, flags));
       if (args.args().length > MAX_SCVAL_ITEMS) {
+        flags.truncated = true;
         rendered.push(`…+${args.args().length - MAX_SCVAL_ITEMS} more`);
       }
       return `${contract}.${formatSymbolName(
@@ -339,10 +368,12 @@ function describeInvocation(
     case 'sorobanAuthorizedFunctionTypeCreateContractHostFn':
       return `create-contract(${describeCreateContractArgs(
         fn.createContractHostFn(),
+        flags,
       ).join('; ')})`;
     case 'sorobanAuthorizedFunctionTypeCreateContractV2HostFn':
       return `create-contract(${describeCreateContractArgs(
         fn.createContractV2HostFn(),
+        flags,
       ).join('; ')})`;
     default:
       flags.unsupported = true;
@@ -373,9 +404,10 @@ function flattenInvocations(
   invocation: xdr.SorobanAuthorizedInvocation,
   depth = 0,
   budget = { nodes: MAX_INVOCATION_NODES },
-  flags: InvocationFlags = { unsupported: false },
+  flags: InvocationFlags = { unsupported: false, truncated: false },
 ): string[] {
   if (depth >= MAX_INVOCATION_DEPTH || budget.nodes <= 0) {
+    flags.truncated = true;
     return ['… (invocation tree truncated — review the raw XDR)'];
   }
   budget.nodes -= 1;
@@ -383,6 +415,7 @@ function flattenInvocations(
   const lines = [`${prefix}${describeInvocation(invocation, flags)}`];
   for (const sub of invocation.subInvocations()) {
     if (budget.nodes <= 0) {
+      flags.truncated = true;
       lines.push(`${'· '.repeat(depth + 1)}… (truncated)`);
       break;
     }
@@ -401,7 +434,7 @@ export function decodeAuthEntry(
   entry: xdr.SorobanAuthorizationEntry,
 ): DecodedAuthEntry {
   const credentials = entry.credentials();
-  const flags: InvocationFlags = { unsupported: false };
+  const flags: InvocationFlags = { unsupported: false, truncated: false };
   const invocations = flattenInvocations(
     entry.rootInvocation(),
     0,
@@ -414,13 +447,19 @@ export function decodeAuthEntry(
       credentialsType: 'sourceAccount',
       invocations,
       unsupported: flags.unsupported,
+      truncated: flags.truncated,
     };
   }
 
   if (credentials.switch().name !== 'sorobanCredentialsAddress') {
     // A credential variant this snap does not know cannot be reviewed
     // faithfully; callers must fail closed.
-    return { credentialsType: 'unknown', invocations, unsupported: true };
+    return {
+      credentialsType: 'unknown',
+      invocations,
+      unsupported: true,
+      truncated: flags.truncated,
+    };
   }
 
   const address = credentials.address();
@@ -437,8 +476,12 @@ export function decodeAuthEntry(
     signatureExpirationLedger: address.signatureExpirationLedger(),
     invocations,
     unsupported: flags.unsupported,
+    truncated: flags.truncated,
   };
 }
+
+/** Cap on embedded auth entries rendered inline (rest are in the raw XDR). */
+export const MAX_EMBEDDED_AUTH_ENTRIES = 20;
 
 /**
  * Scans embedded authorization entries for anything the snap cannot display
@@ -448,12 +491,19 @@ export function decodeAuthEntry(
  *
  * @param entries - The operation's authorization entries.
  * @returns `'undecodable'` when an entry cannot be decoded, `'unsupported'`
- * when one contains an unknown credential or function variant, or null when
- * every entry is displayable.
+ * when one contains an unknown credential or function variant, `'truncated'`
+ * when a rendering limit (entry count, depth, item count, or byte length)
+ * would leave part of what is authorized undisclosed, or null when every
+ * entry is displayable in full.
  */
 export function findUndisplayableAuthEntry(
   entries: xdr.SorobanAuthorizationEntry[],
-): 'undecodable' | 'unsupported' | null {
+): 'undecodable' | 'unsupported' | 'truncated' | null {
+  // More entries than the dialog renders inline means part of what the
+  // signature authorizes would be undisclosed: fail closed.
+  if (entries.length > MAX_EMBEDDED_AUTH_ENTRIES) {
+    return 'truncated';
+  }
   for (const entry of entries) {
     let decoded: DecodedAuthEntry;
     try {
@@ -464,12 +514,12 @@ export function findUndisplayableAuthEntry(
     if (decoded.credentialsType === 'unknown' || decoded.unsupported) {
       return 'unsupported';
     }
+    if (decoded.truncated) {
+      return 'truncated';
+    }
   }
   return null;
 }
-
-/** Cap on embedded auth entries rendered inline (rest are in the raw XDR). */
-export const MAX_EMBEDDED_AUTH_ENTRIES = 20;
 
 /** Default auth-entry lifetime when the dapp leaves it unset (~5 min @ 5s). */
 export const DEFAULT_AUTH_TTL_LEDGERS = 60;
@@ -478,7 +528,7 @@ export const DEFAULT_AUTH_TTL_LEDGERS = 60;
 export const MAX_AUTH_TTL_LEDGERS = 17_280;
 
 export type AuthExpiryResult =
-  | { ok: true; validUntil: number; ledgersRemaining: number | null }
+  | { ok: true; validUntil: number; ledgersRemaining: number }
   | { ok: false; reason: 'expired' | 'tooLong' | 'noLedger' };
 
 /**
@@ -486,8 +536,8 @@ export type AuthExpiryResult =
  * A dapp-supplied expiry must be in the future and within
  * {@link MAX_AUTH_TTL_LEDGERS}; an unset (0) expiry defaults to
  * {@link DEFAULT_AUTH_TTL_LEDGERS} ahead. When the current ledger is unknown
- * (RPC unreachable) a nonzero expiry is passed through unverified, but an
- * unset expiry cannot be resolved and fails.
+ * (RPC unreachable) no expiry can be verified against the maximum lifetime,
+ * so every request fails closed rather than passing through unverified.
  *
  * @param requestedLedger - The dapp's `signatureExpirationLedger` (0 = unset).
  * @param latestLedger - The current ledger, or null when it could not be read.
@@ -497,18 +547,15 @@ export function boundAuthExpiration(
   requestedLedger: number,
   latestLedger: number | null,
 ): AuthExpiryResult {
+  if (latestLedger === null) {
+    return { ok: false, reason: 'noLedger' };
+  }
   if (requestedLedger === 0) {
-    if (latestLedger === null) {
-      return { ok: false, reason: 'noLedger' };
-    }
     return {
       ok: true,
       validUntil: latestLedger + DEFAULT_AUTH_TTL_LEDGERS,
       ledgersRemaining: DEFAULT_AUTH_TTL_LEDGERS,
     };
-  }
-  if (latestLedger === null) {
-    return { ok: true, validUntil: requestedLedger, ledgersRemaining: null };
   }
   if (requestedLedger <= latestLedger) {
     return { ok: false, reason: 'expired' };

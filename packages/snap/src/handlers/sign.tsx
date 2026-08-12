@@ -98,6 +98,16 @@ export async function signTransaction(
   const sorobanOperation = getSorobanOperation(innerTx);
   const isSoroban = sorobanOperation !== null;
 
+  // A sequence-0 transaction (typically a SEP-10 login challenge) can never
+  // execute on-chain, and its review dialog says exactly that — so honoring
+  // `submit` would contradict the disclosure the user approved. Reject the
+  // combination instead of broadcasting a doomed envelope.
+  if (request.submit && innerTx.sequence === '0') {
+    throw invalidRequest(
+      'A sequence-0 transaction can never execute on-chain and cannot be submitted. Request a signature without the submit option.',
+    );
+  }
+
   // A Soroban operation mixed into a multi-operation transaction is invalid
   // at the protocol level and would otherwise be misclassified as classic,
   // skipping simulation. Reject it outright.
@@ -134,15 +144,23 @@ export async function signTransaction(
   }
   // Embedded auth entries with source-account credentials are authorized by
   // the envelope signature itself, so they must be as reviewable as a
-  // standalone signAuthEntry request: fail closed on anything undecodable
-  // or unsupported instead of degrading to an inline marker.
-  if (
-    sorobanOperation?.type === 'invokeHostFunction' &&
-    findUndisplayableAuthEntry(sorobanOperation.auth ?? []) !== null
-  ) {
-    throw invalidRequest(
-      'This transaction embeds an authorization entry the snap cannot display faithfully. Signing is refused.',
+  // standalone signAuthEntry request: fail closed on anything undecodable,
+  // unsupported, or too large to display in full instead of degrading to an
+  // inline truncation marker.
+  if (sorobanOperation?.type === 'invokeHostFunction') {
+    const undisplayable = findUndisplayableAuthEntry(
+      sorobanOperation.auth ?? [],
     );
+    if (undisplayable === 'truncated') {
+      throw invalidRequest(
+        'This transaction embeds authorization data too large or deeply nested to display in full. Signing is refused.',
+      );
+    }
+    if (undisplayable !== null) {
+      throw invalidRequest(
+        'This transaction embeds an authorization entry the snap cannot display faithfully. Signing is refused.',
+      );
+    }
   }
 
   // Soroban transactions get a display-verification simulation (Sui-snap
@@ -294,6 +312,13 @@ export async function signAuthEntry(
       'This authorization entry contains a credential or function type the snap cannot display faithfully. Signing is refused.',
     );
   }
+  // Fail closed on truncation too: a rendering limit means part of what
+  // would be authorized stays undisclosed in the dialog.
+  if (decoded.truncated) {
+    throw invalidRequest(
+      'This authorization entry is too large or deeply nested to display in full. Signing is refused.',
+    );
+  }
 
   // The entry itself names the authorizing account, so it selects the
   // signing account — resolved among owned, revealed accounts only. An
@@ -317,8 +342,8 @@ export async function signAuthEntry(
   // Bound the signature lifetime against the current ledger: reject
   // an already-expired entry and cap how far in the future it may reach, so
   // the user cannot unknowingly grant a very long-lived authorization. When
-  // the ledger cannot be fetched, a nonzero expiry passes through unverified
-  // (mirrors how simulation failures degrade — warn, never silently pass).
+  // the ledger cannot be fetched, no expiry can be checked against that cap,
+  // so the request fails closed rather than passing through unverified.
   let latestLedger: number | null = null;
   try {
     latestLedger = await getLatestLedger(network.sorobanRpcUrl);
@@ -340,7 +365,7 @@ export async function signAuthEntry(
       );
     }
     throw externalServiceError(
-      'Could not reach the Stellar RPC to set an authorization expiry.',
+      'Could not reach the Stellar RPC to verify the authorization expiry. Try again later.',
     );
   }
   const { validUntil, ledgersRemaining } = bounded;

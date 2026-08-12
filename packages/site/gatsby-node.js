@@ -80,9 +80,11 @@ module.exports.onPreBuild = ({ reporter }) => {
   }
 
   if (snapOrigin.startsWith('npm:') && !parsed.SNAP_VERSION) {
-    reporter.warn(
-      `SNAP_VERSION is not set in ${envFile}; the install request will not ` +
-        `be pinned to the exact audited release.`,
+    reporter.panic(
+      `SNAP_VERSION is not set in ${envFile}. A production build must pin ` +
+        `the install request to the exact audited release; without it the ` +
+        `site would request an unpinned snap. Set SNAP_VERSION to the ` +
+        `audited version.`,
     );
   }
 };

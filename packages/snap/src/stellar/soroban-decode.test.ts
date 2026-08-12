@@ -19,6 +19,7 @@ import {
   getSorobanOperation,
   hasMisplacedSorobanOperation,
   MAX_AUTH_TTL_LEDGERS,
+  MAX_EMBEDDED_AUTH_ENTRIES,
   MAX_INVOCATION_DEPTH,
   summarizeAuthEntries,
 } from './soroban';
@@ -274,6 +275,46 @@ describe('decodeAuthEntry', () => {
       MAX_INVOCATION_DEPTH + 1,
     );
     expect(decoded.invocations.join('\n')).toContain('truncated');
+    // Truncation is reported so signing paths can fail closed.
+    expect(decoded.truncated).toBe(true);
+  });
+
+  it('reports truncation for an invocation with too many arguments', () => {
+    const args = Array.from({ length: 25 }, (_, i) => xdr.ScVal.scvU32(i));
+    const node = new xdr.SorobanAuthorizedInvocation({
+      function:
+        xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(CONTRACT).toScAddress(),
+            functionName: 'transfer',
+            args,
+          }),
+        ),
+      subInvocations: [],
+    });
+    const decoded = decodeAuthEntry(addressEntry(node));
+    expect(decoded.truncated).toBe(true);
+  });
+
+  it('reports truncation for an oversized bytes argument', () => {
+    const node = new xdr.SorobanAuthorizedInvocation({
+      function:
+        xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(CONTRACT).toScAddress(),
+            functionName: 'transfer',
+            args: [xdr.ScVal.scvBytes(Buffer.alloc(100, 1))],
+          }),
+        ),
+      subInvocations: [],
+    });
+    const decoded = decodeAuthEntry(addressEntry(node));
+    expect(decoded.truncated).toBe(true);
+  });
+
+  it('does not report truncation for a small, fully rendered entry', () => {
+    const decoded = decodeAuthEntry(addressEntry(invocation([], 'transfer')));
+    expect(decoded.truncated).toBe(false);
   });
 });
 
@@ -354,11 +395,12 @@ describe('boundAuthExpiration', () => {
     ).toStrictEqual({ ok: false, reason: 'tooLong' });
   });
 
-  it('passes a nonzero expiry through unverified when the ledger is unknown', () => {
+  it('fails closed on a nonzero expiry when the ledger is unknown', () => {
+    // Without the current ledger the maximum-lifetime bound cannot be
+    // enforced, so the expiry must not pass through unverified.
     expect(boundAuthExpiration(NOW + 500, null)).toStrictEqual({
-      ok: true,
-      validUntil: NOW + 500,
-      ledgersRemaining: null,
+      ok: false,
+      reason: 'noLedger',
     });
   });
 
@@ -496,6 +538,21 @@ describe('findUndisplayableAuthEntry', () => {
         fakeEntry('sorobanCredentialsSourceAccount', 'someFutureFunctionType'),
       ]),
     ).toBe('unsupported');
+  });
+
+  it('flags a deeply nested entry as truncated (fail closed)', () => {
+    let node = invocation();
+    for (let i = 0; i < MAX_INVOCATION_DEPTH + 5; i++) {
+      node = invocation([node]);
+    }
+    expect(findUndisplayableAuthEntry([addressEntry(node)])).toBe('truncated');
+  });
+
+  it('flags more entries than the render cap as truncated (fail closed)', () => {
+    const entries = Array.from({ length: MAX_EMBEDDED_AUTH_ENTRIES + 1 }, () =>
+      addressEntry(invocation([], 'transfer')),
+    );
+    expect(findUndisplayableAuthEntry(entries)).toBe('truncated');
   });
 
   it('flags an entry that throws during decode as undecodable', () => {
