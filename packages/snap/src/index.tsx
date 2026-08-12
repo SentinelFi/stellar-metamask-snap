@@ -129,15 +129,13 @@ export const onUserInput: OnUserInputHandler = async ({ id, event }) => {
       changed = true;
     }
   } else if (event.name.startsWith(USE_ACCOUNT_PREFIX)) {
-    // The button click is the user's own switch action; membership is
-    // enforced by the state helper, so a stale or malformed index is a no-op.
+    // The click is the user's own switch action. Only a revealed index may
+    // be activated, so a button name from a stale page (or a malformed one)
+    // is a no-op; the state helper re-checks membership under the lock.
     const index = Number(event.name.slice(USE_ACCOUNT_PREFIX.length));
-    if (Number.isInteger(index) && index >= 0 && index < MAX_ACCOUNT_INDEX) {
-      try {
-        await setActiveAccount(index);
-      } catch {
-        // Unknown index (stale page): fall through to a plain re-render.
-      }
+    const { accounts } = await getState();
+    if (accounts.includes(index)) {
+      await setActiveAccount(index);
       changed = true;
     }
   } else if (event.name === ADD_ACCOUNT_BUTTON) {

@@ -12,6 +12,7 @@ import {
 } from '@stellar/stellar-sdk';
 
 import { onUserInput } from '.';
+import { MAX_ACCOUNT_INDEX } from './state';
 
 /** Official SEP-0005 test vector 1 (no passphrase). */
 const SEP5_MNEMONIC =
@@ -447,6 +448,32 @@ describe('onUserInput add-account flow', () => {
   it('ignores a malformed account index', async () => {
     await click('use-account:oops');
     expect((stored as { activeAccount: number }).activeAccount).toBe(0);
+    expect(updates).toBe(0);
+  });
+
+  it('ignores an index the user has not revealed', async () => {
+    // A button name from a stale page must not activate an unrevealed
+    // account, even though the index itself is well-formed and derivable.
+    stored = stateV2({ accounts: [0, 1], origins: CONNECTED });
+    await click('use-account:5');
+
+    expect((stored as { activeAccount: number }).activeAccount).toBe(0);
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0, 1]);
+    expect(updates).toBe(0);
+  });
+
+  it('refuses to reveal past the account cap', async () => {
+    stored = stateV2({
+      accounts: Array.from({ length: MAX_ACCOUNT_INDEX }, (_, i) => i),
+      origins: CONNECTED,
+    });
+    await click('add-account');
+
+    // The cap is reported to the user, and nothing is added.
+    expect(JSON.stringify(dialogs)).toContain('Account limit reached');
+    expect((stored as { accounts: number[] }).accounts).toHaveLength(
+      MAX_ACCOUNT_INDEX,
+    );
     expect(updates).toBe(0);
   });
 });
