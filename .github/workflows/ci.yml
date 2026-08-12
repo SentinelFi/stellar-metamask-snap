@@ -67,4 +67,11 @@ jobs:
         run: yarn workspace stellar-soroban-snap-connector build
 
       - name: Build site
+        # CI verifies the site builds; it does not produce a deployed
+        # artifact. ALLOW_LOCAL_SNAP opts out of the production guard that
+        # requires the audited npm: SNAP_ORIGIN (gatsby-node.js onPreBuild).
+        # Remove once the audited release is published and
+        # .env.production carries the pinned npm: origin.
         run: yarn workspace site build
+        env:
+          ALLOW_LOCAL_SNAP: 'true'
