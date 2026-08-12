@@ -1,4 +1,7 @@
-import type { SnapComponent } from '@metamask/snaps-sdk/jsx';
+import type {
+  GenericSnapElement,
+  SnapComponent,
+} from '@metamask/snaps-sdk/jsx';
 import {
   Banner,
   Bold,
@@ -10,7 +13,29 @@ import {
   Text,
 } from '@metamask/snaps-sdk/jsx';
 
+import { displayOrigin, originLooksConfusable } from './format';
 import type { NetworkName } from '../state/networks';
+
+/**
+ * Warns when the requesting origin contains internationalized (punycode) or
+ * non-ASCII characters that could visually imitate another site's address.
+ *
+ * @param origin - The requesting dapp origin.
+ * @returns A warning banner, or null for ordinary ASCII origins.
+ */
+export function originCautionBanner(origin: string): GenericSnapElement | null {
+  if (!originLooksConfusable(origin)) {
+    return null;
+  }
+  return (
+    <Banner title="Check the site address" severity="warning">
+      <Text>
+        This site's address contains internationalized or unusual characters
+        that can imitate another site. Verify the address before approving.
+      </Text>
+    </Banner>
+  );
+}
 
 export type ConnectionGrantNoticeProps = {
   origin: string;
@@ -30,10 +55,10 @@ export const ConnectionGrantNotice: SnapComponent<
 > = ({ origin }) => (
   <Section>
     <Text>
-      Approving also connects <Bold>{origin}</Bold> to this wallet. A connected
-      site can read your address and balances, suggest tokens to track, and
-      request test-network funding of this wallet without further prompts, until
-      you disconnect it on the snap home page.
+      Approving also connects <Bold>{displayOrigin(origin)}</Bold> to this
+      wallet. A connected site can read your address and balances, suggest
+      tokens to track, and request test-network funding of this wallet without
+      further prompts, until you disconnect it on the snap home page.
     </Text>
   </Section>
 );
@@ -61,9 +86,10 @@ export const ConnectDialog: SnapComponent<ConnectDialogProps> = ({
   <Box>
     <Heading>Connect to Stellar</Heading>
     <Text>
-      <Bold>{origin}</Bold> wants to view your Stellar address and request
-      signatures from this wallet.
+      <Bold>{displayOrigin(origin)}</Bold> wants to view your Stellar address
+      and request signatures from this wallet.
     </Text>
+    {originCautionBanner(origin)}
     <Section>
       <Row label="Network">
         <Text>{network}</Text>
@@ -101,10 +127,11 @@ export const NetworkDialog: SnapComponent<NetworkDialogProps> = ({
   <Box>
     <Heading>Switch network</Heading>
     <Text>
-      <Bold>{origin}</Bold> wants to switch the active Stellar network. This
-      setting is wallet-global: it changes the network for every connected site,
-      not just this one.
+      <Bold>{displayOrigin(origin)}</Bold> wants to switch the active Stellar
+      network. This setting is wallet-global: it changes the network for every
+      connected site, not just this one.
     </Text>
+    {originCautionBanner(origin)}
     <Section>
       <Row label="From">
         <Text>{from}</Text>
@@ -181,10 +208,11 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
   <Box>
     <Heading>Authorize contract call</Heading>
     <Text>
-      <Bold>{origin}</Bold> asks you to authorize the following Soroban contract
-      call(s) on behalf of your account (this signs the authorization only — a
-      transaction will carry it later).
+      <Bold>{displayOrigin(origin)}</Bold> asks you to authorize the following
+      Soroban contract call(s) on behalf of your account (this signs the
+      authorization only — a transaction will carry it later).
     </Text>
+    {originCautionBanner(origin)}
     {network === 'PUBLIC' ? (
       <Banner title="Mainnet" severity="warning">
         <Text>This authorization is for the live Stellar network.</Text>
@@ -194,6 +222,15 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
         <Text>{`This authorization is for the ${network} network.`}</Text>
       </Banner>
     )}
+    {ledgersRemaining === null ? (
+      <Banner title="Lifetime unverified" severity="warning">
+        <Text>
+          The Stellar RPC could not be reached, so the snap could not verify how
+          long this authorization stays valid. It may remain usable far longer
+          than the site claims. Only approve if you trust the requesting site.
+        </Text>
+      </Banner>
+    ) : null}
     <Section>
       <Text>Authorized calls</Text>
       <Copyable value={invocations.join('\n')} />
@@ -245,10 +282,11 @@ export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
   <Box>
     <Heading>Add token</Heading>
     <Text>
-      <Bold>{origin}</Bold> wants to track a Soroban token so its balance shows
-      in this wallet on <Bold>{network}</Bold>. This does not grant any spending
-      permission.
+      <Bold>{displayOrigin(origin)}</Bold> wants to track a Soroban token so its
+      balance shows in this wallet on <Bold>{network}</Bold>. This does not
+      grant any spending permission.
     </Text>
+    {originCautionBanner(origin)}
     <Section>
       <Row label="Symbol">
         <Text>{symbol}</Text>
@@ -290,10 +328,11 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
   <Box>
     <Heading>Sign message</Heading>
     <Text>
-      <Bold>{origin}</Bold> asks you to sign a message (SEP-53). Signing proves
-      you control this account. It does not move funds and cannot be submitted
-      as a transaction.
+      <Bold>{displayOrigin(origin)}</Bold> asks you to sign a message (SEP-53).
+      Signing proves you control this account. It does not move funds and cannot
+      be submitted as a transaction.
     </Text>
+    {originCautionBanner(origin)}
     {hasHiddenCharacters ? (
       <Banner title="Hidden characters" severity="warning">
         <Text>

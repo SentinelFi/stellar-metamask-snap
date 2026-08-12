@@ -30,7 +30,9 @@ import {
   boundAuthExpiration,
   decodeAuthEntry,
   decodeHostFunction,
+  findUndisplayableAuthEntry,
   getSorobanOperation,
+  hasMisplacedSorobanOperation,
   simulateForDisplay,
 } from '../stellar/soroban';
 import { SignAuthEntryDialog, SignMessageDialog } from '../ui/dialogs';
@@ -95,6 +97,15 @@ export async function signTransaction(
   const sorobanOperation = getSorobanOperation(innerTx);
   const isSoroban = sorobanOperation !== null;
 
+  // A Soroban operation mixed into a multi-operation transaction is invalid
+  // at the protocol level and would otherwise be misclassified as classic,
+  // skipping simulation. Reject it outright.
+  if (hasMisplacedSorobanOperation(innerTx)) {
+    throw invalidRequest(
+      'A Soroban operation must be the only operation in its transaction. This transaction can never execute and will not be signed.',
+    );
+  }
+
   // Fail closed: a transaction whose effects cannot be displayed
   // faithfully must not be approvable. A warning over raw XDR is not a
   // usable review mechanism.
@@ -118,6 +129,18 @@ export async function signTransaction(
   ) {
     throw invalidRequest(
       'This transaction contains a host function the snap cannot display faithfully. Signing is refused.',
+    );
+  }
+  // Embedded auth entries with source-account credentials are authorized by
+  // the envelope signature itself, so they must be as reviewable as a
+  // standalone signAuthEntry request: fail closed on anything undecodable
+  // or unsupported instead of degrading to an inline marker.
+  if (
+    sorobanOperation?.type === 'invokeHostFunction' &&
+    findUndisplayableAuthEntry(sorobanOperation.auth ?? []) !== null
+  ) {
+    throw invalidRequest(
+      'This transaction embeds an authorization entry the snap cannot display faithfully. Signing is refused.',
     );
   }
 

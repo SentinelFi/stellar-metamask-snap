@@ -37,6 +37,13 @@ jobs:
       - name: Verify committed manifest matches the built bundle
         run: git diff --exit-code packages/snap/snap.manifest.json
 
+      # The threat model claims the shipped bundle contains zero Math.random
+      # references (snap.config.ts rewrites them to crypto.getRandomValues).
+      # Enforce the claim so a dependency bump reintroducing insecure
+      # randomness in a form the rewrite misses fails the build.
+      - name: Verify bundle contains no insecure randomness
+        run: "! grep -qE 'Math\\.random|Math\\[.random' packages/snap/dist/bundle.js"
+
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
 

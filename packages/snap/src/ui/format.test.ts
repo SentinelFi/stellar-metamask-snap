@@ -3,9 +3,12 @@ import { Asset, LiquidityPoolAsset, Memo } from '@stellar/stellar-sdk';
 
 import {
   containsHiddenCharacters,
+  displayOrigin,
+  escapeHiddenCharacters,
   formatAsset,
   formatMemo,
   formatTokenAsset,
+  originLooksConfusable,
   sanitizeInlineText,
   stroopsToXlm,
   truncate,
@@ -153,5 +156,52 @@ describe('formatMemo', () => {
 
   it('sanitizes dapp-controlled text memos', () => {
     expect(formatMemo(Memo.text('a\nb'))).toStrictEqual(['Memo (text)', 'a b']);
+  });
+});
+
+describe('escapeHiddenCharacters', () => {
+  it('makes bidi overrides visible as unicode escapes', () => {
+    expect(escapeHiddenCharacters('a\u202Eb')).toBe('a\\u{202e}b');
+  });
+
+  it('escapes control and zero-width characters', () => {
+    expect(escapeHiddenCharacters('a\u0000\u200bb')).toBe('a\\u{0}\\u{200b}b');
+  });
+
+  it('leaves ordinary text unchanged', () => {
+    expect(escapeHiddenCharacters('hello world')).toBe('hello world');
+  });
+});
+
+describe('displayOrigin', () => {
+  it('leaves ordinary origins unchanged', () => {
+    expect(displayOrigin('https://example.com')).toBe('https://example.com');
+  });
+
+  it('strips control characters', () => {
+    expect(displayOrigin('https://ex\u202Eample.com')).toBe(
+      'https://ex ample.com',
+    );
+  });
+
+  it('middle-truncates very long origins', () => {
+    const long = `https://${'a'.repeat(100)}.example.com`;
+    const shown = displayOrigin(long);
+    expect(shown.length).toBeLessThan(long.length);
+    expect(shown).toContain('…');
+  });
+});
+
+describe('originLooksConfusable', () => {
+  it('flags punycode labels', () => {
+    expect(originLooksConfusable('https://xn--80ak6aa92e.com')).toBe(true);
+  });
+
+  it('flags non-ASCII characters', () => {
+    expect(originLooksConfusable('https://аpple.com')).toBe(true); // Cyrillic а
+  });
+
+  it('accepts ordinary ASCII origins', () => {
+    expect(originLooksConfusable('https://example.com')).toBe(false);
   });
 });

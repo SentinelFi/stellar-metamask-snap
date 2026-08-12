@@ -1,3 +1,4 @@
+import { SnapError } from '@metamask/snaps-sdk';
 import {
   array,
   is,
@@ -9,6 +10,7 @@ import {
   type,
 } from '@metamask/superstruct';
 
+import { readJsonBounded } from './http';
 import { externalServiceError } from '../rpc/errors';
 
 export type HorizonBalance = {
@@ -97,9 +99,13 @@ async function safeFetchJson(
       redirect: 'error',
       signal: controller.signal,
     });
-    const body: unknown = await response.json().catch(() => null);
+    const body: unknown = await readJsonBounded(response, service);
     return { ok: response.ok, status: response.status, body };
-  } catch {
+  } catch (error) {
+    // readJsonBounded throws a typed oversized-response error; keep it.
+    if (error instanceof SnapError) {
+      throw error;
+    }
     throw externalServiceError(`Could not reach ${service}.`);
   } finally {
     clearTimeout(timer);
@@ -238,7 +244,8 @@ export async function getAccountChecks(
     if (!response.ok) {
       return null;
     }
-    const account: unknown = await response.json();
+    // Bounded read: an oversized body throws and degrades to null below.
+    const account: unknown = await readJsonBounded(response, 'Horizon');
     if (!is(account, AccountChecksStruct)) {
       // Best-effort checks: a malformed response degrades to "unknown"
       // rather than feeding unvalidated data into safety warnings.

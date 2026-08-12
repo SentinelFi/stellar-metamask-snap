@@ -14,8 +14,10 @@ import {
   decodeAuthEntry,
   decodeHostFunction,
   DEFAULT_AUTH_TTL_LEDGERS,
+  findUndisplayableAuthEntry,
   formatScVal,
   getSorobanOperation,
+  hasMisplacedSorobanOperation,
   MAX_AUTH_TTL_LEDGERS,
   MAX_INVOCATION_DEPTH,
   summarizeAuthEntries,
@@ -365,5 +367,150 @@ describe('boundAuthExpiration', () => {
       ok: false,
       reason: 'noLedger',
     });
+  });
+});
+
+describe('formatScVal (hidden characters)', () => {
+  it('escapes bidi overrides in strings so display order cannot flip', () => {
+    const rendered = formatScVal(xdr.ScVal.scvString('pay\u202E100 to A'));
+    expect(rendered).not.toContain('\u202E');
+    expect(rendered).toContain('\\u{202e}');
+  });
+
+  it('escapes zero-width characters in quoted symbols', () => {
+    const rendered = formatScVal(xdr.ScVal.scvSymbol('tra\u200Bnsfer!'));
+    expect(rendered).not.toContain('\u200B');
+    expect(rendered).toContain('\\u{200b}');
+  });
+
+  it('leaves clean strings untouched', () => {
+    expect(formatScVal(xdr.ScVal.scvString('hello'))).toBe('str("hello")');
+  });
+});
+
+describe('hasMisplacedSorobanOperation', () => {
+  it('flags a Soroban operation mixed into a multi-op transaction', () => {
+    const tx = new TransactionBuilder(new Account(SOURCE, '1'), {
+      fee: '200',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(Operation.bumpSequence({ bumpTo: '2' }))
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: CONTRACT,
+          function: 'transfer',
+          args: [],
+        }),
+      )
+      .setTimeout(30)
+      .build();
+    expect(hasMisplacedSorobanOperation(tx)).toBe(true);
+  });
+
+  it('accepts a lone Soroban operation', () => {
+    const tx = txWith(
+      Operation.invokeContractFunction({
+        contract: CONTRACT,
+        function: 'transfer',
+        args: [],
+      }),
+    );
+    expect(hasMisplacedSorobanOperation(tx)).toBe(false);
+  });
+
+  it('accepts a classic multi-op transaction', () => {
+    const tx = new TransactionBuilder(new Account(SOURCE, '1'), {
+      fee: '200',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(Operation.bumpSequence({ bumpTo: '2' }))
+      .addOperation(
+        Operation.payment({
+          destination: SOURCE,
+          asset: Asset.native(),
+          amount: '1',
+        }),
+      )
+      .setTimeout(30)
+      .build();
+    expect(hasMisplacedSorobanOperation(tx)).toBe(false);
+  });
+});
+
+describe('findUndisplayableAuthEntry', () => {
+  /**
+   * Builds a fake auth entry whose accessors report the given credential
+   * discriminant. Real XDR cannot carry unknown union arms (the SDK refuses
+   * to parse them), so future-variant behavior is exercised structurally.
+   *
+   * @param credentialName - The credential switch name to report.
+   * @param functionName - The invocation function switch name to report.
+   * @returns An object shaped like an auth entry.
+   */
+  function fakeEntry(
+    credentialName: string,
+    functionName = 'sorobanAuthorizedFunctionTypeContractFn',
+  ): xdr.SorobanAuthorizationEntry {
+    const fakeInvocation = {
+      function: () => ({
+        switch: () => ({ name: functionName }),
+        contractFn: () => {
+          throw new Error('not a real contract fn');
+        },
+      }),
+      subInvocations: () => [],
+    };
+    return {
+      credentials: () => ({
+        switch: () => ({ name: credentialName }),
+      }),
+      rootInvocation: () => fakeInvocation,
+    } as unknown as xdr.SorobanAuthorizationEntry;
+  }
+
+  it('accepts a well-formed address-credential entry', () => {
+    expect(
+      findUndisplayableAuthEntry([addressEntry(invocation([], 'transfer'))]),
+    ).toBeNull();
+  });
+
+  it('accepts a source-account entry (authorized by the envelope)', () => {
+    const entry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
+      rootInvocation: invocation([], 'transfer'),
+    });
+    expect(findUndisplayableAuthEntry([entry])).toBeNull();
+  });
+
+  it('flags an unknown credential variant as unsupported', () => {
+    expect(
+      findUndisplayableAuthEntry([
+        fakeEntry('sorobanCredentialsSomeFutureVariant', 'unknownFn'),
+      ]),
+    ).toBe('unsupported');
+  });
+
+  it('flags an unknown authorized-function variant as unsupported', () => {
+    expect(
+      findUndisplayableAuthEntry([
+        fakeEntry('sorobanCredentialsSourceAccount', 'someFutureFunctionType'),
+      ]),
+    ).toBe('unsupported');
+  });
+
+  it('flags an entry that throws during decode as undecodable', () => {
+    const broken = {
+      credentials: () => {
+        throw new Error('mangled');
+      },
+      rootInvocation: () => {
+        throw new Error('mangled');
+      },
+    } as unknown as xdr.SorobanAuthorizationEntry;
+    expect(findUndisplayableAuthEntry([broken])).toBe('undecodable');
+  });
+
+  it('returns null for an empty entry list', () => {
+    expect(findUndisplayableAuthEntry([])).toBeNull();
   });
 });

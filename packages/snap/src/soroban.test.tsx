@@ -159,6 +159,69 @@ describe('signTransaction (Soroban)', () => {
     const error = getError(await pending);
     expect(error.data?.code).toBe(-4);
   }, 45000);
+
+  it('shows embedded authorization entries and still allows review', async () => {
+    const { request } = await install();
+
+    const transaction = new TransactionBuilder(
+      new Account(SEP5_ADDRESS_0, '1'),
+      { fee: '100', networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: XLM_SAC_TESTNET,
+          function: 'transfer',
+          args: [new Address(SEP5_ADDRESS_0).toScVal()],
+          auth: [buildAuthEntry()],
+        }),
+      )
+      .setTimeout(300)
+      .build();
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signTransaction',
+      params: { xdr: transaction.toXDR() },
+    });
+    // A well-formed embedded entry must not trip the fail-closed check:
+    // the dialog renders with the authorization visible.
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    expect(content).toContain('Authorizations (1)');
+
+    await (ui as { cancel: () => Promise<void> }).cancel();
+    const error = getError(await pending);
+    expect(error.data?.code).toBe(-4);
+  }, 45000);
+
+  it('rejects a Soroban operation mixed into a multi-op transaction', async () => {
+    const { request } = await install();
+
+    const transaction = new TransactionBuilder(
+      new Account(SEP5_ADDRESS_0, '1'),
+      { fee: '200', networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(Operation.bumpSequence({ bumpTo: '2' }))
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: XLM_SAC_TESTNET,
+          function: 'transfer',
+          args: [],
+        }),
+      )
+      .setTimeout(300)
+      .build();
+
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: { xdr: transaction.toXDR() },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('only operation');
+  });
 });
 
 describe('signAuthEntry', () => {

@@ -2,7 +2,7 @@ import type { OperationRecord, Transaction } from '@stellar/stellar-sdk';
 import { Address, Asset, hash, scValToNative, xdr } from '@stellar/stellar-sdk';
 
 import { simulateTransaction } from './rpc';
-import { truncate } from '../ui/format';
+import { escapeHiddenCharacters, truncate } from '../ui/format';
 
 /** Soroban operation types (exactly one allowed per transaction). */
 const SOROBAN_OPERATION_TYPES = [
@@ -10,6 +10,25 @@ const SOROBAN_OPERATION_TYPES = [
   'extendFootprintTtl',
   'restoreFootprint',
 ];
+
+/**
+ * Whether a transaction carries a Soroban operation alongside other
+ * operations. The protocol requires a Soroban operation to be the only one
+ * in its transaction, so such an envelope can never execute on-chain; it is
+ * rejected explicitly rather than being misclassified as classic (which
+ * would skip simulation).
+ *
+ * @param tx - The parsed transaction.
+ * @returns True when a Soroban operation appears in a multi-operation tx.
+ */
+export function hasMisplacedSorobanOperation(tx: Transaction): boolean {
+  return (
+    tx.operations.length > 1 &&
+    tx.operations.some((operation) =>
+      SOROBAN_OPERATION_TYPES.includes(operation.type),
+    )
+  );
+}
 
 /**
  * Returns the transaction's Soroban operation, if it is a Soroban
@@ -45,7 +64,9 @@ const MAX_SCVAL_BYTES = 64;
  * @returns The display string.
  */
 function formatSymbolName(name: string): string {
-  return /^[A-Za-z0-9_]+$/u.test(name) ? name : JSON.stringify(name);
+  return /^[A-Za-z0-9_]+$/u.test(name)
+    ? name
+    : escapeHiddenCharacters(JSON.stringify(name));
 }
 
 /**
@@ -113,7 +134,10 @@ function formatScValInner(value: xdr.ScVal, depth: number): string {
       return `bytes(${hexBytes}${suffix})`;
     }
     case 'scvString':
-      return `str(${JSON.stringify(value.str().toString())})`;
+      // JSON.stringify escapes control characters but leaves format
+      // characters (bidi overrides, zero-width marks) raw; escape those too
+      // so a hostile argument cannot reorder or hide dialog text.
+      return `str(${escapeHiddenCharacters(JSON.stringify(value.str().toString()))})`;
     case 'scvSymbol':
       return `sym(${formatSymbolName(value.sym().toString())})`;
     case 'scvAddress':
@@ -414,6 +438,34 @@ export function decodeAuthEntry(
     invocations,
     unsupported: flags.unsupported,
   };
+}
+
+/**
+ * Scans embedded authorization entries for anything the snap cannot display
+ * faithfully. An embedded source-account entry is authorized by the very
+ * envelope signature being requested, so `signTransaction` must fail closed
+ * on these, exactly as `signAuthEntry` does for standalone entries.
+ *
+ * @param entries - The operation's authorization entries.
+ * @returns `'undecodable'` when an entry cannot be decoded, `'unsupported'`
+ * when one contains an unknown credential or function variant, or null when
+ * every entry is displayable.
+ */
+export function findUndisplayableAuthEntry(
+  entries: xdr.SorobanAuthorizationEntry[],
+): 'undecodable' | 'unsupported' | null {
+  for (const entry of entries) {
+    let decoded: DecodedAuthEntry;
+    try {
+      decoded = decodeAuthEntry(entry);
+    } catch {
+      return 'undecodable';
+    }
+    if (decoded.credentialsType === 'unknown' || decoded.unsupported) {
+      return 'unsupported';
+    }
+  }
+  return null;
 }
 
 /** Cap on embedded auth entries rendered inline (rest are in the raw XDR). */

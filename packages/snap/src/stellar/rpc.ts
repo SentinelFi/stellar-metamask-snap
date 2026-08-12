@@ -1,3 +1,4 @@
+import { SnapError } from '@metamask/snaps-sdk';
 import type { Infer, Struct } from '@metamask/superstruct';
 import {
   array,
@@ -12,6 +13,7 @@ import {
   type,
 } from '@metamask/superstruct';
 
+import { readJsonBounded } from './http';
 import { externalServiceError } from '../rpc/errors';
 
 /**
@@ -100,8 +102,12 @@ async function rpcCall<Type, Schema>(
       signal: controller.signal,
     });
     ({ status, ok } = response);
-    body = ok ? await response.json().catch(() => null) : null;
-  } catch {
+    body = ok ? await readJsonBounded(response, 'Stellar RPC') : null;
+  } catch (error) {
+    // readJsonBounded throws a typed oversized-response error; keep it.
+    if (error instanceof SnapError) {
+      throw error;
+    }
     throw externalServiceError(`Could not reach the Stellar RPC (${method}).`);
   } finally {
     clearTimeout(timer);

@@ -18,10 +18,11 @@ import type {
 import { SignerKey, Transaction } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
-import { ConnectionGrantNotice } from './dialogs';
+import { ConnectionGrantNotice, originCautionBanner } from './dialogs';
 import {
   bytesToDisplay,
   containsHiddenCharacters,
+  displayOrigin,
   formatAsset,
   formatAssetFull,
   formatMemo,
@@ -827,9 +828,10 @@ export function buildSignTransactionDialog({
           {submit ? 'Sign and submit fee bump' : 'Sign fee bump'}
         </Heading>
         <Text>
-          <Bold>{origin}</Bold> asks you to pay the fee for an existing
-          transaction.
+          <Bold>{displayOrigin(origin)}</Bold> asks you to pay the fee for an
+          existing transaction.
         </Text>
+        {originCautionBanner(origin)}
         {networkBanner}
         {submitBanner}
         {signingWith}
@@ -865,11 +867,12 @@ export function buildSignTransactionDialog({
       <Box>
         <Heading>Signature request</Heading>
         <Text>
-          <Bold>{origin}</Bold> asks you to sign a sequence-0 transaction. This
-          is often a login challenge (SEP-10), but the snap has not verified the
-          challenge domain or its server signature — only approve if you trust
-          the site.
+          <Bold>{displayOrigin(origin)}</Bold> asks you to sign a sequence-0
+          transaction. This is often a login challenge (SEP-10), but the snap
+          has not verified the challenge domain or its server signature — only
+          approve if you trust the site.
         </Text>
+        {originCautionBanner(origin)}
         {networkBanner}
         {signingWith}
         <Banner title="Not a transfer" severity="info">
@@ -894,9 +897,10 @@ export function buildSignTransactionDialog({
         {submit ? 'Sign and submit transaction' : 'Sign transaction'}
       </Heading>
       <Text>
-        <Bold>{origin}</Bold> asks you to sign
+        <Bold>{displayOrigin(origin)}</Bold> asks you to sign
         {submit ? ' and immediately submit' : ''} a Stellar transaction.
       </Text>
+      {originCautionBanner(origin)}
       {networkBanner}
       {submitBanner}
       {signingWith}
