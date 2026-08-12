@@ -1,4 +1,4 @@
-import { expect } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import { installSnap } from '@metamask/snaps-jest';
 import {
   Account,
@@ -164,7 +164,10 @@ describe('signTransaction (Soroban)', () => {
 describe('signAuthEntry', () => {
   it('shows the invocation tree and produces a valid signature', async () => {
     const { request } = await install();
-    const entry = buildAuthEntry();
+    // Expiry 0 → the snap sets a near-future expiry from the current ledger
+    // A fixed absolute ledger would now be rejected as expired since
+    // testnet is far past any hardcoded value.
+    const entry = buildAuthEntry({ expiration: 0 });
 
     const pending = request({
       origin: ORIGIN,
@@ -176,7 +179,7 @@ describe('signAuthEntry', () => {
     expect(content).toContain('Authorize contract call');
     expect(content).toContain('transfer');
     expect(content).toContain('123456'); // nonce
-    expect(content).toContain('500000'); // expiration ledger
+    expect(content).toContain('Expires in'); // bounded lifetime shown
     await (ui as { ok: () => Promise<void> }).ok();
 
     const result = getResult<{
@@ -191,7 +194,8 @@ describe('signAuthEntry', () => {
       'base64',
     );
     const credentials = signed.credentials().address();
-    expect(credentials.signatureExpirationLedger()).toBe(500000);
+    // The snap set a positive, near-future expiration ledger.
+    expect(credentials.signatureExpirationLedger()).toBeGreaterThan(0);
 
     const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
       new xdr.HashIdPreimageSorobanAuthorization({
@@ -264,8 +268,9 @@ describe('signAuthEntry', () => {
     const { request } = await install();
     const pending = request({
       origin: ORIGIN,
+      // Expiry 0 → snap sets a valid near-future expiry so the dialog shows.
+      params: { authEntry: buildAuthEntry({ expiration: 0 }).toXDR('base64') },
       method: 'signAuthEntry',
-      params: { authEntry: buildAuthEntry().toXDR('base64') },
     });
     const ui = await pending.getInterface();
     await (ui as { cancel: () => Promise<void> }).cancel();

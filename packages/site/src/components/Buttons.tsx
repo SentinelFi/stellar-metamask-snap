@@ -71,7 +71,11 @@ const ConnectedIndicator = styled.div`
 `;
 
 export const InstallFlaskButton = () => (
-  <Link href="https://metamask.io/flask/" target="_blank">
+  <Link
+    href="https://metamask.io/flask/"
+    target="_blank"
+    rel="noopener noreferrer"
+  >
     <FlaskFox />
     <ButtonText>Install MetaMask Flask</ButtonText>
   </Link>

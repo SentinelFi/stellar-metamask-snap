@@ -6,12 +6,32 @@ import {
   object,
   optional,
   refine,
+  size,
   string,
 } from '@metamask/superstruct';
 import { StrKey } from '@stellar/stellar-sdk';
 
 import { invalidRequest } from './errors';
 import { NETWORK_NAMES } from '../state/networks';
+
+/**
+ * Upper bounds on dapp-supplied payloads, enforced before any XDR parse so a
+ * malicious dapp cannot force oversized parsing, recursion, or dialogs
+ * (defense against resource exhaustion). Generous enough for legitimate
+ * traffic: a Soroban wasm-upload envelope is the largest real case.
+ */
+export const MAX_XDR_LENGTH = 256 * 1024;
+export const MAX_AUTH_ENTRY_LENGTH = 64 * 1024;
+export const MAX_MESSAGE_LENGTH = 4096;
+
+/**
+ * A non-empty base64/text string bounded to `max` characters.
+ *
+ * @param max - The maximum allowed length.
+ * @returns A superstruct string struct with the length bound applied.
+ */
+const boundedString = (max: number): Struct<string, null> =>
+  size(string(), 1, max);
 
 /**
  * A classic `G...` ed25519 account address. Callers interpolate addresses
@@ -49,7 +69,7 @@ export function validate<Type, Schema>(
 
 export const SignTransactionParams = object({
   /** Base64-encoded TransactionEnvelope XDR. */
-  xdr: string(),
+  xdr: boundedString(MAX_XDR_LENGTH),
   /** Must match the active network's passphrase when provided. */
   networkPassphrase: optional(string()),
   /** Must match the wallet's address when provided (SEP-43 option bag). */
@@ -59,13 +79,13 @@ export const SignTransactionParams = object({
 });
 
 export const SignMessageParams = object({
-  message: string(),
+  message: boundedString(MAX_MESSAGE_LENGTH),
   address: optional(string()),
 });
 
 export const SignAuthEntryParams = object({
   /** Base64-encoded SorobanAuthorizationEntry XDR. */
-  authEntry: string(),
+  authEntry: boundedString(MAX_AUTH_ENTRY_LENGTH),
   networkPassphrase: optional(string()),
   address: optional(string()),
 });

@@ -4,6 +4,17 @@ import type {
 } from '@metamask/providers';
 
 /**
+ * MetaMask EIP-6963 rdns values, matched EXACTLY. Substring matching on
+ * `io.metamask` would admit look-alike wallets that embed the string in
+ * their own rdns; mirror the connector's exact allowlist.
+ */
+const METAMASK_RDNS = new Set([
+  'io.metamask',
+  'io.metamask.flask',
+  'io.metamask.mmi',
+]);
+
+/**
  * Check if the current provider supports snaps by calling `wallet_getSnaps`.
  *
  * @param provider - The provider to use to check for snaps support. Defaults to
@@ -68,7 +79,7 @@ export async function getMetaMaskEIP6963Provider() {
 
       const { info, provider } = detail;
 
-      if (info.rdns.includes('io.metamask')) {
+      if (METAMASK_RDNS.has(info.rdns)) {
         resolveWithCleanup(provider);
       }
     }

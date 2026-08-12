@@ -116,23 +116,42 @@ function describeInvocation(
 }
 
 /**
- * Flattens an invocation tree depth-first, indenting sub-invocations.
+ * Depth/node caps so a hostile deeply-nested auth tree cannot exhaust the
+ * snap or produce an unreviewably large dialog (defense against resource
+ * exhaustion; the raw XDR remains available for full inspection).
+ */
+export const MAX_INVOCATION_DEPTH = 12;
+export const MAX_INVOCATION_NODES = 100;
+
+/**
+ * Flattens an invocation tree depth-first, indenting sub-invocations. Bounded
+ * by depth and total node count; a truncation marker is emitted when either
+ * limit is hit rather than recursing without limit.
  *
  * @param invocation - The root invocation.
  * @param depth - Current depth (indentation).
+ * @param budget - Mutable remaining-node counter, shared across the walk.
  * @returns Display strings, root first.
  */
 function flattenInvocations(
   invocation: xdr.SorobanAuthorizedInvocation,
   depth = 0,
+  budget = { nodes: MAX_INVOCATION_NODES },
 ): string[] {
+  if (depth >= MAX_INVOCATION_DEPTH || budget.nodes <= 0) {
+    return ['… (invocation tree truncated — review the raw XDR)'];
+  }
+  budget.nodes -= 1;
   const prefix = depth > 0 ? `${'· '.repeat(depth)}` : '';
-  return [
-    `${prefix}${describeInvocation(invocation)}`,
-    ...invocation
-      .subInvocations()
-      .flatMap((sub) => flattenInvocations(sub, depth + 1)),
-  ];
+  const lines = [`${prefix}${describeInvocation(invocation)}`];
+  for (const sub of invocation.subInvocations()) {
+    if (budget.nodes <= 0) {
+      lines.push(`${'· '.repeat(depth + 1)}… (truncated)`);
+      break;
+    }
+    lines.push(...flattenInvocations(sub, depth + 1, budget));
+  }
+  return lines;
 }
 
 /**
@@ -167,17 +186,99 @@ export function decodeAuthEntry(
   };
 }
 
+/** Cap on embedded auth entries rendered inline (rest are in the raw XDR). */
+export const MAX_EMBEDDED_AUTH_ENTRIES = 20;
+
+/** Default auth-entry lifetime when the dapp leaves it unset (~5 min @ 5s). */
+export const DEFAULT_AUTH_TTL_LEDGERS = 60;
+
+/** Cap on a dapp-supplied auth-entry lifetime (~24h @ 5s/ledger). */
+export const MAX_AUTH_TTL_LEDGERS = 17_280;
+
+export type AuthExpiryResult =
+  | { ok: true; validUntil: number; ledgersRemaining: number | null }
+  | { ok: false; reason: 'expired' | 'tooLong' | 'noLedger' };
+
+/**
+ * Bounds a Soroban auth-entry signature lifetime against the current ledger
+ * A dapp-supplied expiry must be in the future and within
+ * {@link MAX_AUTH_TTL_LEDGERS}; an unset (0) expiry defaults to
+ * {@link DEFAULT_AUTH_TTL_LEDGERS} ahead. When the current ledger is unknown
+ * (RPC unreachable) a nonzero expiry is passed through unverified, but an
+ * unset expiry cannot be resolved and fails.
+ *
+ * @param requestedLedger - The dapp's `signatureExpirationLedger` (0 = unset).
+ * @param latestLedger - The current ledger, or null when it could not be read.
+ * @returns The bounded result, or a rejection reason.
+ */
+export function boundAuthExpiration(
+  requestedLedger: number,
+  latestLedger: number | null,
+): AuthExpiryResult {
+  if (requestedLedger === 0) {
+    if (latestLedger === null) {
+      return { ok: false, reason: 'noLedger' };
+    }
+    return {
+      ok: true,
+      validUntil: latestLedger + DEFAULT_AUTH_TTL_LEDGERS,
+      ledgersRemaining: DEFAULT_AUTH_TTL_LEDGERS,
+    };
+  }
+  if (latestLedger === null) {
+    return { ok: true, validUntil: requestedLedger, ledgersRemaining: null };
+  }
+  if (requestedLedger <= latestLedger) {
+    return { ok: false, reason: 'expired' };
+  }
+  if (requestedLedger - latestLedger > MAX_AUTH_TTL_LEDGERS) {
+    return { ok: false, reason: 'tooLong' };
+  }
+  return {
+    ok: true,
+    validUntil: requestedLedger,
+    ledgersRemaining: requestedLedger - latestLedger,
+  };
+}
+
+/**
+ * Summarizes the authorization entries embedded in an `invokeHostFunction`
+ * operation for inline display: each entry's credential (authorizing account
+ * or source-account) and its invocation tree, so the review shows *what* is
+ * authorized rather than only a count. Bounded; undecodable entries
+ * are flagged rather than dropped.
+ *
+ * @param entries - The operation's authorization entries.
+ * @returns Display lines, one block per entry.
+ */
+export function summarizeAuthEntries(
+  entries: xdr.SorobanAuthorizationEntry[],
+): string[] {
+  return entries.slice(0, MAX_EMBEDDED_AUTH_ENTRIES).map((entry, index) => {
+    try {
+      const decoded = decodeAuthEntry(entry);
+      let who = 'source-account';
+      if (decoded.credentialsType === 'address') {
+        who = decoded.address ? truncate(decoded.address, 6) : 'address';
+      }
+      return `#${index + 1} [${who}]\n${decoded.invocations.join('\n')}`;
+    } catch {
+      return `#${index + 1} (undecodable — review the raw XDR)`;
+    }
+  });
+}
+
 export type SimulationSummary =
   | {
-      ok: true;
-      /** Estimated resource fee in stroops. */
-      minResourceFee: string;
-      /** Addresses that must sign address-credential auth entries. */
-      authSigners: string[];
-      /** Archived ledger entries must be restored before submission. */
-      restoreRequired: boolean;
-      latestLedger?: number;
-    }
+    ok: true;
+    /** Estimated resource fee in stroops. */
+    minResourceFee: string;
+    /** Addresses that must sign address-credential auth entries. */
+    authSigners: string[];
+    /** Archived ledger entries must be restored before submission. */
+    restoreRequired: boolean;
+    latestLedger?: number;
+  }
   | { ok: false; error: string };
 
 /**

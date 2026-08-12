@@ -26,24 +26,35 @@ type HorizonAccountResponse = {
   }[];
 };
 
+/** Default abort timeout for Horizon/friendbot requests (ms). */
+const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+
 /**
- * `fetch` wrapper that converts network failures into SEP-43 external
- * service errors.
+ * `fetch` wrapper that always applies an abort timeout and converts network
+ * failures (including timeouts) into SEP-43 external service errors, so a
+ * slow endpoint cannot hold a request open until the manifest's
+ * `maxRequestTime` expires.
  *
  * @param url - The URL to fetch.
  * @param init - Optional fetch options.
  * @param service - Service name for the error message.
+ * @param timeoutMs - Abort timeout in milliseconds.
  * @returns The response.
  */
 async function safeFetch(
   url: string,
   init: Parameters<typeof fetch>[1],
   service: string,
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
 ): ReturnType<typeof fetch> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, init);
+    return await fetch(url, { ...init, signal: controller.signal });
   } catch {
     throw externalServiceError(`Could not reach ${service}.`);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -190,10 +201,10 @@ export async function getAccountChecks(
         .map(({ key, weight }) => ({ key, weight })),
       thresholds: account.thresholds
         ? {
-            low: account.thresholds.low_threshold,
-            med: account.thresholds.med_threshold,
-            high: account.thresholds.high_threshold,
-          }
+          low: account.thresholds.low_threshold,
+          med: account.thresholds.med_threshold,
+          high: account.thresholds.high_threshold,
+        }
         : null,
     };
   } catch {

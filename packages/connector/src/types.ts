@@ -14,14 +14,35 @@ export const SEP43_ERROR_CODES = {
 export type Sep43ErrorCode =
   (typeof SEP43_ERROR_CODES)[keyof typeof SEP43_ERROR_CODES];
 
+/**
+ * Recovery data the snap attaches when a post-approval submission fails: the
+ * signature was produced, so callers can still poll or retry with it.
+ */
+export type StellarSnapErrorData = {
+  /** The signed transaction envelope, present on submit-after-sign failures. */
+  signedTxXdr?: string;
+  /** The signer address. */
+  signerAddress?: string;
+  /** The transaction hash when one was assigned before failure. */
+  hash?: string;
+  /** The Soroban RPC status, when present. */
+  status?: string;
+};
+
 /** Typed error thrown by the connector; `code` follows SEP-0043. */
 export class StellarSnapError extends Error {
   readonly code: number;
 
-  constructor(message: string, code: number) {
+  /** Recovery data preserved from the snap's `error.data`, when present. */
+  readonly data?: StellarSnapErrorData;
+
+  constructor(message: string, code: number, data?: StellarSnapErrorData) {
     super(message);
     this.name = 'StellarSnapError';
     this.code = code;
+    if (data) {
+      this.data = data;
+    }
   }
 }
 
@@ -51,6 +72,8 @@ export type SignTransactionResult = {
   signerAddress: string;
   /** Present when `submit: true` was requested. */
   hash?: string;
+  /** Soroban RPC acceptance status when submitted (PENDING/DUPLICATE). */
+  status?: string;
 };
 
 export type SignAuthEntryOptions = {

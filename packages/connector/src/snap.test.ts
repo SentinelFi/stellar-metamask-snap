@@ -112,6 +112,45 @@ describe('StellarSnap', () => {
     });
   });
 
+  it('preserves post-submission recovery data in the error', async () => {
+    // The snap attaches the signed envelope to a submit-failure error so the
+    // caller can poll or retry; the connector must not discard it.
+    const error = new Error('Transaction submission failed.') as Error & {
+      data: Record<string, unknown>;
+    };
+    error.data = {
+      code: -2,
+      signedTxXdr: 'AAAAsigned',
+      signerAddress: ADDRESS,
+      status: 'ERROR',
+    };
+    const { provider } = mockProvider({ signTransaction: error });
+    const snap = new StellarSnap({ provider });
+
+    await expect(
+      snap.signTransaction('AAAA', { submit: true }),
+    ).rejects.toMatchObject({
+      code: -2,
+      data: {
+        signedTxXdr: 'AAAAsigned',
+        signerAddress: ADDRESS,
+        status: 'ERROR',
+      },
+    });
+  });
+
+  it('leaves error data undefined when the snap sent none', async () => {
+    const { provider } = mockProvider({
+      signMessage: snapError('bad', -3),
+    });
+    const snap = new StellarSnap({ provider });
+    const caught = await snap
+      .signMessage('hi')
+      .catch((error: unknown) => error);
+    expect(caught).toBeInstanceOf(StellarSnapError);
+    expect((caught as StellarSnapError).data).toBeUndefined();
+  });
+
   it('connect requests the snap with a version range for npm IDs', async () => {
     const { provider, requests } = mockProvider({
       requestAccess: { address: ADDRESS },

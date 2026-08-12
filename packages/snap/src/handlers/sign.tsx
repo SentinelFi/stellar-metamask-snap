@@ -10,7 +10,11 @@ import {
 import { Buffer } from 'buffer';
 
 import { deriveKeypair } from '../keys';
-import { invalidRequest, userRejected } from '../rpc/errors';
+import {
+  externalServiceError,
+  invalidRequest,
+  userRejected,
+} from '../rpc/errors';
 import {
   SignAuthEntryParams,
   SignMessageParams,
@@ -23,6 +27,7 @@ import { getLatestLedger, sendTransaction } from '../stellar/rpc';
 import { collectSafetyWarnings } from '../stellar/safety';
 import type { SimulationSummary } from '../stellar/soroban';
 import {
+  boundAuthExpiration,
   decodeAuthEntry,
   getSorobanOperation,
   simulateForDisplay,
@@ -49,6 +54,8 @@ export async function signTransaction(
   signedTxXdr: string;
   signerAddress: string;
   hash?: string;
+  /** Soroban RPC acceptance status when submitted (PENDING/DUPLICATE). */
+  status?: string;
   /** Advisory safety warnings also shown in the dialog. */
   warnings?: string[];
 }> {
@@ -77,23 +84,29 @@ export async function signTransaction(
     throw invalidRequest('Unknown address: this wallet cannot sign for it.');
   }
 
+  // Resolve the transaction that carries the operations: for a fee bump that
+  // is the inner transaction, so a fee-bumped Soroban tx is still recognised
+  // as Soroban and gets the same review and RPC routing.
+  const innerTx = tx instanceof Transaction ? tx : tx.innerTransaction;
+  const isSoroban = getSorobanOperation(innerTx) !== null;
+
   // Soroban transactions get a display-verification simulation (Sui-snap
   // pattern): resource fee, required auth signers, restore requirements.
   // The transaction itself is never modified — we sign the provided XDR.
   let simulation: SimulationSummary | null = null;
-  const isSoroban =
-    tx instanceof Transaction && getSorobanOperation(tx) !== null;
   if (isSoroban) {
-    simulation = await simulateForDisplay(network.sorobanRpcUrl, request.xdr);
+    // Simulate the operation-bearing envelope (the inner tx for a fee bump).
+    const sorobanXdr =
+      tx instanceof Transaction ? request.xdr : innerTx.toXDR();
+    simulation = await simulateForDisplay(network.sorobanRpcUrl, sorobanXdr);
   }
 
   // Classic transactions get best-effort safety checks (unfunded
   // destinations, SEP-29 memo requirements, multisig weight). Advisory only.
   // Fee bumps get the same checks against their inner transaction.
-  const classicTx = tx instanceof Transaction ? tx : tx.innerTransaction;
   let warnings: string[] = [];
-  if (getSorobanOperation(classicTx) === null && classicTx.sequence !== '0') {
-    warnings = await collectSafetyWarnings(classicTx, network, signerAddress);
+  if (!isSoroban && innerTx.sequence !== '0') {
+    warnings = await collectSafetyWarnings(innerTx, network, signerAddress);
   }
 
   const approved = await snap.request({
@@ -105,6 +118,7 @@ export async function signTransaction(
         network: network.name,
         tx,
         xdr: request.xdr,
+        signingAddress: signerAddress,
         simulation,
         warnings,
       }),
@@ -127,10 +141,19 @@ export async function signTransaction(
       // Horizon's synchronous endpoint.
       if (isSoroban) {
         const sent = await sendTransaction(network.sorobanRpcUrl, signedTxXdr);
+        // sendTransaction is asynchronous: PENDING/DUPLICATE mean accepted,
+        // but ERROR/TRY_AGAIN_LATER are failures that must not be reported as
+        // a successful hash.
+        if (sent.status === 'ERROR' || sent.status === 'TRY_AGAIN_LATER') {
+          throw externalServiceError(
+            `Soroban submission ${sent.status === 'ERROR' ? 'was rejected' : 'was throttled (try again later)'}.`,
+          );
+        }
         return {
           signedTxXdr,
           signerAddress,
           hash: sent.hash,
+          status: sent.status,
           ...warningsField,
         };
       }
@@ -214,11 +237,36 @@ export async function signAuthEntry(
     );
   }
 
-  // Preserve the dapp's expiration; when unset, default to ~5 minutes.
-  let validUntil = decoded.signatureExpirationLedger ?? 0;
-  if (validUntil === 0) {
-    validUntil = (await getLatestLedger(network.sorobanRpcUrl)) + 60;
+  // Bound the signature lifetime against the current ledger: reject
+  // an already-expired entry and cap how far in the future it may reach, so
+  // the user cannot unknowingly grant a very long-lived authorization. When
+  // the ledger cannot be fetched, a nonzero expiry passes through unverified
+  // (mirrors how simulation failures degrade — warn, never silently pass).
+  let latestLedger: number | null = null;
+  try {
+    latestLedger = await getLatestLedger(network.sorobanRpcUrl);
+  } catch {
+    latestLedger = null;
   }
+
+  const bounded = boundAuthExpiration(
+    decoded.signatureExpirationLedger ?? 0,
+    latestLedger,
+  );
+  if (!bounded.ok) {
+    if (bounded.reason === 'expired') {
+      throw invalidRequest('This authorization entry has already expired.');
+    }
+    if (bounded.reason === 'tooLong') {
+      throw invalidRequest(
+        'This authorization would stay valid for too long. Ask the site for a shorter expiration.',
+      );
+    }
+    throw externalServiceError(
+      'Could not reach the Stellar RPC to set an authorization expiry.',
+    );
+  }
+  const { validUntil, ledgersRemaining } = bounded;
 
   const approved = await snap.request({
     method: 'snap_dialog',
@@ -232,6 +280,7 @@ export async function signAuthEntry(
           invocations={decoded.invocations}
           nonce={decoded.nonce ?? '0'}
           signatureExpirationLedger={validUntil}
+          ledgersRemaining={ledgersRemaining}
         />
       ),
     },

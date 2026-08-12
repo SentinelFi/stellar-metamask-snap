@@ -1,7 +1,16 @@
 import { describe, expect, it } from '@jest/globals';
 import { SnapError } from '@metamask/snaps-sdk';
 
-import { OptionalAddressParams, validate } from './validation';
+import {
+  MAX_AUTH_ENTRY_LENGTH,
+  MAX_MESSAGE_LENGTH,
+  MAX_XDR_LENGTH,
+  OptionalAddressParams,
+  SignAuthEntryParams,
+  SignMessageParams,
+  SignTransactionParams,
+  validate,
+} from './validation';
 
 const ADDRESS = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
 
@@ -47,5 +56,52 @@ describe('OptionalAddressParams', () => {
     }
     expect(caught).toBeInstanceOf(SnapError);
     expect((caught as SnapError).data).toStrictEqual({ code: -3 });
+  });
+});
+
+describe('payload size bounds', () => {
+  it('accepts payloads at the limit', () => {
+    expect(
+      validate({ xdr: 'A'.repeat(MAX_XDR_LENGTH) }, SignTransactionParams),
+    ).toBeDefined();
+    expect(
+      validate(
+        { authEntry: 'A'.repeat(MAX_AUTH_ENTRY_LENGTH) },
+        SignAuthEntryParams,
+      ),
+    ).toBeDefined();
+    expect(
+      validate({ message: 'm'.repeat(MAX_MESSAGE_LENGTH) }, SignMessageParams),
+    ).toBeDefined();
+  });
+
+  it('rejects an oversized xdr with -3 before parsing', () => {
+    expect(() =>
+      validate({ xdr: 'A'.repeat(MAX_XDR_LENGTH + 1) }, SignTransactionParams),
+    ).toThrow(SnapError);
+  });
+
+  it('rejects an oversized authEntry and message', () => {
+    expect(() =>
+      validate(
+        { authEntry: 'A'.repeat(MAX_AUTH_ENTRY_LENGTH + 1) },
+        SignAuthEntryParams,
+      ),
+    ).toThrow(SnapError);
+    expect(() =>
+      validate(
+        { message: 'm'.repeat(MAX_MESSAGE_LENGTH + 1) },
+        SignMessageParams,
+      ),
+    ).toThrow(SnapError);
+  });
+
+  it('rejects an empty required payload', () => {
+    expect(() => validate({ xdr: '' }, SignTransactionParams)).toThrow(
+      SnapError,
+    );
+    expect(() => validate({ message: '' }, SignMessageParams)).toThrow(
+      SnapError,
+    );
   });
 });

@@ -1,4 +1,4 @@
-import { expect } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import { installSnap } from '@metamask/snaps-jest';
 import {
   Account,

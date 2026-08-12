@@ -53,7 +53,11 @@ export const Footer = () => {
 
   return (
     <FooterWrapper>
-      <PoweredByButton href="https://docs.metamask.io/" target="_blank">
+      <PoweredByButton
+        href="https://docs.metamask.io/"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
         <MetaMaskFox />
         <PoweredByContainer>
           <PoweredBy color={theme.colors.text?.muted} />
@@ -65,7 +69,7 @@ export const Footer = () => {
         <a
           href="https://github.com/jeffnuclear/stelllar-metamask-snap/blob/main/LICENSE"
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
         >
           Apache 2.0
         </a>{' '}
@@ -73,7 +77,7 @@ export const Footer = () => {
         <a
           href="https://github.com/jeffnuclear/stelllar-metamask-snap"
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
         >
           GitHub
         </a>

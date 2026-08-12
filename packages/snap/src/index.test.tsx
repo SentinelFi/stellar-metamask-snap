@@ -1,4 +1,4 @@
-import { expect } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 import { installSnap } from '@metamask/snaps-jest';
 import type { Transaction } from '@stellar/stellar-sdk';
 import {
@@ -298,7 +298,7 @@ describe('signTransaction', () => {
     expect(error.message).toContain('Unknown address');
   });
 
-  it('frames sequence-0 transactions as SEP-10 authentication', async () => {
+  it('frames sequence-0 transactions as unverified signature requests', async () => {
     const { request } = await install();
     const xdr = new TransactionBuilder(new Account(SEP5_ADDRESS_0, '-1'), {
       fee: '100',
@@ -318,7 +318,9 @@ describe('signTransaction', () => {
     });
     const ui = await pending.getInterface();
     const content = JSON.stringify(ui.content);
-    expect(content).toContain('Authentication request');
+    // A seq-0 tx is not asserted to be a validated SEP-10 login.
+    expect(content).toContain('Signature request');
+    expect(content).toContain('has not verified');
     expect(content).toContain('does not move funds');
     await (ui as { ok: () => Promise<void> }).ok();
     await pending;

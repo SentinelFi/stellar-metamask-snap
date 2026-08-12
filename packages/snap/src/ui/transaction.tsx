@@ -23,7 +23,58 @@ import {
 } from './format';
 import type { NetworkName } from '../state/networks';
 import type { SimulationSummary } from '../stellar/soroban';
-import { decodeHostFunction } from '../stellar/soroban';
+import { decodeHostFunction, summarizeAuthEntries } from '../stellar/soroban';
+
+/** The concrete key variants a `setOptions` signer can carry. */
+type OperationSigner = {
+  ed25519PublicKey?: string;
+  sha256Hash?: unknown;
+  preAuthTx?: unknown;
+  ed25519SignedPayload?: string;
+};
+
+/**
+ * Describes a `setOptions` signer key by its concrete type, so a signer
+ * change shows *which* key is added/removed, not just its weight.
+ *
+ * @param signer - The operation's signer object.
+ * @returns A display string identifying the signer key.
+ */
+function describeSigner(signer: OperationSigner): string {
+  if (signer.ed25519PublicKey) {
+    return signer.ed25519PublicKey;
+  }
+  if (signer.ed25519SignedPayload) {
+    return `signed-payload:${signer.ed25519SignedPayload}`;
+  }
+  if (signer.sha256Hash) {
+    return `hash(x):${Buffer.from(signer.sha256Hash as Buffer).toString('hex')}`;
+  }
+  if (signer.preAuthTx) {
+    return `pre-auth-tx:${Buffer.from(signer.preAuthTx as Buffer).toString('hex')}`;
+  }
+  return 'unknown signer type';
+}
+
+/**
+ * A per-operation source-account row, shown when an operation overrides the
+ * transaction source so a hidden alternate source is visible.
+ *
+ * @param operation - The parsed operation.
+ * @returns A source row, or null when the operation uses the tx source.
+ */
+function renderOperationSource(
+  operation: OperationRecord,
+): GenericSnapElement | null {
+  if (!operation.source) {
+    return null;
+  }
+  return (
+    <Row label="Operation source">
+      <Text>{truncate(operation.source)}</Text>
+    </Row>
+  );
+}
 
 /**
  * Renders one decoded operation as a titled section. Unknown operation types
@@ -34,7 +85,7 @@ import { decodeHostFunction } from '../stellar/soroban';
  * @param index - Zero-based position in the transaction.
  * @returns The operation section.
  */
-function renderOperation(
+function renderOperationBody(
   operation: OperationRecord,
   index: number,
 ): GenericSnapElement {
@@ -160,10 +211,16 @@ function renderOperation(
     case 'setOptions': {
       const rows: GenericSnapElement[] = [];
       if (operation.signer) {
+        // Show the signer key itself, not only its weight — adding or
+        // removing a signer changes who controls the account.
         rows.push(
-          <Row label="Signer change" variant="critical">
-            <Text>{`Weight ${operation.signer.weight ?? '?'}`}</Text>
+          <Row label="Signer weight" variant="critical">
+            <Text>{String(operation.signer.weight ?? '?')}</Text>
           </Row>,
+        );
+        rows.push(
+          <Text>Signer key</Text>,
+          <Copyable value={describeSigner(operation.signer)} />,
         );
       }
       if (operation.masterWeight !== undefined) {
@@ -184,7 +241,11 @@ function renderOperation(
         if (value !== undefined) {
           rows.push(
             <Row label={label} variant="warning">
-              <Text>{String(value)}</Text>
+              <Text>
+                {label === 'Home domain'
+                  ? sanitizeInlineText(String(value))
+                  : String(value)}
+              </Text>
             </Row>,
           );
         }
@@ -259,9 +320,12 @@ function renderOperation(
             <Copyable value={decoded.args.join('\n')} />
           ) : null}
           {authCount > 0 ? (
-            <Row label="Authorizations">
-              <Text>{String(authCount)}</Text>
-            </Row>
+            <Text>{`Authorizations (${authCount})`}</Text>
+          ) : null}
+          {authCount > 0 ? (
+            <Copyable
+              value={summarizeAuthEntries(operation.auth ?? []).join('\n\n')}
+            />
           ) : null}
         </Section>
       );
@@ -303,6 +367,31 @@ function renderOperation(
         </Section>
       );
   }
+}
+
+/**
+ * Renders a decoded operation, appending its source-account row when the
+ * operation overrides the transaction source.
+ *
+ * @param operation - The parsed operation.
+ * @param index - Zero-based position in the transaction.
+ * @returns The operation section.
+ */
+function renderOperation(
+  operation: OperationRecord,
+  index: number,
+): GenericSnapElement {
+  const body = renderOperationBody(operation, index);
+  const source = renderOperationSource(operation);
+  if (!source) {
+    return body;
+  }
+  return (
+    <Box>
+      {body}
+      <Section>{source}</Section>
+    </Box>
+  );
 }
 
 /**
@@ -393,6 +482,8 @@ export type SignTransactionDialogParams = {
   network: NetworkName;
   tx: Transaction | FeeBumpTransaction;
   xdr: string;
+  /** The wallet key that will sign, shown so the user sees who signs. */
+  signingAddress: string;
   /** Present for Soroban transactions: display-verification simulation. */
   simulation?: SimulationSummary | null;
   /** Advisory safety warnings (unfunded destination, SEP-29, multisig). */
@@ -422,6 +513,7 @@ function renderWarnings(warnings: string[]): GenericSnapElement[] {
  * @param params.network - The active network name.
  * @param params.tx - The parsed transaction or fee-bump envelope.
  * @param params.xdr - The raw base64 envelope XDR.
+ * @param params.signingAddress - The wallet key that will sign.
  * @param params.simulation - Display-verification simulation for Soroban
  * transactions, or null/absent for classic ones.
  * @param params.warnings - Advisory safety warnings for classic transactions.
@@ -432,6 +524,7 @@ export function buildSignTransactionDialog({
   network,
   tx,
   xdr,
+  signingAddress,
   simulation,
   warnings = [],
 }: SignTransactionDialogParams): JSXElement {
@@ -446,6 +539,13 @@ export function buildSignTransactionDialog({
       </Banner>
     );
 
+  const signingWith = (
+    <Section>
+      <Text>Signing with</Text>
+      <Copyable value={signingAddress} />
+    </Section>
+  );
+
   // Fee-bump envelope: outer fee payer wrapping an already-signed inner tx.
   if (!(tx instanceof Transaction)) {
     const inner = tx.innerTransaction;
@@ -457,6 +557,7 @@ export function buildSignTransactionDialog({
           transaction.
         </Text>
         {networkBanner}
+        {signingWith}
         {renderWarnings(warnings)}
         <Section>
           <Row label="Fee source">
@@ -479,20 +580,25 @@ export function buildSignTransactionDialog({
     );
   }
 
-  // SEP-10 authentication challenges are sequence-0 transactions that can
-  // never be executed on-chain; frame them as logins, not transfers.
+  // A sequence-0 transaction can never execute on-chain — it is typically a
+  // SEP-10 login challenge, but the snap does NOT validate the challenge's
+  // structure, web-auth domain, time bounds, or server signature.
+  // Present it as an unverified signature request, not a confirmed login.
   if (tx.sequence === '0') {
     return (
       <Box>
-        <Heading>Authentication request</Heading>
+        <Heading>Signature request</Heading>
         <Text>
-          <Bold>{origin}</Bold> asks you to sign a SEP-10 authentication
-          challenge to prove you own this account.
+          <Bold>{origin}</Bold> asks you to sign a sequence-0 transaction. This
+          is often a login challenge (SEP-10), but the snap has not verified the
+          challenge domain or its server signature — only approve if you trust
+          the site.
         </Text>
+        {signingWith}
         <Banner title="Not a transfer" severity="info">
           <Text>
-            This challenge has sequence number 0: it can never be submitted to
-            the network and does not move funds.
+            A sequence-0 transaction cannot be submitted to the network and does
+            not move funds.
           </Text>
         </Banner>
         {tx.operations.map(renderOperation)}
@@ -510,6 +616,7 @@ export function buildSignTransactionDialog({
         <Bold>{origin}</Bold> asks you to sign a Stellar transaction.
       </Text>
       {networkBanner}
+      {signingWith}
       {renderWarnings(warnings)}
       {renderSummary(tx)}
       {tx.operations.map(renderOperation)}

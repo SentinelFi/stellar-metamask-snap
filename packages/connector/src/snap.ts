@@ -14,6 +14,7 @@ import type {
   SignMessageResult,
   SignTransactionOptions,
   SignTransactionResultWithWarnings,
+  StellarSnapErrorData,
 } from './types';
 import { SEP43_ERROR_CODES, StellarSnapError } from './types';
 
@@ -42,7 +43,13 @@ function toStellarSnapError(error: unknown): StellarSnapError {
   const raw = error as {
     message?: string;
     code?: number;
-    data?: { code?: number };
+    data?: {
+      code?: number;
+      signedTxXdr?: unknown;
+      signerAddress?: unknown;
+      hash?: unknown;
+      status?: unknown;
+    };
   };
   const code =
     typeof raw?.data?.code === 'number'
@@ -50,7 +57,26 @@ function toStellarSnapError(error: unknown): StellarSnapError {
       : SEP43_ERROR_CODES.internal;
   // MetaMask's own connect rejection (EIP-1193 4001) is a user rejection.
   const normalized = raw?.code === 4001 ? SEP43_ERROR_CODES.userRejected : code;
-  return new StellarSnapError(raw?.message ?? 'Unknown error.', normalized);
+  // Preserve post-approval recovery data (signed envelope, hash, status) so a
+  // caller can poll or retry after an ambiguous submission failure.
+  const data: StellarSnapErrorData = {};
+  for (const key of [
+    'signedTxXdr',
+    'signerAddress',
+    'hash',
+    'status',
+  ] as const) {
+    const value = raw?.data?.[key];
+    if (typeof value === 'string') {
+      data[key] = value;
+    }
+  }
+  const hasData = Object.keys(data).length > 0;
+  return new StellarSnapError(
+    raw?.message ?? 'Unknown error.',
+    normalized,
+    hasData ? data : undefined,
+  );
 }
 
 /**

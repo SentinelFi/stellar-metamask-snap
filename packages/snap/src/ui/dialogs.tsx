@@ -104,7 +104,26 @@ export type SignAuthEntryDialogProps = {
   invocations: string[];
   nonce: string;
   signatureExpirationLedger: number;
+  /** Ledgers until expiry, or null when the current ledger is unknown. */
+  ledgersRemaining: number | null;
 };
+
+/**
+ * Renders a ledger delta as an approximate human duration (~5s per ledger).
+ *
+ * @param ledgers - Ledgers remaining until expiry.
+ * @returns A short duration string.
+ */
+function approxDuration(ledgers: number): string {
+  const seconds = ledgers * 5;
+  if (seconds < 3600) {
+    return `~${Math.max(1, Math.round(seconds / 60))} min`;
+  }
+  if (seconds < 86400) {
+    return `~${Math.round(seconds / 3600)} h`;
+  }
+  return `~${Math.round(seconds / 86400)} d`;
+}
 
 /**
  * Soroban authorization-entry signing confirmation. The signature authorizes
@@ -119,6 +138,7 @@ export type SignAuthEntryDialogProps = {
  * @param props.nonce - The entry's replay-protection nonce.
  * @param props.signatureExpirationLedger - Ledger after which the signature
  * expires.
+ * @param props.ledgersRemaining - Ledgers until expiry, or null when unknown.
  * @returns The dialog content.
  */
 export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
@@ -128,6 +148,7 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
   invocations,
   nonce,
   signatureExpirationLedger,
+  ledgersRemaining,
 }) => (
   <Box>
     <Heading>Authorize contract call</Heading>
@@ -148,8 +169,12 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
     <Section>
       <Text>Authorized calls</Text>
       <Copyable value={invocations.join('\n')} />
-      <Row label="Expires at ledger">
-        <Text>{`${signatureExpirationLedger} (~5s per ledger)`}</Text>
+      <Row label="Expires in">
+        <Text>
+          {ledgersRemaining === null
+            ? `at ledger ${signatureExpirationLedger} (lifetime unverified — RPC unreachable)`
+            : `${approxDuration(ledgersRemaining)} (ledger ${signatureExpirationLedger})`}
+        </Text>
       </Row>
       <Row label="Nonce">
         <Text>{nonce}</Text>

@@ -30,25 +30,26 @@ export type GetTransactionResponse = {
 /** Simulation timeout — keep dialog latency bounded. */
 const SIMULATION_TIMEOUT_MS = 10_000;
 
+/** Default timeout for every other RPC call, so none can hang. */
+const DEFAULT_RPC_TIMEOUT_MS = 10_000;
+
 /**
  * Performs a JSON-RPC 2.0 call.
  *
  * @param url - The RPC endpoint.
  * @param method - The JSON-RPC method.
  * @param params - The method params.
- * @param timeoutMs - Optional request timeout.
+ * @param timeoutMs - Request timeout; defaults so no call is unbounded.
  * @returns The `result` member of the response.
  */
 async function rpcCall<Type>(
   url: string,
   method: string,
   params: Record<string, unknown>,
-  timeoutMs?: number,
+  timeoutMs: number = DEFAULT_RPC_TIMEOUT_MS,
 ): Promise<Type> {
   const controller = new AbortController();
-  const timer = timeoutMs
-    ? setTimeout(() => controller.abort(), timeoutMs)
-    : undefined;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Awaited<ReturnType<typeof fetch>>;
   try {
