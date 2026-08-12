@@ -12,36 +12,41 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout this repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Checkout Snapper
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: sayfer-io/Snapper
+          # Pinned to Snapper main as of 2026-08-12. Bump this SHA deliberately
+          # (review upstream changes first) rather than tracking a moving branch.
+          ref: 66ea3158b89039cfa2453c5021aa965985c9135c
           path: .snapper-src
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
 
       - name: Build Snapper from source
         working-directory: .snapper-src
         run: |
-          npm install
+          npm ci
           npm run build
 
       - name: Run Snapper against packages/snap
         # Snapper logs via winston; merge stderr into the captured stream so
-        # findings are never lost. `|| true` keeps the job green so the report
-        # always uploads for review.
+        # findings are never lost. A scanner failure fails the job; the report
+        # upload below still runs via `if: always()`.
         run: |
           mkdir -p snapper-report
+          status=0
           node .snapper-src/dist/main.js \
             --path "${{ github.workspace }}/packages/snap" --verbose \
-            > snapper-report/output.txt 2>&1 || true
+            > snapper-report/output.txt 2>&1 || status=$?
           echo "--- output.txt (first 300 lines) ---"
           head -n 300 snapper-report/output.txt || true
+          exit "$status"
 
       - name: Collect any generated report files
         if: always()
@@ -53,7 +58,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: snapper-report
           path: snapper-report/

@@ -32,6 +32,41 @@ export function formatAsset(asset: unknown): string {
 }
 
 /**
+ * Full, lossless asset identity for copy/inspection: `XLM (native)` or
+ * `CODE:GFULLISSUER…`. Complements {@link formatAsset}, which shortens the
+ * issuer for inline rows.
+ *
+ * @param asset - A stellar-sdk Asset (or liquidity-pool asset).
+ * @returns The full identity string, or null when there is nothing beyond
+ * the inline form (native asset or pool shares).
+ */
+export function formatAssetFull(asset: unknown): string | null {
+  if (asset instanceof Asset && !asset.isNative()) {
+    return `${asset.getCode()}:${asset.getIssuer()}`;
+  }
+  return null;
+}
+
+/**
+ * Renders untrusted bytes losslessly: UTF-8 text when the bytes are clean,
+ * printable UTF-8 (round-trips exactly and carries no hidden characters),
+ * otherwise the full hex form prefixed `hex:`. Intended for `Copyable`, so
+ * nothing is truncated.
+ *
+ * @param bytes - The raw bytes.
+ * @returns The display string.
+ */
+export function bytesToDisplay(bytes: Uint8Array): string {
+  const buffer = Buffer.from(bytes);
+  const text = buffer.toString('utf8');
+  const roundTrips = Buffer.from(text, 'utf8').equals(buffer);
+  if (roundTrips && !containsHiddenCharacters(text)) {
+    return text;
+  }
+  return `hex:${buffer.toString('hex')}`;
+}
+
+/**
  * Display label for a tracked Soroban token: symbol plus truncated contract
  * ID (`SYM (CDLZ…CYSC)`). The symbol is contract-reported and untrusted, so
  * it is never shown bare — a token calling itself `XLM` must remain

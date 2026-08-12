@@ -10,20 +10,127 @@ import {
   Section,
   Text,
 } from '@metamask/snaps-sdk/jsx';
-import type { FeeBumpTransaction, OperationRecord } from '@stellar/stellar-sdk';
-import { Transaction } from '@stellar/stellar-sdk';
+import type {
+  FeeBumpTransaction,
+  OperationRecord,
+  Asset,
+} from '@stellar/stellar-sdk';
+import { SignerKey, Transaction } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { ConnectionGrantNotice } from './dialogs';
 import {
+  bytesToDisplay,
+  containsHiddenCharacters,
   formatAsset,
+  formatAssetFull,
   formatMemo,
   sanitizeInlineText,
   stroopsToXlm,
-  truncate,
 } from './format';
 import type { NetworkName } from '../state/networks';
 import type { SimulationSummary } from '../stellar/soroban';
 import { decodeHostFunction, summarizeAuthEntries } from '../stellar/soroban';
+
+/**
+ * Operation types the review dialog can decode faithfully. Transactions
+ * containing anything else are rejected before the dialog is shown (fail
+ * closed): a warning banner over raw XDR is not a usable review mechanism.
+ */
+export const SUPPORTED_OPERATION_TYPES = new Set([
+  'payment',
+  'createAccount',
+  'changeTrust',
+  'pathPaymentStrictSend',
+  'pathPaymentStrictReceive',
+  'manageData',
+  'setOptions',
+  'accountMerge',
+  'invokeHostFunction',
+  'extendFootprintTtl',
+  'restoreFootprint',
+]);
+
+/**
+ * Warns when any of the given untrusted strings carries hidden or
+ * direction-altering characters. The strings are displayed sanitized, but
+ * the signed bytes keep the originals, so the user must be told the display
+ * differs from what is signed.
+ *
+ * @param values - Untrusted strings that are rendered inline.
+ * @returns A warning banner, or null when all values are clean.
+ */
+function hiddenCharactersBanner(
+  values: (string | undefined)[],
+): GenericSnapElement | null {
+  if (
+    !values.some(
+      (value) => value !== undefined && containsHiddenCharacters(value),
+    )
+  ) {
+    return null;
+  }
+  return (
+    <Banner title="Hidden characters" severity="warning">
+      <Text>
+        A text field here contains invisible or direction-altering characters.
+        They are removed from this preview but remain in what you sign.
+      </Text>
+    </Banner>
+  );
+}
+
+/**
+ * Full, lossless identity of a non-native asset for copy/inspection,
+ * complementing the shortened inline form.
+ *
+ * @param label - The display label.
+ * @param asset - The asset to render.
+ * @returns The detail block, or null for native/pool assets.
+ */
+function renderAssetFull(
+  label: string,
+  asset: unknown,
+): GenericSnapElement | null {
+  const full = formatAssetFull(asset);
+  if (!full) {
+    return null;
+  }
+  return (
+    <Box>
+      <Text>{label}</Text>
+      <Copyable value={full} />
+    </Box>
+  );
+}
+
+/**
+ * Renders a path payment's intermediate hop assets with full identities.
+ * The hops are part of the signed bytes and constrain execution, so they
+ * must be reviewable.
+ *
+ * @param path - The operation's path assets.
+ * @returns The path block, or null when the path is empty.
+ */
+function renderPathAssets(
+  path: Asset[] | undefined,
+): GenericSnapElement | null {
+  if (!path || path.length === 0) {
+    return null;
+  }
+  const hops = path.map(
+    (asset, index) =>
+      `${index + 1}. ${
+        asset.isNative() ? 'XLM (native)' : (formatAssetFull(asset) ?? '?')
+      }`,
+  );
+  return (
+    <Box>
+      <Text>{`Path (${path.length} hop${path.length === 1 ? '' : 's'})`}</Text>
+      <Copyable value={hops.join('\n')} />
+    </Box>
+  );
+}
 
 /** The concrete key variants a `setOptions` signer can carry. */
 type OperationSigner = {
@@ -70,9 +177,10 @@ function renderOperationSource(
     return null;
   }
   return (
-    <Row label="Operation source">
-      <Text>{truncate(operation.source)}</Text>
-    </Row>
+    <Box>
+      <Text>Operation source</Text>
+      <Copyable value={operation.source} />
+    </Box>
   );
 }
 
@@ -104,6 +212,7 @@ function renderOperationBody(
           <Row label="Amount">
             <Text>{`${operation.amount} ${formatAsset(operation.asset)}`}</Text>
           </Row>
+          {renderAssetFull('Asset', operation.asset)}
           <Text>Destination</Text>
           <Copyable value={operation.destination} />
         </Section>
@@ -135,6 +244,7 @@ function renderOperationBody(
           <Row label="Asset">
             <Text>{formatAsset(operation.line)}</Text>
           </Row>
+          {renderAssetFull('Asset (full)', operation.line)}
           <Row label="Limit" variant={removing ? 'warning' : 'default'}>
             <Text>{removing ? 'Remove (0)' : operation.limit}</Text>
           </Row>
@@ -158,6 +268,9 @@ function renderOperationBody(
               {`${operation.destMin} ${formatAsset(operation.destAsset)}`}
             </Text>
           </Row>
+          {renderAssetFull('Send asset', operation.sendAsset)}
+          {renderAssetFull('Receive asset', operation.destAsset)}
+          {renderPathAssets(operation.path)}
           <Text>Destination</Text>
           <Copyable value={operation.destination} />
         </Section>
@@ -179,34 +292,42 @@ function renderOperationBody(
               {`${operation.destAmount} ${formatAsset(operation.destAsset)}`}
             </Text>
           </Row>
+          {renderAssetFull('Send asset', operation.sendAsset)}
+          {renderAssetFull('Receive asset', operation.destAsset)}
+          {renderPathAssets(operation.path)}
           <Text>Destination</Text>
           <Copyable value={operation.destination} />
         </Section>
       );
 
-    case 'manageData':
+    case 'manageData': {
+      // The value is raw bytes: render it losslessly (clean UTF-8 text or
+      // full hex) in a Copyable so display and signed bytes cannot diverge.
+      const value =
+        operation.value === undefined
+          ? undefined
+          : bytesToDisplay(Buffer.from(operation.value));
       return (
         <Section>
           <Text>
             <Bold>{`${title}: Manage data`}</Bold>
           </Text>
-          <Row label="Key">
-            <Text>{sanitizeInlineText(operation.name)}</Text>
-          </Row>
-          <Row label="Value">
-            <Text>
-              {operation.value === undefined
-                ? 'Delete entry'
-                : truncate(
-                    sanitizeInlineText(
-                      Buffer.from(operation.value).toString('utf8'),
-                    ),
-                    24,
-                  )}
-            </Text>
-          </Row>
+          {hiddenCharactersBanner([operation.name])}
+          <Text>Key</Text>
+          <Copyable value={operation.name} />
+          {value === undefined ? (
+            <Row label="Value">
+              <Text>Delete entry</Text>
+            </Row>
+          ) : (
+            <Box>
+              <Text>Value</Text>
+              <Copyable value={value} />
+            </Box>
+          )}
         </Section>
       );
+    }
 
     case 'setOptions': {
       const rows: GenericSnapElement[] = [];
@@ -258,6 +379,7 @@ function renderOperationBody(
               controls the account. Review carefully.
             </Text>
           </Banner>
+          {hiddenCharactersBanner([operation.homeDomain])}
           {rows}
         </Section>
       );
@@ -279,6 +401,20 @@ function renderOperationBody(
 
     case 'invokeHostFunction': {
       const decoded = decodeHostFunction(operation.func);
+      if (decoded.kind === 'unknown') {
+        // Unreachable in practice: signTransaction rejects unknown host
+        // function types before the dialog is built. Kept as defense.
+        return (
+          <Section>
+            <Banner title={`${title}: Unknown host function`} severity="danger">
+              <Text>
+                This host function cannot be decoded by the snap and cannot be
+                reviewed faithfully.
+              </Text>
+            </Banner>
+          </Section>
+        );
+      }
       if (decoded.kind !== 'invoke') {
         return (
           <Section>
@@ -292,9 +428,12 @@ function renderOperationBody(
             >
               <Text>
                 This deploys contract code or a new contract instance. Review
-                the raw transaction XDR below.
+                the details and the raw transaction XDR below.
               </Text>
             </Banner>
+            {(decoded.details ?? []).length > 0 ? (
+              <Copyable value={(decoded.details ?? []).join('\n')} />
+            ) : null}
           </Section>
         );
       }
@@ -400,13 +539,127 @@ function renderOperation(
  * @param tx - The parsed transaction.
  * @returns Summary section.
  */
+/**
+ * Renders a unix-seconds time bound with a readable UTC form when parseable.
+ *
+ * @param value - The bound as a decimal string ('0' = unset).
+ * @returns The display string, or null when unset.
+ */
+function formatTimeBound(value: string | undefined): string | null {
+  if (value === undefined || value === '0') {
+    return null;
+  }
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) {
+    return value;
+  }
+  try {
+    return `${value} (${new Date(seconds * 1000).toISOString()})`;
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Rows for the transaction's preconditions (time/ledger bounds, minimum
+ * sequence constraints, extra signers). These bound when and how the
+ * signature is usable, so they are part of a faithful review.
+ *
+ * @param tx - The parsed transaction.
+ * @returns Precondition elements (possibly empty).
+ */
+function renderPreconditions(tx: Transaction): GenericSnapElement[] {
+  const rows: GenericSnapElement[] = [];
+
+  const minTime = formatTimeBound(tx.timeBounds?.minTime);
+  if (minTime) {
+    rows.push(
+      <Row label="Valid after">
+        <Text>{minTime}</Text>
+      </Row>,
+    );
+  }
+  const maxTime = formatTimeBound(tx.timeBounds?.maxTime);
+  if (maxTime) {
+    rows.push(
+      <Row label="Valid until">
+        <Text>{maxTime}</Text>
+      </Row>,
+    );
+  }
+
+  if (tx.ledgerBounds) {
+    const { minLedger, maxLedger } = tx.ledgerBounds;
+    if (minLedger !== 0 || maxLedger !== 0) {
+      rows.push(
+        <Row label="Ledger bounds">
+          <Text>{`${minLedger} to ${maxLedger === 0 ? 'unbounded' : maxLedger}`}</Text>
+        </Row>,
+      );
+    }
+  }
+
+  if (tx.minAccountSequence !== undefined) {
+    rows.push(
+      <Row label="Min account sequence">
+        <Text>{String(tx.minAccountSequence)}</Text>
+      </Row>,
+    );
+  }
+  if (tx.minAccountSequenceAge !== undefined && tx.minAccountSequenceAge > 0n) {
+    rows.push(
+      <Row label="Min sequence age">
+        <Text>{`${tx.minAccountSequenceAge.toString()} s`}</Text>
+      </Row>,
+    );
+  }
+  if (
+    tx.minAccountSequenceLedgerGap !== undefined &&
+    tx.minAccountSequenceLedgerGap > 0
+  ) {
+    rows.push(
+      <Row label="Min sequence ledger gap">
+        <Text>{String(tx.minAccountSequenceLedgerGap)}</Text>
+      </Row>,
+    );
+  }
+
+  const extraSigners = tx.extraSigners ?? [];
+  if (extraSigners.length > 0) {
+    const encoded = extraSigners.map((signer) => {
+      try {
+        return SignerKey.encodeSignerKey(signer);
+      } catch {
+        return '(unrenderable signer key — review the raw XDR)';
+      }
+    });
+    rows.push(
+      <Box>
+        <Text>Extra required signers</Text>
+        <Copyable value={encoded.join('\n')} />
+      </Box>,
+    );
+  }
+
+  return rows;
+}
+
+/**
+ * Header rows shared by regular transactions: full source, fee, sequence,
+ * memo (with a hidden-character warning for text memos), and preconditions.
+ *
+ * @param tx - The parsed transaction.
+ * @returns The summary section.
+ */
 function renderSummary(tx: Transaction): GenericSnapElement {
   const memo = formatMemo(tx.memo);
+  const rawMemoText =
+    tx.memo.type === 'text' ? tx.memo.value?.toString() : undefined;
   return (
     <Section>
-      <Row label="Source">
-        <Text>{truncate(tx.source)}</Text>
-      </Row>
+      {hiddenCharactersBanner([rawMemoText])}
+      <Text>Source</Text>
+      <Copyable value={tx.source} />
       <Row label="Max fee">
         <Text>{`${stroopsToXlm(tx.fee)} XLM`}</Text>
       </Row>
@@ -418,6 +671,7 @@ function renderSummary(tx: Transaction): GenericSnapElement {
           <Text>{memo[1]}</Text>
         </Row>
       ) : null}
+      {renderPreconditions(tx)}
     </Section>
   );
 }
@@ -460,11 +714,12 @@ function renderSimulation(
       <Row label="Estimated resource fee">
         <Text>{`${stroopsToXlm(simulation.minResourceFee)} XLM`}</Text>
       </Row>
-      {simulation.authSigners.map((signer) => (
-        <Row label="Requires signature from">
-          <Text>{truncate(signer, 8)}</Text>
-        </Row>
-      ))}
+      {simulation.authSigners.length > 0 ? (
+        <Box>
+          <Text>Requires signature from</Text>
+          <Copyable value={simulation.authSigners.join('\n')} />
+        </Box>
+      ) : null}
       {simulation.restoreRequired ? (
         <Banner title="Restore required" severity="warning">
           <Text>
@@ -488,6 +743,8 @@ export type SignTransactionDialogParams = {
   simulation?: SimulationSummary | null;
   /** Advisory safety warnings (unfunded destination, SEP-29, multisig). */
   warnings?: string[];
+  /** Approval will also broadcast the signed transaction immediately. */
+  submit?: boolean;
 };
 
 /**
@@ -517,6 +774,7 @@ function renderWarnings(warnings: string[]): GenericSnapElement[] {
  * @param params.simulation - Display-verification simulation for Soroban
  * transactions, or null/absent for classic ones.
  * @param params.warnings - Advisory safety warnings for classic transactions.
+ * @param params.submit - Approval will also broadcast the transaction.
  * @returns The dialog content.
  */
 export function buildSignTransactionDialog({
@@ -527,6 +785,7 @@ export function buildSignTransactionDialog({
   signingAddress,
   simulation,
   warnings = [],
+  submit = false,
 }: SignTransactionDialogParams): JSXElement {
   const networkBanner =
     network === 'PUBLIC' ? (
@@ -546,23 +805,38 @@ export function buildSignTransactionDialog({
     </Section>
   );
 
+  // The user must know before approving that a single approval both signs
+  // and irreversibly broadcasts when submit was requested.
+  const submitBanner = submit ? (
+    <Banner title="Sign and submit" severity="warning">
+      <Text>
+        Approving signs this transaction and immediately submits it to the
+        network. This cannot be undone.
+      </Text>
+    </Banner>
+  ) : null;
+
+  const grantNotice = <ConnectionGrantNotice origin={origin} />;
+
   // Fee-bump envelope: outer fee payer wrapping an already-signed inner tx.
   if (!(tx instanceof Transaction)) {
     const inner = tx.innerTransaction;
     return (
       <Box>
-        <Heading>Sign fee bump</Heading>
+        <Heading>
+          {submit ? 'Sign and submit fee bump' : 'Sign fee bump'}
+        </Heading>
         <Text>
           <Bold>{origin}</Bold> asks you to pay the fee for an existing
           transaction.
         </Text>
         {networkBanner}
+        {submitBanner}
         {signingWith}
         {renderWarnings(warnings)}
         <Section>
-          <Row label="Fee source">
-            <Text>{truncate(tx.feeSource)}</Text>
-          </Row>
+          <Text>Fee source</Text>
+          <Copyable value={tx.feeSource} />
           <Row label="New max fee">
             <Text>{`${stroopsToXlm(tx.fee)} XLM`}</Text>
           </Row>
@@ -573,6 +847,8 @@ export function buildSignTransactionDialog({
         </Text>
         {renderSummary(inner)}
         {inner.operations.map(renderOperation)}
+        {renderSimulation(simulation ?? null)}
+        {grantNotice}
         <Divider />
         <Text>Raw transaction (XDR)</Text>
         <Copyable value={xdr} />
@@ -594,6 +870,7 @@ export function buildSignTransactionDialog({
           challenge domain or its server signature — only approve if you trust
           the site.
         </Text>
+        {networkBanner}
         {signingWith}
         <Banner title="Not a transfer" severity="info">
           <Text>
@@ -601,7 +878,9 @@ export function buildSignTransactionDialog({
             not move funds.
           </Text>
         </Banner>
+        {renderSummary(tx)}
         {tx.operations.map(renderOperation)}
+        {grantNotice}
         <Divider />
         <Text>Raw challenge (XDR)</Text>
         <Copyable value={xdr} />
@@ -611,16 +890,21 @@ export function buildSignTransactionDialog({
 
   return (
     <Box>
-      <Heading>Sign transaction</Heading>
+      <Heading>
+        {submit ? 'Sign and submit transaction' : 'Sign transaction'}
+      </Heading>
       <Text>
-        <Bold>{origin}</Bold> asks you to sign a Stellar transaction.
+        <Bold>{origin}</Bold> asks you to sign
+        {submit ? ' and immediately submit' : ''} a Stellar transaction.
       </Text>
       {networkBanner}
+      {submitBanner}
       {signingWith}
       {renderWarnings(warnings)}
       {renderSummary(tx)}
       {tx.operations.map(renderOperation)}
       {renderSimulation(simulation ?? null)}
+      {grantNotice}
       <Divider />
       <Text>Raw transaction (XDR)</Text>
       <Copyable value={xdr} />

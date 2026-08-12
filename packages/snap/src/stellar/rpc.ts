@@ -1,31 +1,61 @@
+import type { Infer, Struct } from '@metamask/superstruct';
+import {
+  array,
+  enums,
+  integer,
+  is,
+  min,
+  number,
+  optional,
+  pattern,
+  string,
+  type,
+} from '@metamask/superstruct';
+
 import { externalServiceError } from '../rpc/errors';
 
 /**
  * Minimal Stellar RPC (JSON-RPC 2.0) client. Hand-rolled over `fetch` to
  * keep the bundle small — the stellar-sdk `rpc.Server` pulls in transport
- * machinery the snap does not need.
+ * machinery the snap does not need. Responses are endpoint-controlled
+ * input: every consumed field is validated at this boundary before use.
  */
 
+/** A 64-character hex transaction hash. */
+const TxHash = pattern(string(), /^[0-9a-f]{64}$/iu);
+
+const LatestLedgerStruct = type({ sequence: min(integer(), 1) });
+
+const SimulationStruct = type({
+  error: optional(string()),
+  transactionData: optional(string()),
+  minResourceFee: optional(pattern(string(), /^\d+$/u)),
+  results: optional(
+    array(type({ xdr: optional(string()), auth: optional(array(string())) })),
+  ),
+  restorePreamble: optional(
+    type({ transactionData: string(), minResourceFee: string() }),
+  ),
+  latestLedger: optional(number()),
+});
+
+const SendTransactionStruct = type({
+  status: enums(['PENDING', 'DUPLICATE', 'TRY_AGAIN_LATER', 'ERROR']),
+  hash: TxHash,
+  errorResultXdr: optional(string()),
+});
+
+const GetTransactionStruct = type({
+  status: enums(['NOT_FOUND', 'SUCCESS', 'FAILED']),
+  resultXdr: optional(string()),
+});
+
 /** Raw shape of a `simulateTransaction` response (fields we consume). */
-export type RawSimulationResponse = {
-  error?: string;
-  transactionData?: string;
-  minResourceFee?: string;
-  results?: { xdr?: string; auth?: string[] }[];
-  restorePreamble?: { transactionData: string; minResourceFee: string };
-  latestLedger?: number;
-};
+export type RawSimulationResponse = Infer<typeof SimulationStruct>;
 
-export type SendTransactionResponse = {
-  status: 'PENDING' | 'DUPLICATE' | 'TRY_AGAIN_LATER' | 'ERROR';
-  hash: string;
-  errorResultXdr?: string;
-};
+export type SendTransactionResponse = Infer<typeof SendTransactionStruct>;
 
-export type GetTransactionResponse = {
-  status: 'NOT_FOUND' | 'SUCCESS' | 'FAILED';
-  resultXdr?: string;
-};
+export type GetTransactionResponse = Infer<typeof GetTransactionStruct>;
 
 /** Simulation timeout — keep dialog latency bounded. */
 const SIMULATION_TIMEOUT_MS = 10_000;
@@ -34,55 +64,75 @@ const SIMULATION_TIMEOUT_MS = 10_000;
 const DEFAULT_RPC_TIMEOUT_MS = 10_000;
 
 /**
- * Performs a JSON-RPC 2.0 call.
+ * Performs a JSON-RPC 2.0 call and validates the result shape.
+ *
+ * The abort timer stays armed until the response body has been read, so a
+ * host that returns headers quickly and then stalls the body cannot hold
+ * the request open. Redirects are refused: a 307/308 must not replay
+ * signing-related payloads to a different host.
  *
  * @param url - The RPC endpoint.
  * @param method - The JSON-RPC method.
  * @param params - The method params.
+ * @param resultStruct - Validator for the `result` member.
  * @param timeoutMs - Request timeout; defaults so no call is unbounded.
- * @returns The `result` member of the response.
+ * @returns The validated `result` member of the response.
  */
-async function rpcCall<Type>(
+async function rpcCall<Type, Schema>(
   url: string,
   method: string,
   params: Record<string, unknown>,
+  resultStruct: Struct<Type, Schema>,
   timeoutMs: number = DEFAULT_RPC_TIMEOUT_MS,
 ): Promise<Type> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response: Awaited<ReturnType<typeof fetch>>;
+  let status: number;
+  let ok: boolean;
+  let body: unknown;
   try {
-    response = await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      redirect: 'error',
       signal: controller.signal,
     });
+    ({ status, ok } = response);
+    body = ok ? await response.json().catch(() => null) : null;
   } catch {
     throw externalServiceError(`Could not reach the Stellar RPC (${method}).`);
   } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
+    clearTimeout(timer);
   }
 
-  if (!response.ok) {
-    throw externalServiceError(
-      `Stellar RPC request failed (${response.status}).`,
-    );
+  if (!ok) {
+    throw externalServiceError(`Stellar RPC request failed (${status}).`);
   }
 
-  const body = (await response.json()) as {
-    result?: Type;
+  const envelope = body as {
+    result?: unknown;
     error?: { message?: string };
-  };
-  if (body.error || body.result === undefined) {
+  } | null;
+  if (
+    envelope === null ||
+    typeof envelope !== 'object' ||
+    envelope.error ||
+    envelope.result === undefined
+  ) {
     throw externalServiceError(
-      `Stellar RPC error: ${body.error?.message ?? 'empty result'}.`,
+      `Stellar RPC error: ${
+        typeof envelope?.error?.message === 'string'
+          ? envelope.error.message.slice(0, 200)
+          : 'empty result'
+      }.`,
     );
   }
-  return body.result;
+  if (!is(envelope.result, resultStruct)) {
+    throw externalServiceError(`Malformed Stellar RPC response (${method}).`);
+  }
+  return envelope.result;
 }
 
 /**
@@ -92,11 +142,7 @@ async function rpcCall<Type>(
  * @returns The latest ledger sequence.
  */
 export async function getLatestLedger(url: string): Promise<number> {
-  const result = await rpcCall<{ sequence: number }>(
-    url,
-    'getLatestLedger',
-    {},
-  );
+  const result = await rpcCall(url, 'getLatestLedger', {}, LatestLedgerStruct);
   return result.sequence;
 }
 
@@ -112,16 +158,19 @@ export async function simulateTransaction(
   url: string,
   transactionXdr: string,
 ): Promise<RawSimulationResponse> {
-  return rpcCall<RawSimulationResponse>(
+  return rpcCall(
     url,
     'simulateTransaction',
     { transaction: transactionXdr },
+    SimulationStruct,
     SIMULATION_TIMEOUT_MS,
   );
 }
 
 /**
- * `sendTransaction` — submit a signed envelope through the RPC.
+ * `sendTransaction` — submit a signed envelope through the RPC. The status
+ * is allowlisted at the boundary, so an unexpected value can never be
+ * mistaken for acceptance downstream.
  *
  * @param url - The RPC endpoint.
  * @param transactionXdr - Signed base64 envelope XDR.
@@ -131,9 +180,12 @@ export async function sendTransaction(
   url: string,
   transactionXdr: string,
 ): Promise<SendTransactionResponse> {
-  return rpcCall<SendTransactionResponse>(url, 'sendTransaction', {
-    transaction: transactionXdr,
-  });
+  return rpcCall(
+    url,
+    'sendTransaction',
+    { transaction: transactionXdr },
+    SendTransactionStruct,
+  );
 }
 
 /**
@@ -147,5 +199,5 @@ export async function getTransaction(
   url: string,
   hash: string,
 ): Promise<GetTransactionResponse> {
-  return rpcCall<GetTransactionResponse>(url, 'getTransaction', { hash });
+  return rpcCall(url, 'getTransaction', { hash }, GetTransactionStruct);
 }

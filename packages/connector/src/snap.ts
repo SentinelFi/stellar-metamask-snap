@@ -21,13 +21,20 @@ import { SEP43_ERROR_CODES, StellarSnapError } from './types';
 /** The published snap ID. */
 export const DEFAULT_SNAP_ID = 'npm:stellar-soroban-snap';
 
-/** The default version range requested at install time. */
-export const DEFAULT_SNAP_VERSION = '^0.1.0';
+/**
+ * The default version requested at install time. Pinned to the exact audited
+ * release (no semver range) so installs cannot silently pick up a newer,
+ * unaudited version.
+ */
+export const DEFAULT_SNAP_VERSION = '0.1.0';
 
 export type StellarSnapOptions = {
   /** Snap ID; use `local:http://localhost:8080` during development. */
   snapId?: string;
-  /** Version range passed to `wallet_requestSnaps` (npm snaps only). */
+  /**
+   * Version passed to `wallet_requestSnaps` (npm snaps only). Defaults to
+   * the exact audited release.
+   */
   version?: string;
   /** EIP-1193 provider; auto-detected via EIP-6963 when omitted. */
   provider?: Eip1193Provider;

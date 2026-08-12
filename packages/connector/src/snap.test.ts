@@ -151,7 +151,7 @@ describe('StellarSnap', () => {
     expect((caught as StellarSnapError).data).toBeUndefined();
   });
 
-  it('connect requests the snap with a version range for npm IDs', async () => {
+  it('connect requests the snap with the pinned version for npm IDs', async () => {
     const { provider, requests } = mockProvider({
       requestAccess: { address: ADDRESS },
     });
@@ -160,7 +160,7 @@ describe('StellarSnap', () => {
     expect(await snap.connect()).toStrictEqual({ address: ADDRESS });
     expect(requests[0]).toStrictEqual({
       method: 'wallet_requestSnaps',
-      params: { [SNAP_ID]: { version: '^0.1.0' } },
+      params: { [SNAP_ID]: { version: '0.1.0' } },
     });
   });
 

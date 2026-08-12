@@ -1,6 +1,7 @@
+import { assertConnected } from './account';
 import { userRejected } from '../rpc/errors';
 import { SetNetworkParams, validate } from '../rpc/validation';
-import { getActiveNetwork, getState, saveState } from '../state';
+import { getActiveNetwork, getState, setActiveNetwork } from '../state';
 import type { NetworkName } from '../state/networks';
 import { NETWORKS } from '../state/networks';
 import { NetworkDialog } from '../ui/dialogs';
@@ -44,7 +45,10 @@ export async function getNetworkDetails(): Promise<NetworkDetails> {
 }
 
 /**
- * `setNetwork` — dialog-confirmed switch between known networks.
+ * `setNetwork`: dialog-confirmed switch between known networks. The switch
+ * is wallet-global, so it is reserved for origins the user has already
+ * connected: an unknown origin gets the standard not-connected error
+ * instead of a confirmation dialog.
  *
  * @param origin - The requesting dapp origin.
  * @param params - `{ network: 'PUBLIC' | 'TESTNET' | 'FUTURENET' }`.
@@ -54,6 +58,7 @@ export async function setNetwork(
   origin: string,
   params: unknown,
 ): Promise<NetworkDetails> {
+  await assertConnected(origin);
   const { network: target } = validate(params, SetNetworkParams);
   const state = await getState();
 
@@ -70,7 +75,9 @@ export async function setNetwork(
     if (!approved) {
       throw userRejected();
     }
-    await saveState({ ...state, network: target });
+    // Re-read and write under the state lock: the pre-dialog snapshot may
+    // be stale by the time the user approves.
+    await setActiveNetwork(target);
   }
 
   const network = NETWORKS[target];

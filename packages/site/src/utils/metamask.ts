@@ -91,8 +91,10 @@ export async function getMetaMaskEIP6963Provider() {
 }
 
 /**
- * Get a provider that supports snaps. This will loop through all the detected
- * providers and return the first one that supports snaps.
+ * Get a provider that supports snaps. EIP-6963 discovery (exact MetaMask
+ * rdns match) is tried first; the legacy `window.ethereum` fallbacks are
+ * only accepted when the provider reports `isMetaMask` and passes the
+ * snaps-support probe.
  *
  * @returns The provider, or `null` if no provider supports snaps.
  */
@@ -101,13 +103,24 @@ export async function getSnapsProvider() {
     return null;
   }
 
-  if (await hasSnapsSupport()) {
+  // Prefer EIP-6963 discovery first: announcements are matched against the
+  // exact MetaMask rdns allowlist above, so a look-alike wallet squatting on
+  // `window.ethereum` cannot be selected ahead of the real MetaMask.
+  const eip6963Provider = await getMetaMaskEIP6963Provider();
+
+  if (eip6963Provider && (await hasSnapsSupport(eip6963Provider))) {
+    return eip6963Provider;
+  }
+
+  // Legacy fallbacks: only accept a provider that both claims to be MetaMask
+  // and answers the snaps probe.
+  if (window.ethereum?.isMetaMask && (await hasSnapsSupport())) {
     return window.ethereum;
   }
 
   if (window.ethereum?.detected) {
     for (const provider of window.ethereum.detected) {
-      if (await hasSnapsSupport(provider)) {
+      if (provider?.isMetaMask && (await hasSnapsSupport(provider))) {
         return provider;
       }
     }
@@ -115,16 +128,10 @@ export async function getSnapsProvider() {
 
   if (window.ethereum?.providers) {
     for (const provider of window.ethereum.providers) {
-      if (await hasSnapsSupport(provider)) {
+      if (provider?.isMetaMask && (await hasSnapsSupport(provider))) {
         return provider;
       }
     }
-  }
-
-  const eip6963Provider = await getMetaMaskEIP6963Provider();
-
-  if (eip6963Provider && (await hasSnapsSupport(eip6963Provider))) {
-    return eip6963Provider;
   }
 
   return null;

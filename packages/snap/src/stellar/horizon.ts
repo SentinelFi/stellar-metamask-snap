@@ -1,3 +1,14 @@
+import {
+  array,
+  is,
+  number,
+  optional,
+  pattern,
+  record,
+  string,
+  type,
+} from '@metamask/superstruct';
+
 import { externalServiceError } from '../rpc/errors';
 
 export type HorizonBalance = {
@@ -13,44 +24,81 @@ export type AccountSummary = {
   balances: HorizonBalance[];
 };
 
-type HorizonAccountResponse = {
-  sequence: string;
-  balances: {
-    // eslint-disable-next-line @typescript-eslint/naming-convention
-    asset_type: string;
-    // eslint-disable-next-line @typescript-eslint/naming-convention
-    asset_code?: string;
-    // eslint-disable-next-line @typescript-eslint/naming-convention
-    asset_issuer?: string;
-    balance: string;
-  }[];
-};
+/**
+ * Horizon responses are endpoint-controlled input: every consumed field is
+ * validated at this boundary before it reaches display or submission logic.
+ */
+const HorizonBalanceStruct = type({
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  asset_type: string(),
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  asset_code: optional(pattern(string(), /^[A-Za-z0-9]{1,12}$/u)),
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  asset_issuer: optional(pattern(string(), /^G[A-Z2-7]{55}$/u)),
+  balance: pattern(string(), /^\d{1,30}(\.\d{1,10})?$/u),
+});
+
+const HorizonAccountStruct = type({
+  sequence: pattern(string(), /^\d{1,30}$/u),
+  balances: array(HorizonBalanceStruct),
+});
+
+const AccountChecksStruct = type({
+  data: optional(record(string(), string())),
+  signers: optional(
+    array(type({ key: string(), weight: number(), type: string() })),
+  ),
+  thresholds: optional(
+    type({
+      // eslint-disable-next-line @typescript-eslint/naming-convention
+      low_threshold: number(),
+      // eslint-disable-next-line @typescript-eslint/naming-convention
+      med_threshold: number(),
+      // eslint-disable-next-line @typescript-eslint/naming-convention
+      high_threshold: number(),
+    }),
+  ),
+});
+
+/** A 64-character hex transaction hash. */
+const TX_HASH_REGEX = /^[0-9a-f]{64}$/iu;
+
+/** Display cap on balance rows (a hostile response cannot flood the UI). */
+const MAX_DISPLAY_BALANCES = 100;
 
 /** Default abort timeout for Horizon/friendbot requests (ms). */
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
 
 /**
- * `fetch` wrapper that always applies an abort timeout and converts network
- * failures (including timeouts) into SEP-43 external service errors, so a
- * slow endpoint cannot hold a request open until the manifest's
- * `maxRequestTime` expires.
+ * `fetch` wrapper that applies an abort timeout covering both the header
+ * phase and the body read, refuses redirects (a 307/308 must not move
+ * signing-related payloads to another host), and converts network failures
+ * into SEP-43 external service errors, so a slow endpoint cannot hold a
+ * request open until the manifest's `maxRequestTime` expires.
  *
  * @param url - The URL to fetch.
  * @param init - Optional fetch options.
  * @param service - Service name for the error message.
  * @param timeoutMs - Abort timeout in milliseconds.
- * @returns The response.
+ * @returns The response status flags and parsed JSON body (null when the
+ * body is not valid JSON).
  */
-async function safeFetch(
+async function safeFetchJson(
   url: string,
   init: Parameters<typeof fetch>[1],
   service: string,
   timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
-): ReturnType<typeof fetch> {
+): Promise<{ ok: boolean; status: number; body: unknown }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, {
+      ...init,
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    const body: unknown = await response.json().catch(() => null);
+    return { ok: response.ok, status: response.status, body };
   } catch {
     throw externalServiceError(`Could not reach ${service}.`);
   } finally {
@@ -70,24 +118,26 @@ export async function getAccountSummary(
   horizonUrl: string,
   address: string,
 ): Promise<AccountSummary> {
-  const response = await safeFetch(
+  const { ok, status, body } = await safeFetchJson(
     `${horizonUrl}/accounts/${encodeURIComponent(address)}`,
     { headers: { accept: 'application/json' } },
     'Horizon',
   );
 
-  if (response.status === 404) {
+  if (status === 404) {
     return { funded: false, sequence: null, balances: [] };
   }
-  if (!response.ok) {
-    throw externalServiceError(`Horizon request failed (${response.status}).`);
+  if (!ok) {
+    throw externalServiceError(`Horizon request failed (${status}).`);
   }
 
-  const account = (await response.json()) as HorizonAccountResponse;
+  if (!is(body, HorizonAccountStruct)) {
+    throw externalServiceError('Malformed Horizon account response.');
+  }
   return {
     funded: true,
-    sequence: account.sequence,
-    balances: account.balances.map((entry) => ({
+    sequence: body.sequence,
+    balances: body.balances.slice(0, MAX_DISPLAY_BALANCES).map((entry) => ({
       asset:
         entry.asset_type === 'native'
           ? 'XLM'
@@ -108,7 +158,7 @@ export async function submitTransaction(
   horizonUrl: string,
   xdr: string,
 ): Promise<{ hash: string }> {
-  const response = await safeFetch(
+  const { ok, status, body } = await safeFetchJson(
     `${horizonUrl}/transactions`,
     {
       method: 'POST',
@@ -118,21 +168,27 @@ export async function submitTransaction(
     'Horizon',
   );
 
-  const body = (await response.json().catch(() => null)) as {
-    hash?: string;
+  const parsed = body as {
+    hash?: unknown;
     // eslint-disable-next-line @typescript-eslint/naming-convention
     extras?: { result_codes?: unknown };
   } | null;
 
-  if (!response.ok || !body?.hash) {
-    const codes = body?.extras?.result_codes
-      ? ` Result codes: ${JSON.stringify(body.extras.result_codes)}.`
+  const hash =
+    typeof parsed?.hash === 'string' && TX_HASH_REGEX.test(parsed.hash)
+      ? parsed.hash
+      : null;
+  if (!ok || !hash) {
+    // The result codes are endpoint-controlled: bound what gets echoed into
+    // the error message.
+    const codes = parsed?.extras?.result_codes
+      ? ` Result codes: ${JSON.stringify(parsed.extras.result_codes).slice(0, 200)}.`
       : '';
     throw externalServiceError(
-      `Transaction submission failed (${response.status}).${codes}`,
+      `Transaction submission failed (${status}).${codes}`,
     );
   }
-  return { hash: body.hash };
+  return { hash };
 }
 
 export type AccountChecks = {
@@ -167,6 +223,7 @@ export async function getAccountChecks(
       `${horizonUrl}/accounts/${encodeURIComponent(address)}`,
       {
         headers: { accept: 'application/json' },
+        redirect: 'error',
         signal: controller.signal,
       },
     );
@@ -181,18 +238,12 @@ export async function getAccountChecks(
     if (!response.ok) {
       return null;
     }
-    const account = (await response.json()) as {
-      data?: Record<string, string>;
-      signers?: { key: string; weight: number; type: string }[];
-      thresholds?: {
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        low_threshold: number;
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        med_threshold: number;
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        high_threshold: number;
-      };
-    };
+    const account: unknown = await response.json();
+    if (!is(account, AccountChecksStruct)) {
+      // Best-effort checks: a malformed response degrades to "unknown"
+      // rather than feeding unvalidated data into safety warnings.
+      return null;
+    }
     return {
       exists: true,
       memoRequired: Boolean(account.data?.['config.memo_required']),
@@ -201,10 +252,10 @@ export async function getAccountChecks(
         .map(({ key, weight }) => ({ key, weight })),
       thresholds: account.thresholds
         ? {
-          low: account.thresholds.low_threshold,
-          med: account.thresholds.med_threshold,
-          high: account.thresholds.high_threshold,
-        }
+            low: account.thresholds.low_threshold,
+            med: account.thresholds.med_threshold,
+            high: account.thresholds.high_threshold,
+          }
         : null,
     };
   } catch {
@@ -224,14 +275,14 @@ export async function requestFriendbot(
   friendbotUrl: string,
   address: string,
 ): Promise<void> {
-  const response = await safeFetch(
+  const { ok, status } = await safeFetchJson(
     `${friendbotUrl}?addr=${encodeURIComponent(address)}`,
     undefined,
     'friendbot',
   );
-  if (!response.ok) {
+  if (!ok) {
     throw externalServiceError(
-      `Friendbot request failed (${response.status}). The account may already be funded.`,
+      `Friendbot request failed (${status}). The account may already be funded.`,
     );
   }
 }

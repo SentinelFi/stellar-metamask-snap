@@ -10,6 +10,7 @@ import {
   getActiveNetwork,
   getTokens,
   isOriginConnected,
+  MAX_TRACKED_TOKENS,
 } from '../state';
 import type { AccountSummary, HorizonBalance } from '../stellar/horizon';
 import { getAccountSummary, requestFriendbot } from '../stellar/horizon';
@@ -20,29 +21,29 @@ import {
 } from '../stellar/token';
 import { AddTokenDialog } from '../ui/dialogs';
 
-/**
- * Cap on tracked tokens per network — every tracked token adds a simulation
- * round-trip to `getBalances` and each home-page render. Tokens can be
- * removed from the snap home page, so the cap is housekeeping, not a wall.
- */
-export const MAX_TRACKED_TOKENS = 30;
+// Defined next to the state helpers (which enforce it at commit time);
+// re-exported here for existing importers.
+export { MAX_TRACKED_TOKENS };
 
 /**
  * Guard for companion-dapp methods: the origin must hold a connection grant.
  *
  * @param origin - The requesting dapp origin.
  */
-async function assertConnected(origin: string): Promise<void> {
+export async function assertConnected(origin: string): Promise<void> {
   if (!(await isOriginConnected(origin))) {
     throw invalidRequest('Origin is not connected. Call requestAccess first.');
   }
 }
 
 /**
- * `fund` — request friendbot funding (test networks only).
+ * `fund`: request friendbot funding (test networks only). Only the wallet's
+ * own address may be funded: there is no per-call dialog, so accepting an
+ * arbitrary address would let any connected origin drive friendbot traffic
+ * to accounts the user never chose.
  *
  * @param origin - The requesting dapp origin.
- * @param params - Optional `{ address }`; defaults to the wallet address.
+ * @param params - Optional `{ address }`; must equal the wallet address.
  * @returns The funded address.
  */
 export async function fund(
@@ -59,9 +60,12 @@ export async function fund(
     );
   }
 
-  const address = request.address ?? (await getWalletAddress());
-  await requestFriendbot(network.friendbotUrl, address);
-  return { funded: true, address };
+  const walletAddress = await getWalletAddress();
+  if (request.address !== undefined && request.address !== walletAddress) {
+    throw invalidRequest('fund can only target the connected wallet address.');
+  }
+  await requestFriendbot(network.friendbotUrl, walletAddress);
+  return { funded: true, address: walletAddress };
 }
 
 /**

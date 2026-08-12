@@ -162,8 +162,22 @@ describe('getNetwork / getNetworkDetails / setNetwork', () => {
     });
   });
 
+  it('requires a connected origin for setNetwork (SEP-43 code -3)', async () => {
+    const { request } = await install();
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'setNetwork',
+        params: { network: 'FUTURENET' },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('not connected');
+  });
+
   it('switches networks after confirmation', async () => {
     const { request } = await install();
+    await connect(request);
 
     const pending = request({
       origin: ORIGIN,
@@ -187,6 +201,7 @@ describe('getNetwork / getNetworkDetails / setNetwork', () => {
 
   it('rejects unknown networks with SEP-43 code -3', async () => {
     const { request } = await install();
+    await connect(request);
     const error = getError(
       await request({
         origin: ORIGIN,
@@ -326,7 +341,7 @@ describe('signTransaction', () => {
     await pending;
   });
 
-  it('shows an explicit warning for undecoded operation types', async () => {
+  it('rejects undecoded operation types before any dialog (fail closed)', async () => {
     const { request } = await install();
     const xdr = new TransactionBuilder(new Account(SEP5_ADDRESS_0, '1'), {
       fee: '100',
@@ -337,17 +352,16 @@ describe('signTransaction', () => {
       .build()
       .toXDR();
 
-    const pending = request({
-      origin: ORIGIN,
-      method: 'signTransaction',
-      params: { xdr },
-    });
-    const ui = await pending.getInterface();
-    const content = JSON.stringify(ui.content);
-    expect(content).toContain('bumpSequence');
-    expect(content).toContain('not decoded');
-    await (ui as { cancel: () => Promise<void> }).cancel();
-    await pending;
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: { xdr },
+      }),
+    );
+    expect(error.message).toContain('bumpSequence');
+    expect(error.message).toContain('cannot be reviewed');
+    expect(error.data?.code).toBe(-3);
   });
 
   it('flags accountMerge as dangerous', async () => {
@@ -436,6 +450,23 @@ describe('fund / getBalances', () => {
       expect(error.data?.code).toBe(-3);
       expect(error.message).toContain('not connected');
     }
+  });
+
+  it('fund rejects an address other than the wallet address', async () => {
+    const { request } = await install();
+    await connect(request);
+
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'fund',
+        params: {
+          address: 'GBAW5XGWORWVFE2XTJYDTLDHXTY2Q2MO73HYCGB3XMFMQ562Q2W2GJQX',
+        },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('connected wallet address');
   });
 
   it('fund is refused on PUBLIC', async () => {

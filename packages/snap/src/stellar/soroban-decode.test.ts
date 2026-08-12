@@ -87,10 +87,32 @@ function txWith(operation: xdr.Operation) {
 }
 
 describe('formatScVal', () => {
-  it('renders symbols, integers, and addresses', () => {
-    expect(formatScVal(xdr.ScVal.scvSymbol('transfer'))).toBe('"transfer"');
-    expect(formatScVal(xdr.ScVal.scvU32(7))).toBe('7');
+  it('renders symbols, integers, and addresses in typed notation', () => {
+    expect(formatScVal(xdr.ScVal.scvSymbol('transfer'))).toBe('sym(transfer)');
+    expect(formatScVal(xdr.ScVal.scvU32(7))).toBe('u32(7)');
     expect(formatScVal(new Address(SOURCE).toScVal())).toContain(SOURCE);
+  });
+
+  it('keeps values of different types distinguishable', () => {
+    // A string "7" and a u32 7 must never render identically.
+    expect(formatScVal(xdr.ScVal.scvString('7'))).toBe('str("7")');
+    expect(formatScVal(xdr.ScVal.scvU32(7))).toBe('u32(7)');
+    // A symbol and a string of the same text differ too.
+    expect(formatScVal(xdr.ScVal.scvString('transfer'))).toBe(
+      'str("transfer")',
+    );
+    expect(formatScVal(xdr.ScVal.scvSymbol('transfer'))).toBe('sym(transfer)');
+  });
+
+  it('renders bytes as hex and containers with typed elements', () => {
+    expect(formatScVal(xdr.ScVal.scvBytes(Buffer.from([0x6a, 0x6f])))).toBe(
+      'bytes(6a6f)',
+    );
+    expect(
+      formatScVal(
+        xdr.ScVal.scvVec([xdr.ScVal.scvU32(1), xdr.ScVal.scvSymbol('a')]),
+      ),
+    ).toBe('[u32(1), sym(a)]');
   });
 
   it('stringifies BigInt-valued i128 without throwing', () => {
@@ -100,8 +122,7 @@ describe('formatScVal', () => {
         lo: new xdr.Uint64(10000000n),
       }),
     );
-    // i128 decodes to a bigint; the replacer renders it as a JSON string.
-    expect(formatScVal(big)).toBe('"10000000"');
+    expect(formatScVal(big)).toBe('i128(10000000)');
   });
 });
 
@@ -162,7 +183,29 @@ describe('decodeHostFunction', () => {
     expect(decoded.contract).toBe(CONTRACT);
     expect(decoded.functionName).toBe('transfer');
     expect(decoded.args).toHaveLength(2);
-    expect(decoded.args[1]).toBe('5');
+    expect(decoded.args[1]).toBe('u32(5)');
+  });
+
+  it('decodes create-contract parameters for review', () => {
+    const createArgs = new xdr.CreateContractArgs({
+      contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+        new xdr.ContractIdPreimageFromAddress({
+          address: new Address(SOURCE).toScAddress(),
+          salt: Buffer.alloc(32, 7),
+        }),
+      ),
+      executable: xdr.ContractExecutable.contractExecutableWasm(
+        Buffer.alloc(32, 9),
+      ),
+    });
+    const decoded = decodeHostFunction(
+      xdr.HostFunction.hostFunctionTypeCreateContract(createArgs),
+    );
+    expect(decoded.kind).toBe('createContract');
+    const details = JSON.stringify(decoded.details);
+    expect(details).toContain(SOURCE);
+    expect(details).toContain(Buffer.alloc(32, 7).toString('hex'));
+    expect(details).toContain(Buffer.alloc(32, 9).toString('hex'));
   });
 });
 
@@ -253,6 +296,23 @@ describe('summarizeAuthEntries', () => {
     } as unknown as xdr.SorobanAuthorizationEntry;
     const summaries = summarizeAuthEntries([broken]);
     expect(summaries[0]).toContain('undecodable');
+  });
+
+  it('shows the full authorizing address, not a shortened form', () => {
+    const summaries = summarizeAuthEntries([
+      addressEntry(invocation([], 'transfer')),
+    ]);
+    expect(summaries[0]).toContain(SOURCE);
+    expect(summaries[0]).toContain(CONTRACT);
+  });
+
+  it('marks entries beyond the render cap instead of dropping them silently', () => {
+    const entries = Array.from({ length: 25 }, () =>
+      addressEntry(invocation([], 'transfer')),
+    );
+    const summaries = summarizeAuthEntries(entries);
+    expect(summaries).toHaveLength(21);
+    expect(summaries[20]).toContain('5 more entries not shown');
   });
 });
 

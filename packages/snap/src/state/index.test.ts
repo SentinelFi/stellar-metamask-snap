@@ -1,6 +1,14 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
-import { isSafeStateKey, originHasGrant, parseState } from '.';
+import {
+  addToken,
+  connectOrigin,
+  isSafeStateKey,
+  MAX_TRACKED_TOKENS,
+  originHasGrant,
+  parseState,
+  setActiveNetwork,
+} from '.';
 
 const VALID_STATE = {
   version: 1,
@@ -82,5 +90,99 @@ describe('origin grant key safety', () => {
     // here and wrongly report the origin as connected.
     expect(originHasGrant({}, '__proto__')).toBe(false);
     expect(originHasGrant({}, 'constructor')).toBe(false);
+  });
+});
+
+describe('locked state mutations', () => {
+  let stored: unknown;
+
+  beforeEach(() => {
+    stored = null;
+    (globalThis as { snap?: unknown }).snap = {
+      request: async (args: {
+        method: string;
+        params: { operation: string; newState?: unknown };
+      }) => {
+        // Yield a microtask before answering so that unserialized
+        // read-modify-write sequences would actually interleave, matching
+        // the async extension state store.
+        await Promise.resolve();
+        if (args.params.operation === 'get') {
+          return stored;
+        }
+        stored = args.params.newState;
+        return null;
+      },
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as { snap?: unknown }).snap;
+  });
+
+  it('does not lose concurrent origin grants', async () => {
+    // Regression: without the mutation lock, both calls read the
+    // empty initial state and the second save clobbered the first grant.
+    await Promise.all([
+      connectOrigin('https://a.example'),
+      connectOrigin('https://b.example'),
+    ]);
+    const state = stored as { origins: Record<string, unknown> };
+    expect(Object.keys(state.origins).sort()).toStrictEqual([
+      'https://a.example',
+      'https://b.example',
+    ]);
+  });
+
+  it('setActiveNetwork re-reads state under the lock', async () => {
+    // Regression: a network switch racing a grant write must keep
+    // both effects, not resurrect the pre-dialog snapshot.
+    stored = { version: 1, network: 'TESTNET', origins: {}, tokens: {} };
+    await Promise.all([
+      connectOrigin('https://a.example'),
+      setActiveNetwork('PUBLIC'),
+    ]);
+    const state = stored as {
+      network: string;
+      origins: Record<string, unknown>;
+    };
+    expect(state.network).toBe('PUBLIC');
+    expect(Object.keys(state.origins)).toStrictEqual(['https://a.example']);
+  });
+
+  it('addToken enforces the cap at commit time', async () => {
+    const filler = Array.from({ length: MAX_TRACKED_TOKENS }, (_, index) => ({
+      contractId: `C${String(index).padStart(55, 'A')}`,
+      symbol: `T${index}`,
+      decimals: 7,
+    }));
+    stored = {
+      version: 1,
+      network: 'TESTNET',
+      origins: {},
+      tokens: { TESTNET: filler },
+    };
+
+    // A distinct token beyond the cap is refused inside the locked
+    // mutation, even though the handler's pre-dialog check was bypassed.
+    await expect(
+      addToken('TESTNET', {
+        contractId: `C${'B'.repeat(55)}`,
+        symbol: 'NEW',
+        decimals: 7,
+      }),
+    ).rejects.toThrow('Token limit reached');
+    expect(
+      (stored as { tokens: Record<string, unknown[]> }).tokens.TESTNET,
+    ).toHaveLength(MAX_TRACKED_TOKENS);
+
+    // Re-adding an already-tracked token at the cap stays a quiet no-op.
+    expect(
+      await addToken('TESTNET', {
+        contractId: `C${'0'.padStart(55, 'A')}`,
+        symbol: 'T0',
+        decimals: 7,
+      }),
+    ).toBe(false);
   });
 });

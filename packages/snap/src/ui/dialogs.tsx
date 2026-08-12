@@ -12,6 +12,32 @@ import {
 
 import type { NetworkName } from '../state/networks';
 
+export type ConnectionGrantNoticeProps = {
+  origin: string;
+};
+
+/**
+ * Discloses the durable origin grant that an approved signature creates:
+ * the user must know a one-time signing decision also connects the
+ * site and what that connection allows, and how to undo it.
+ *
+ * @param props - The notice props.
+ * @param props.origin - The requesting dapp origin.
+ * @returns The notice content.
+ */
+export const ConnectionGrantNotice: SnapComponent<
+  ConnectionGrantNoticeProps
+> = ({ origin }) => (
+  <Section>
+    <Text>
+      Approving also connects <Bold>{origin}</Bold> to this wallet. A connected
+      site can read your address and balances, suggest tokens to track, and
+      request test-network funding of this wallet without further prompts, until
+      you disconnect it on the snap home page.
+    </Text>
+  </Section>
+);
+
 export type ConnectDialogProps = {
   origin: string;
   address: string;
@@ -75,7 +101,9 @@ export const NetworkDialog: SnapComponent<NetworkDialogProps> = ({
   <Box>
     <Heading>Switch network</Heading>
     <Text>
-      <Bold>{origin}</Bold> wants to switch the active Stellar network.
+      <Bold>{origin}</Bold> wants to switch the active Stellar network. This
+      setting is wallet-global: it changes the network for every connected site,
+      not just this one.
     </Text>
     <Section>
       <Row label="From">
@@ -182,6 +210,7 @@ export const SignAuthEntryDialog: SnapComponent<SignAuthEntryDialogProps> = ({
       <Text>Authorizing account</Text>
       <Copyable value={address} />
     </Section>
+    <ConnectionGrantNotice origin={origin} />
   </Box>
 );
 
@@ -280,5 +309,6 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
       <Text>Signing account</Text>
       <Copyable value={address} />
     </Section>
+    <ConnectionGrantNotice origin={origin} />
   </Box>
 );

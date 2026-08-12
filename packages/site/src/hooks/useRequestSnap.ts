@@ -1,6 +1,6 @@
 import { useMetaMaskContext } from './MetamaskContext';
 import { useRequest } from './useRequest';
-import { defaultSnapOrigin } from '../config';
+import { defaultSnapOrigin, defaultSnapVersion } from '../config';
 import type { Snap } from '../types';
 
 /**
@@ -8,12 +8,13 @@ import type { Snap } from '../types';
  *
  * @param snapId - The requested Snap ID. Defaults to the snap ID specified in the
  * config.
- * @param version - The requested version.
+ * @param version - The requested version. Defaults to the version specified in
+ * the config (`SNAP_VERSION`), so production installs pin the audited release.
  * @returns The `wallet_requestSnaps` wrapper.
  */
 export const useRequestSnap = (
   snapId = defaultSnapOrigin,
-  version?: string,
+  version = defaultSnapVersion,
 ) => {
   const request = useRequest();
   const { setInstalledSnap } = useMetaMaskContext();
@@ -25,7 +26,9 @@ export const useRequestSnap = (
     const snaps = (await request({
       method: 'wallet_requestSnaps',
       params: {
-        [snapId]: version ? { version } : {},
+        // Only npm-hosted snaps are versioned; a `local:` snap is whatever
+        // the development server is currently serving.
+        [snapId]: snapId.startsWith('npm:') && version ? { version } : {},
       },
     })) as Record<string, Snap>;
 

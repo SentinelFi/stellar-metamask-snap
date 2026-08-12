@@ -9,3 +9,13 @@
 export const defaultSnapOrigin =
   // eslint-disable-next-line no-restricted-globals
   process.env.SNAP_ORIGIN ?? `local:http://localhost:8080`;
+
+/**
+ * The exact snap version to request at install time. Production builds must
+ * set `SNAP_VERSION` in `.env.production` to the audited release version so
+ * installs are pinned to the audited artifact. It may be left unset for
+ * `local:` origins during development.
+ */
+export const defaultSnapVersion: string | undefined =
+  // eslint-disable-next-line no-restricted-globals
+  process.env.SNAP_VERSION;

@@ -47,7 +47,7 @@
 | Token metadata/balances via read-only simulation              | `src/stellar/token.ts`                          |
 | Bundle-level randomness rewrite                               | `snap.config.ts`                                |
 
-Test anchors: SEP-5 official vectors, cryptographic verification of every signature type against the derived public key, SEP-43 error codes, dialog-content assertions, persisted-state schema validation, contract-metadata bounds checking, and home-page consent interactions (79 snap tests across 9 suites, plus 8 connector tests).
+Test anchors: SEP-5 official vectors, cryptographic verification of every signature type against the derived public key, SEP-43 error codes, dialog-content assertions, persisted-state schema validation, contract-metadata bounds checking, and home-page consent interactions (109 snap tests across 9 suites, plus 10 connector tests).
 
 ## 5. Residual risks & accepted trade-offs
 

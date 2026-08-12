@@ -29,12 +29,16 @@ import type { SimulationSummary } from '../stellar/soroban';
 import {
   boundAuthExpiration,
   decodeAuthEntry,
+  decodeHostFunction,
   getSorobanOperation,
   simulateForDisplay,
 } from '../stellar/soroban';
 import { SignAuthEntryDialog, SignMessageDialog } from '../ui/dialogs';
 import { containsHiddenCharacters } from '../ui/format';
-import { buildSignTransactionDialog } from '../ui/transaction';
+import {
+  buildSignTransactionDialog,
+  SUPPORTED_OPERATION_TYPES,
+} from '../ui/transaction';
 
 /** SEP-53 signed-message prefix. */
 const SIGNED_MESSAGE_PREFIX = 'Stellar Signed Message:\n';
@@ -88,7 +92,34 @@ export async function signTransaction(
   // is the inner transaction, so a fee-bumped Soroban tx is still recognised
   // as Soroban and gets the same review and RPC routing.
   const innerTx = tx instanceof Transaction ? tx : tx.innerTransaction;
-  const isSoroban = getSorobanOperation(innerTx) !== null;
+  const sorobanOperation = getSorobanOperation(innerTx);
+  const isSoroban = sorobanOperation !== null;
+
+  // Fail closed: a transaction whose effects cannot be displayed
+  // faithfully must not be approvable. A warning over raw XDR is not a
+  // usable review mechanism.
+  const unsupportedTypes = [
+    ...new Set(
+      innerTx.operations
+        .map((operation) => operation.type)
+        .filter((type) => !SUPPORTED_OPERATION_TYPES.has(type)),
+    ),
+  ];
+  if (unsupportedTypes.length > 0) {
+    throw invalidRequest(
+      `This transaction contains operation types the snap cannot display faithfully (${unsupportedTypes.join(
+        ', ',
+      )}) and cannot be reviewed. Signing is refused.`,
+    );
+  }
+  if (
+    sorobanOperation?.type === 'invokeHostFunction' &&
+    decodeHostFunction(sorobanOperation.func).kind === 'unknown'
+  ) {
+    throw invalidRequest(
+      'This transaction contains a host function the snap cannot display faithfully. Signing is refused.',
+    );
+  }
 
   // Soroban transactions get a display-verification simulation (Sui-snap
   // pattern): resource fee, required auth signers, restore requirements.
@@ -121,6 +152,7 @@ export async function signTransaction(
         signingAddress: signerAddress,
         simulation,
         warnings,
+        submit: Boolean(request.submit),
       }),
     },
   });
@@ -219,10 +251,22 @@ export async function signAuthEntry(
     throw invalidRequest('Could not parse the authorization entry XDR.');
   }
 
-  const decoded = decodeAuthEntry(entry);
-  if (decoded.credentialsType !== 'address') {
+  let decoded: ReturnType<typeof decodeAuthEntry>;
+  try {
+    decoded = decodeAuthEntry(entry);
+  } catch {
+    throw invalidRequest('Could not decode the authorization entry.');
+  }
+  if (decoded.credentialsType === 'sourceAccount') {
     throw invalidRequest(
       'This entry uses source-account credentials; it is authorized by the transaction signature and needs no separate signature.',
+    );
+  }
+  // Fail closed: an entry containing credential or function variants
+  // the snap cannot display faithfully must not be signable.
+  if (decoded.credentialsType !== 'address' || decoded.unsupported) {
+    throw invalidRequest(
+      'This authorization entry contains a credential or function type the snap cannot display faithfully. Signing is refused.',
     );
   }
 

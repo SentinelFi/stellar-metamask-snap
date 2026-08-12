@@ -12,6 +12,7 @@ import {
 
 import type { NetworkConfig, NetworkName } from './networks';
 import { NETWORK_NAMES, NETWORKS } from './networks';
+import { invalidRequest } from '../rpc/errors';
 
 /**
  * Versioned snap state, stored encrypted via `snap_manageState`.
@@ -23,6 +24,13 @@ export type TrackedToken = {
   symbol: string;
   decimals: number;
 };
+
+/**
+ * Cap on tracked tokens per network: every tracked token adds a simulation
+ * round-trip to `getBalances` and each home-page render. Tokens can be
+ * removed from the snap home page, so the cap is housekeeping, not a wall.
+ */
+export const MAX_TRACKED_TOKENS = 30;
 
 export type SnapState = {
   version: 1;
@@ -100,6 +108,31 @@ export async function saveState(state: SnapState): Promise<void> {
 }
 
 /**
+ * Serializes state mutations. `snap_manageState` offers no compare-and-swap,
+ * so two concurrent read-modify-write sequences could interleave between
+ * their get and update and silently drop one writer's change. Every mutation
+ * helper below runs its whole get-modify-update body under this promise-chain
+ * mutex, so mutations execute strictly one after another.
+ */
+let mutationQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs a state mutation exclusively: it starts only after every previously
+ * queued mutation has settled, and later mutations wait for it in turn.
+ *
+ * @param fn - The mutation body (a full get-modify-update sequence).
+ * @returns The mutation's result.
+ */
+async function withStateLock<Type>(fn: () => Promise<Type>): Promise<Type> {
+  const run = mutationQueue.then(fn, fn);
+  mutationQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
  * Resolves the active network configuration.
  *
  * @returns The active network's config.
@@ -107,6 +140,23 @@ export async function saveState(state: SnapState): Promise<void> {
 export async function getActiveNetwork(): Promise<NetworkConfig> {
   const state = await getState();
   return NETWORKS[state.network];
+}
+
+/**
+ * Switches the active network via a locked read-modify-write. The state is
+ * re-read inside the lock, so a stale snapshot captured before a
+ * confirmation dialog can never clobber grants or tokens added while the
+ * dialog was open.
+ *
+ * @param network - The network to activate.
+ */
+export async function setActiveNetwork(network: NetworkName): Promise<void> {
+  await withStateLock(async () => {
+    const state = await getState();
+    if (state.network !== network) {
+      await saveState({ ...state, network });
+    }
+  });
 }
 
 /**
@@ -165,11 +215,13 @@ export async function connectOrigin(origin: string): Promise<void> {
   if (!isSafeStateKey(origin)) {
     return;
   }
-  const state = await getState();
-  if (!originHasGrant(state.origins, origin)) {
-    state.origins[origin] = { connectedAt: new Date().toISOString() };
-    await saveState(state);
-  }
+  await withStateLock(async () => {
+    const state = await getState();
+    if (!originHasGrant(state.origins, origin)) {
+      state.origins[origin] = { connectedAt: new Date().toISOString() };
+      await saveState(state);
+    }
+  });
 }
 
 /**
@@ -182,17 +234,19 @@ export async function removeToken(
   network: NetworkName,
   contractId: string,
 ): Promise<void> {
-  const state = await getState();
-  const forNetwork = state.tokens?.[network] ?? [];
-  const remaining = forNetwork.filter(
-    (entry) => entry.contractId !== contractId,
-  );
-  if (remaining.length !== forNetwork.length) {
-    await saveState({
-      ...state,
-      tokens: { ...state.tokens, [network]: remaining },
-    });
-  }
+  await withStateLock(async () => {
+    const state = await getState();
+    const forNetwork = state.tokens?.[network] ?? [];
+    const remaining = forNetwork.filter(
+      (entry) => entry.contractId !== contractId,
+    );
+    if (remaining.length !== forNetwork.length) {
+      await saveState({
+        ...state,
+        tokens: { ...state.tokens, [network]: remaining },
+      });
+    }
+  });
 }
 
 /**
@@ -201,13 +255,15 @@ export async function removeToken(
  * @param origin - The dapp origin to disconnect.
  */
 export async function disconnectOrigin(origin: string): Promise<void> {
-  const state = await getState();
-  if (!originHasGrant(state.origins, origin)) {
-    return;
-  }
-  const origins = { ...state.origins };
-  delete origins[origin];
-  await saveState({ ...state, origins });
+  await withStateLock(async () => {
+    const state = await getState();
+    if (!originHasGrant(state.origins, origin)) {
+      return;
+    }
+    const origins = { ...state.origins };
+    delete origins[origin];
+    await saveState({ ...state, origins });
+  });
 }
 
 /**
@@ -223,22 +279,33 @@ export async function getTokens(network: NetworkName): Promise<TrackedToken[]> {
 
 /**
  * Adds a token to a network's registry (idempotent by contract ID).
+ * The {@link MAX_TRACKED_TOKENS} cap is re-checked here at commit time,
+ * inside the lock: the caller's pre-dialog check reads a snapshot that can
+ * go stale while the confirmation dialog is open.
  *
  * @param network - The network name.
  * @param token - The token to add.
  * @returns True when newly added, false when already present.
+ * @throws An invalid-request error when the cap is already reached.
  */
 export async function addToken(
   network: NetworkName,
   token: TrackedToken,
 ): Promise<boolean> {
-  const state = await getState();
-  const tokens = state.tokens ?? {};
-  const forNetwork = tokens[network] ?? [];
-  if (forNetwork.some((entry) => entry.contractId === token.contractId)) {
-    return false;
-  }
-  tokens[network] = [...forNetwork, token];
-  await saveState({ ...state, tokens });
-  return true;
+  return withStateLock(async () => {
+    const state = await getState();
+    const tokens = state.tokens ?? {};
+    const forNetwork = tokens[network] ?? [];
+    if (forNetwork.some((entry) => entry.contractId === token.contractId)) {
+      return false;
+    }
+    if (forNetwork.length >= MAX_TRACKED_TOKENS) {
+      throw invalidRequest(
+        `Token limit reached: at most ${MAX_TRACKED_TOKENS} tracked tokens per network.`,
+      );
+    }
+    tokens[network] = [...forNetwork, token];
+    await saveState({ ...state, tokens });
+    return true;
+  });
 }
