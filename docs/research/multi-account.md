@@ -6,16 +6,16 @@
 
 The snap was built multi-account-ready but pins everything to index 0:
 
-| Touchpoint | Current behavior |
-| --- | --- |
-| [keys/index.ts](../../packages/snap/src/keys/index.ts) | `deriveKeypair(index = 0)` already derives `m/44'/148'/{index}'` for any hardened index; only ever called with 0 (`getWalletAddress` hardcodes it) |
-| [snap.manifest.json](../../packages/snap/snap.manifest.json) | `snap_getBip32Entropy` grants the whole `m/44'/148'` subtree (ed25519), so **no manifest change, no re-consent, and no shasum-relevant permission change is needed** to add accounts. THREAT-MODEL §5 documents this as the deliberate reason the subtree was kept |
-| [handlers/sign.tsx](../../packages/snap/src/handlers/sign.tsx) | All three signing methods accept a SEP-43 `address` option and reject with "Unknown address: this wallet cannot sign for it" when it differs from account 0 |
-| [handlers/access.tsx](../../packages/snap/src/handlers/access.tsx) | `requestAccess` / `getAddress` return the single account 0 address |
-| [state/index.ts](../../packages/snap/src/state/index.ts) | `SnapState` v1 has no account field. **Caution:** `parseState` resets any state that does not match the v1 schema to defaults. A v2 schema therefore needs an explicit v1-to-v2 migration path, otherwise upgrading wipes every origin grant and tracked token |
-| [handlers/home.tsx](../../packages/snap/src/handlers/home.tsx) | Home page renders one address, its balances, tokens, connected sites; interaction already flows through `onUserInput` (disconnect/remove-token buttons) |
-| [handlers/account.tsx](../../packages/snap/src/handlers/account.tsx) | `fund` targets "the wallet address" (account 0); `getBalances` already accepts an arbitrary validated address |
-| Tests | SEP-0005 official vector mnemonic is already the test fixture, and `SEP5_ADDRESS_1` (index 1) is already defined in [soroban.test.tsx](../../packages/snap/src/soroban.test.tsx); the SEP-0005 spec publishes vectors for indices 0 through 9 |
+| Touchpoint                                                           | Current behavior                                                                                                                                                                                                                                                   |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [keys/index.ts](../../packages/snap/src/keys/index.ts)               | `deriveKeypair(index = 0)` already derives `m/44'/148'/{index}'` for any hardened index; only ever called with 0 (`getWalletAddress` hardcodes it)                                                                                                                 |
+| [snap.manifest.json](../../packages/snap/snap.manifest.json)         | `snap_getBip32Entropy` grants the whole `m/44'/148'` subtree (ed25519), so **no manifest change, no re-consent, and no shasum-relevant permission change is needed** to add accounts. THREAT-MODEL §5 documents this as the deliberate reason the subtree was kept |
+| [handlers/sign.tsx](../../packages/snap/src/handlers/sign.tsx)       | All three signing methods accept a SEP-43 `address` option and reject with "Unknown address: this wallet cannot sign for it" when it differs from account 0                                                                                                        |
+| [handlers/access.tsx](../../packages/snap/src/handlers/access.tsx)   | `requestAccess` / `getAddress` return the single account 0 address                                                                                                                                                                                                 |
+| [state/index.ts](../../packages/snap/src/state/index.ts)             | `SnapState` v1 has no account field. **Caution:** `parseState` resets any state that does not match the v1 schema to defaults. A v2 schema therefore needs an explicit v1-to-v2 migration path, otherwise upgrading wipes every origin grant and tracked token     |
+| [handlers/home.tsx](../../packages/snap/src/handlers/home.tsx)       | Home page renders one address, its balances, tokens, connected sites; interaction already flows through `onUserInput` (disconnect/remove-token buttons)                                                                                                            |
+| [handlers/account.tsx](../../packages/snap/src/handlers/account.tsx) | `fund` targets "the wallet address" (account 0); `getBalances` already accepts an arbitrary validated address                                                                                                                                                      |
+| Tests                                                                | SEP-0005 official vector mnemonic is already the test fixture, and `SEP5_ADDRESS_1` (index 1) is already defined in [soroban.test.tsx](../../packages/snap/src/soroban.test.tsx); the SEP-0005 spec publishes vectors for indices 0 through 9                      |
 
 ## 2. Ecosystem survey
 
@@ -71,8 +71,8 @@ type SnapStateV2 = {
   tokens?: Partial<Record<NetworkName, TrackedToken[]>>;
   accounts: {
     /** Indices 0..count-1 exist. */
-    count: number;      // 1..MAX_ACCOUNTS
-    active: number;     // 0..count-1
+    count: number; // 1..MAX_ACCOUNTS
+    active: number; // 0..count-1
     /** Optional user labels, keyed by stringified index. */
     labels?: Record<string, string>;
   };
@@ -98,15 +98,15 @@ type SnapStateV2 = {
 
 ## 4. Security and privacy analysis
 
-| Concern | Assessment |
-| --- | --- |
-| Index bounds | `deriveKeypair` must only ever see validated integers `0..MAX_ACCOUNTS-1` from state. Hardened SLIP-10 derivation means even an out-of-range index would only produce another key the user owns, but bounds-check anyway (state corruption defense, consistent with existing patterns) |
-| Address resolution in signing | Resolving the dapp's `address` across up to 20 accounts requires up to 20 derivations per signing request (one `snap_getBip32Entropy` call plus cheap SLIP-10 child derivations; in practice derive the subtree node once and derive children from it). No timing/oracle concern: the method always ends in either a dialog or an "Unknown address" error, same as today |
-| Wallet-address enumeration | A connected origin could distinguish "one of your accounts" from "not yours" by passing candidate addresses to signing methods and watching for the dialog vs the error. That is already true today for account 0 (the error is the same), is inherent to SEP-43's option-bag semantics, and costs one visible dialog per confirmed hit. Keep `fund` active-account-only so no silent method gains this oracle |
-| Privacy across origins | With a global active account, switching reveals the new address to every origin holding a grant (via `getAddress`). Same model as Freighter. The home page copy must say so. Per-origin account pinning was considered and rejected for v1: it diverges from Freighter's mental model, complicates the grant schema, and dapps that care already pin via `address` |
-| Migration | The dangerous failure is silent state reset (looks like the wallet forgot every connection and token; users would read it as theft). Migration must be additive and covered by tests before `version: 2` ships |
-| Labels | User-supplied text rendered on the home page and in dialogs: run through `sanitizeInlineText`, cap length (32 chars), never render a label without its address, so a label like "Ledger cold storage" cannot masquerade as a different account's identity |
-| Consent model | Unchanged. Adding/switching accounts is user-initiated on the home page; no dapp can add, switch, enumerate, or rename accounts; signatures still always require a per-request dialog |
+| Concern                       | Assessment                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Index bounds                  | `deriveKeypair` must only ever see validated integers `0..MAX_ACCOUNTS-1` from state. Hardened SLIP-10 derivation means even an out-of-range index would only produce another key the user owns, but bounds-check anyway (state corruption defense, consistent with existing patterns)                                                                                                                         |
+| Address resolution in signing | Resolving the dapp's `address` across up to 20 accounts requires up to 20 derivations per signing request (one `snap_getBip32Entropy` call plus cheap SLIP-10 child derivations; in practice derive the subtree node once and derive children from it). No timing/oracle concern: the method always ends in either a dialog or an "Unknown address" error, same as today                                       |
+| Wallet-address enumeration    | A connected origin could distinguish "one of your accounts" from "not yours" by passing candidate addresses to signing methods and watching for the dialog vs the error. That is already true today for account 0 (the error is the same), is inherent to SEP-43's option-bag semantics, and costs one visible dialog per confirmed hit. Keep `fund` active-account-only so no silent method gains this oracle |
+| Privacy across origins        | With a global active account, switching reveals the new address to every origin holding a grant (via `getAddress`). Same model as Freighter. The home page copy must say so. Per-origin account pinning was considered and rejected for v1: it diverges from Freighter's mental model, complicates the grant schema, and dapps that care already pin via `address`                                             |
+| Migration                     | The dangerous failure is silent state reset (looks like the wallet forgot every connection and token; users would read it as theft). Migration must be additive and covered by tests before `version: 2` ships                                                                                                                                                                                                 |
+| Labels                        | User-supplied text rendered on the home page and in dialogs: run through `sanitizeInlineText`, cap length (32 chars), never render a label without its address, so a label like "Ledger cold storage" cannot masquerade as a different account's identity                                                                                                                                                      |
+| Consent model                 | Unchanged. Adding/switching accounts is user-initiated on the home page; no dapp can add, switch, enumerate, or rename accounts; signatures still always require a per-request dialog                                                                                                                                                                                                                          |
 
 Threat-model deltas to write when implementing: update §1 assets (one key per account index, all under the same subtree), §5 entropy-scope entry (now exercised), and the residual-risks list (address-enumeration oracle, global-active-account privacy note).
 
