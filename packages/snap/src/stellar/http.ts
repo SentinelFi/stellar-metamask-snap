@@ -1,3 +1,5 @@
+import { Buffer } from 'buffer';
+
 import { externalServiceError } from '../rpc/errors';
 
 /**
@@ -10,10 +12,60 @@ import { externalServiceError } from '../rpc/errors';
  */
 export const MAX_RESPONSE_BYTES = 1024 * 1024;
 
+/** The subset of a body stream reader this module consumes. */
+type BodyReader = {
+  read: () => Promise<{ done: boolean; value?: Uint8Array }>;
+  cancel: () => Promise<unknown>;
+};
+
+/** The subset of a streamed body this module consumes. */
+type StreamableBody = {
+  body?: { getReader?: () => BodyReader } | null;
+};
+
 /**
- * Reads a response body as JSON with a size cap: the declared
- * `Content-Length` is checked before the read, and the decoded text length
- * is checked after it (a hostile server can omit or understate the header).
+ * Reads a response body incrementally, aborting as soon as the byte cap is
+ * exceeded, so a hostile server that omits or understates `Content-Length`
+ * cannot buffer an oversized body into memory first.
+ *
+ * @param reader - The body stream reader.
+ * @param service - Service name for error messages.
+ * @returns The decoded body text.
+ * @throws An external-service `SnapError` when the cap is exceeded.
+ */
+async function readStreamBounded(
+  reader: BodyReader,
+  service: string,
+): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (value) {
+      received += value.byteLength;
+      if (received > MAX_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw externalServiceError(
+          `${service} returned an oversized response.`,
+        );
+      }
+      chunks.push(value);
+    }
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString(
+    'utf8',
+  );
+}
+
+/**
+ * Reads a response body as JSON with a byte cap enforced during the read:
+ * the declared `Content-Length` is checked first, then the body is consumed
+ * incrementally and aborted the moment it exceeds the cap. When the runtime
+ * exposes no body stream, the buffered fallback still enforces the cap after
+ * decoding (a hostile server can omit or understate the header either way).
  *
  * @param response - The fetch response.
  * @param service - Service name for error messages.
@@ -28,10 +80,18 @@ export async function readJsonBounded(
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
     throw externalServiceError(`${service} returned an oversized response.`);
   }
-  const text = await response.text();
-  if (text.length > MAX_RESPONSE_BYTES) {
-    throw externalServiceError(`${service} returned an oversized response.`);
+
+  const { body } = response as unknown as StreamableBody;
+  let text: string;
+  if (body && typeof body.getReader === 'function') {
+    text = await readStreamBounded(body.getReader(), service);
+  } else {
+    text = await response.text();
+    if (text.length > MAX_RESPONSE_BYTES) {
+      throw externalServiceError(`${service} returned an oversized response.`);
+    }
   }
+
   try {
     return JSON.parse(text);
   } catch {

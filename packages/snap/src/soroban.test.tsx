@@ -194,6 +194,38 @@ describe('signTransaction (Soroban)', () => {
     expect(error.data?.code).toBe(-4);
   }, 45000);
 
+  it('rejects an invocation whose arguments cannot be displayed in full', async () => {
+    const { request } = await install();
+
+    // 25 arguments exceed the render cap; the surplus would show only as a
+    // "…more" marker, so signing must be refused before any dialog.
+    const transaction = new TransactionBuilder(
+      new Account(SEP5_ADDRESS_0, '1'),
+      { fee: '100', networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: XLM_SAC_TESTNET,
+          function: 'transfer',
+          args: Array.from({ length: 25 }, (_, index) =>
+            xdr.ScVal.scvU32(index),
+          ),
+        }),
+      )
+      .setTimeout(300)
+      .build();
+
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: { xdr: transaction.toXDR() },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('display in full');
+  });
+
   it('rejects a Soroban operation mixed into a multi-op transaction', async () => {
     const { request } = await install();
 

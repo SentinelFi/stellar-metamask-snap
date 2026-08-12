@@ -63,7 +63,7 @@ const MAX_SCVAL_BYTES = 64;
  * @param name - The symbol text.
  * @returns The display string.
  */
-function formatSymbolName(name: string): string {
+export function formatSymbolName(name: string): string {
   return /^[A-Za-z0-9_]+$/u.test(name)
     ? name
     : escapeHiddenCharacters(JSON.stringify(name));
@@ -193,15 +193,52 @@ function formatScValInner(
       }
       return `{${shown.join(', ')}}`;
     }
-    case 'scvContractInstance':
-      return 'contract-instance';
+    case 'scvContractInstance': {
+      const instance = value.instance();
+      const executable = instance.executable();
+      const executableText =
+        executable.switch().name === 'contractExecutableWasm'
+          ? `wasm(${executable.wasmHash().toString('hex')})`
+          : 'built-in-token';
+      const storage = instance.storage() ?? [];
+      const shown = storage
+        .slice(0, MAX_SCVAL_ITEMS)
+        .map(
+          (entry) =>
+            `${formatScVal(entry.key(), depth + 1, flags)}: ${formatScVal(
+              entry.val(),
+              depth + 1,
+              flags,
+            )}`,
+        );
+      if (storage.length > MAX_SCVAL_ITEMS) {
+        flags.truncated = true;
+        shown.push(`…+${storage.length - MAX_SCVAL_ITEMS} more`);
+      }
+      const storageText =
+        shown.length > 0 ? `, storage: {${shown.join(', ')}}` : '';
+      return `contract-instance(${executableText}${storageText})`;
+    }
+    // A void arm: the label carries the variant's entire content.
     case 'scvLedgerKeyContractInstance':
       return 'ledger-key(contract-instance)';
     case 'scvLedgerKeyNonce':
-      return 'ledger-key(nonce)';
-    case 'scvError':
-      return 'error(see raw XDR)';
+      return `ledger-key(nonce(${value.nonceKey().nonce().toString()}))`;
+    case 'scvError': {
+      const error = value.error();
+      const variant = error.switch().name;
+      // Only the contract arm carries a numeric code; every other arm
+      // carries an ScErrorCode enum value.
+      const detail =
+        variant === 'sceContract'
+          ? error.contractCode().toString()
+          : error.code().name;
+      return `error(${variant}, ${detail})`;
+    }
     default:
+      // An unknown future variant cannot be rendered faithfully; flag it so
+      // signing paths fail closed rather than approving an opaque label.
+      flags.truncated = true;
       return `unsupported(${value.switch().name})`;
   }
 }
@@ -213,6 +250,11 @@ export type DecodedHostFunction = {
   args: string[];
   /** Display lines for non-invoke host functions (deploy parameters). */
   details?: string[];
+  /**
+   * A rendering limit was reached while decoding, so the display would not
+   * disclose every argument in full. Signing paths must fail closed on this.
+   */
+  truncated: boolean;
 };
 
 /**
@@ -279,20 +321,32 @@ function describeCreateContractArgs(
 export function decodeHostFunction(
   hostFunction: xdr.HostFunction,
 ): DecodedHostFunction {
+  const flags: TruncationFlags = { truncated: false };
   switch (hostFunction.switch().name) {
     case 'hostFunctionTypeInvokeContract': {
       const invocation = hostFunction.invokeContract();
+      const rawArgs = invocation.args();
+      const args = rawArgs
+        .slice(0, MAX_SCVAL_ITEMS)
+        .map((value) => formatScVal(value, 0, flags));
+      if (rawArgs.length > MAX_SCVAL_ITEMS) {
+        flags.truncated = true;
+        args.push(`…+${rawArgs.length - MAX_SCVAL_ITEMS} more`);
+      }
       return {
         kind: 'invoke',
         contract: Address.fromScAddress(
           invocation.contractAddress(),
         ).toString(),
         functionName: invocation.functionName().toString(),
-        args: invocation.args().map((value) => formatScVal(value)),
+        args,
+        truncated: flags.truncated,
       };
     }
     case 'hostFunctionTypeUploadContractWasm': {
       const wasm = hostFunction.wasm();
+      // The SHA-256 is a cryptographic commitment to the full wasm blob, so
+      // this display is faithful without rendering the bytes.
       return {
         kind: 'uploadWasm',
         args: [],
@@ -300,22 +354,31 @@ export function decodeHostFunction(
           `Wasm size: ${wasm.length} bytes`,
           `Wasm SHA-256: ${hash(wasm).toString('hex')}`,
         ],
+        truncated: false,
       };
     }
     case 'hostFunctionTypeCreateContract':
       return {
         kind: 'createContract',
         args: [],
-        details: describeCreateContractArgs(hostFunction.createContract()),
+        details: describeCreateContractArgs(
+          hostFunction.createContract(),
+          flags,
+        ),
+        truncated: flags.truncated,
       };
     case 'hostFunctionTypeCreateContractV2':
       return {
         kind: 'createContract',
         args: [],
-        details: describeCreateContractArgs(hostFunction.createContractV2()),
+        details: describeCreateContractArgs(
+          hostFunction.createContractV2(),
+          flags,
+        ),
+        truncated: flags.truncated,
       };
     default:
-      return { kind: 'unknown', args: [] };
+      return { kind: 'unknown', args: [], truncated: true };
   }
 }
 

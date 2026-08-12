@@ -188,6 +188,27 @@ describe('createFreighterApi', () => {
     expect(await freighter.getAddress()).toStrictEqual({ address: ADDRESS });
     expect(await freighter.isAllowed()).toStrictEqual({ isAllowed: true });
   });
+
+  it('preserves post-submission recovery data alongside the error', async () => {
+    // A submit-after-sign failure carries the signed envelope; the facade
+    // must surface it so callers can poll or retry, not just the error.
+    const error = new Error('Transaction submission failed.') as Error & {
+      data: Record<string, unknown>;
+    };
+    error.data = {
+      code: -2,
+      signedTxXdr: 'AAAAsigned',
+      signerAddress: ADDRESS,
+      status: 'ERROR',
+    };
+    const { provider } = mockProvider({ signTransaction: error });
+    const freighter = createFreighterApi({ provider });
+
+    const result = await freighter.signTransaction('AAAA', { submit: true });
+    expect(result.error?.code).toBe(-2);
+    expect(result.signedTxXdr).toBe('AAAAsigned');
+    expect(result.signerAddress).toBe(ADDRESS);
+  });
 });
 
 describe('StellarSnapKitModule', () => {

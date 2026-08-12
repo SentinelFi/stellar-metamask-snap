@@ -56,9 +56,10 @@ export const ConnectionGrantNotice: SnapComponent<
   <Section>
     <Text>
       Approving also connects <Bold>{displayOrigin(origin)}</Bold> to this
-      wallet. A connected site can read your address and balances, suggest
-      tokens to track, and request test-network funding of this wallet without
-      further prompts, until you disconnect it on the snap home page.
+      wallet. A connected site can read your address and balances, list every
+      account you have added in this wallet (which links them to each other),
+      suggest tokens to track, and request test-network funding of this wallet
+      without further prompts, until you disconnect it on the snap home page.
     </Text>
   </Section>
 );
@@ -97,6 +98,12 @@ export const ConnectDialog: SnapComponent<ConnectDialogProps> = ({
       <Text>Address</Text>
       <Copyable value={address} />
     </Section>
+    <Text>
+      A connected site can read your address and balances, list every account
+      you have added in this wallet (which links them to each other), suggest
+      tokens to track, and request test-network funding without further prompts,
+      until you disconnect it on the snap home page.
+    </Text>
     <Text>
       The site cannot move funds without your approval — every transaction
       requires a separate confirmation.

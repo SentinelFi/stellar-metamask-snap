@@ -118,6 +118,45 @@ describe('formatScVal', () => {
     ).toBe('[u32(1), sym(a)]');
   });
 
+  it('renders error, nonce-key, and contract-instance payloads faithfully', () => {
+    expect(formatScVal(xdr.ScVal.scvError(xdr.ScError.sceContract(5)))).toBe(
+      'error(sceContract, 5)',
+    );
+    expect(
+      formatScVal(
+        xdr.ScVal.scvError(
+          xdr.ScError.sceWasmVm(xdr.ScErrorCode.scecInvalidInput()),
+        ),
+      ),
+    ).toBe('error(sceWasmVm, scecInvalidInput)');
+    expect(
+      formatScVal(
+        xdr.ScVal.scvLedgerKeyNonce(
+          new xdr.ScNonceKey({ nonce: new xdr.Int64(42n) }),
+        ),
+      ),
+    ).toBe('ledger-key(nonce(42))');
+    expect(
+      formatScVal(
+        xdr.ScVal.scvContractInstance(
+          new xdr.ScContractInstance({
+            executable: xdr.ContractExecutable.contractExecutableStellarAsset(),
+            storage: null,
+          }),
+        ),
+      ),
+    ).toBe('contract-instance(built-in-token)');
+  });
+
+  it('flags an unknown future ScVal variant as not fully rendered', () => {
+    const future = {
+      switch: () => ({ name: 'scvFuture' }),
+    } as unknown as xdr.ScVal;
+    const flags = { truncated: false };
+    expect(formatScVal(future, 0, flags)).toBe('unsupported(scvFuture)');
+    expect(flags.truncated).toBe(true);
+  });
+
   it('tags the raw-XDR fallback and reports it like truncation', () => {
     // A value that parses structurally but throws during rendering must not
     // display as bare base64 (which could imitate a strkey address).
@@ -201,6 +240,30 @@ describe('decodeHostFunction', () => {
     expect(decoded.functionName).toBe('transfer');
     expect(decoded.args).toHaveLength(2);
     expect(decoded.args[1]).toBe('u32(5)');
+  });
+
+  it('reports truncation when invoke arguments exceed the render cap', () => {
+    const tx = txWith(
+      Operation.invokeContractFunction({
+        contract: CONTRACT,
+        function: 'transfer',
+        args: Array.from({ length: 25 }, (_, index) => xdr.ScVal.scvU32(index)),
+      }),
+    );
+    const op = getSorobanOperation(tx) as { func: xdr.HostFunction };
+    expect(decodeHostFunction(op.func).truncated).toBe(true);
+  });
+
+  it('reports a fully rendered invocation as not truncated', () => {
+    const tx = txWith(
+      Operation.invokeContractFunction({
+        contract: CONTRACT,
+        function: 'transfer',
+        args: [xdr.ScVal.scvU32(1)],
+      }),
+    );
+    const op = getSorobanOperation(tx) as { func: xdr.HostFunction };
+    expect(decodeHostFunction(op.func).truncated).toBe(false);
   });
 
   it('decodes create-contract parameters for review', () => {

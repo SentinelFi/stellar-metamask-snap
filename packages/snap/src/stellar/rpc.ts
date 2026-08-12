@@ -158,18 +158,22 @@ export async function getLatestLedger(url: string): Promise<number> {
  *
  * @param url - The RPC endpoint.
  * @param transactionXdr - Base64 envelope XDR (single Soroban operation).
+ * @param timeoutMs - Optional caller-supplied timeout (e.g. token reads use
+ * a tighter budget); the abort covers the whole request, so no background
+ * work outlives it.
  * @returns The raw simulation response.
  */
 export async function simulateTransaction(
   url: string,
   transactionXdr: string,
+  timeoutMs: number = SIMULATION_TIMEOUT_MS,
 ): Promise<RawSimulationResponse> {
   return rpcCall(
     url,
     'simulateTransaction',
     { transaction: transactionXdr },
     SimulationStruct,
-    SIMULATION_TIMEOUT_MS,
+    timeoutMs,
   );
 }
 

@@ -23,6 +23,7 @@ import {
   bytesToDisplay,
   containsHiddenCharacters,
   displayOrigin,
+  escapeHiddenCharacters,
   formatAsset,
   formatAssetFull,
   formatMemo,
@@ -31,7 +32,11 @@ import {
 } from './format';
 import type { NetworkName } from '../state/networks';
 import type { SimulationSummary } from '../stellar/soroban';
-import { decodeHostFunction, summarizeAuthEntries } from '../stellar/soroban';
+import {
+  decodeHostFunction,
+  formatSymbolName,
+  summarizeAuthEntries,
+} from '../stellar/soroban';
 
 /**
  * Operation types the review dialog can decode faithfully. Transactions
@@ -382,6 +387,15 @@ function renderOperationBody(
           </Banner>
           {hiddenCharactersBanner([operation.homeDomain])}
           {rows}
+          {operation.homeDomain !== undefined &&
+          containsHiddenCharacters(operation.homeDomain) ? (
+            // The row above is a sanitized preview; show the exact signed
+            // value with hidden characters escaped visibly.
+            <Box>
+              <Text>Home domain (exact, hidden characters escaped)</Text>
+              <Copyable value={escapeHiddenCharacters(operation.homeDomain)} />
+            </Box>
+          ) : null}
         </Section>
       );
     }
@@ -446,8 +460,11 @@ function renderOperationBody(
           </Text>
           <Text>Contract</Text>
           <Copyable value={decoded.contract ?? ''} />
+          {/* Lossless: a plain identifier renders bare; anything else is
+              quoted with hidden characters escaped visibly, exactly as in
+              the authorization-entry renderer. */}
           <Row label="Function">
-            <Text>{sanitizeInlineText(decoded.functionName ?? '')}</Text>
+            <Text>{formatSymbolName(decoded.functionName ?? '')}</Text>
           </Row>
           {decoded.args.length > 0 ? (
             <Text>Arguments</Text>
@@ -671,6 +688,14 @@ function renderSummary(tx: Transaction): GenericSnapElement {
         <Row label={memo[0]}>
           <Text>{memo[1]}</Text>
         </Row>
+      ) : null}
+      {rawMemoText !== undefined && containsHiddenCharacters(rawMemoText) ? (
+        // The inline row above is a sanitized preview; give the user the
+        // exact signed text with hidden characters escaped visibly.
+        <Box>
+          <Text>Memo (exact, hidden characters escaped)</Text>
+          <Copyable value={escapeHiddenCharacters(rawMemoText)} />
+        </Box>
       ) : null}
       {renderPreconditions(tx)}
     </Section>

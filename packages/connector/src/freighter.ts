@@ -16,10 +16,13 @@ type WithError<Type> = Partial<Type> & { error?: FreighterApiError };
 
 /**
  * Runs a call and folds failures into Freighter's `{ ...result, error }`
- * convention instead of throwing.
+ * convention instead of throwing. Post-approval recovery data preserved on
+ * the typed error (the signed envelope, signer, hash, status of a
+ * submit-after-sign failure) is spread alongside `error`, so facade
+ * consumers can still poll or retry a transaction the user already signed.
  *
  * @param work - The underlying call.
- * @returns The result, or `{ error }`.
+ * @returns The result, or `{ ...recoveryData, error }`.
  */
 async function soft<Type extends Record<string, unknown>>(
   work: () => Promise<Type>,
@@ -27,11 +30,11 @@ async function soft<Type extends Record<string, unknown>>(
   try {
     return await work();
   } catch (error) {
-    // A bare `{ error }` cannot be proven assignable to Partial<Type> for an
-    // arbitrary Type; the convention guarantees result fields are absent on
-    // failure.
+    // The cast is safe by convention: on failure, the only result-shaped
+    // fields present are the validated recovery strings from `error.data`.
     if (error instanceof StellarSnapError) {
       return {
+        ...(error.data ?? {}),
         error: { code: error.code, message: error.message },
       } as WithError<Type>;
     }

@@ -56,12 +56,13 @@ async function readContract(
       .setTimeout(0)
       .build();
 
-    const response = await Promise.race([
-      simulateTransaction(network.sorobanRpcUrl, tx.toXDR()),
-      new Promise<never>((_resolve, reject) => {
-        setTimeout(() => reject(new Error('timeout')), READ_TIMEOUT_MS);
-      }),
-    ]);
+    // The timeout rides the RPC call's own AbortController, so a slow
+    // simulation is aborted (not orphaned) and a fast one leaves no timer.
+    const response = await simulateTransaction(
+      network.sorobanRpcUrl,
+      tx.toXDR(),
+      READ_TIMEOUT_MS,
+    );
 
     const resultXdr = response.results?.[0]?.xdr;
     if (response.error || !resultXdr) {

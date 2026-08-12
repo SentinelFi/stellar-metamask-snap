@@ -134,13 +134,21 @@ export async function signTransaction(
       )}) and cannot be reviewed. Signing is refused.`,
     );
   }
-  if (
-    sorobanOperation?.type === 'invokeHostFunction' &&
-    decodeHostFunction(sorobanOperation.func).kind === 'unknown'
-  ) {
-    throw invalidRequest(
-      'This transaction contains a host function the snap cannot display faithfully. Signing is refused.',
-    );
+  if (sorobanOperation?.type === 'invokeHostFunction') {
+    const hostFunction = decodeHostFunction(sorobanOperation.func);
+    if (hostFunction.kind === 'unknown') {
+      throw invalidRequest(
+        'This transaction contains a host function the snap cannot display faithfully. Signing is refused.',
+      );
+    }
+    // Fail closed on rendering limits too: an argument shown as "…more" or
+    // an opaque label is undisclosed signed semantics, exactly like a
+    // truncated authorization entry.
+    if (hostFunction.truncated) {
+      throw invalidRequest(
+        'This transaction contains contract-call values too large or deeply nested to display in full. Signing is refused.',
+      );
+    }
   }
   // Embedded auth entries with source-account credentials are authorized by
   // the envelope signature itself, so they must be as reviewable as a
