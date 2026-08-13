@@ -36,6 +36,22 @@ Unlike Phases 0–4, this phase is mostly process: the code is feature-complete 
 - Versions aligned (`0.1.0` in both `package.json`s and the snap manifest); `prepublishOnly: mm-snap manifest` regenerates the shasum at publish time; CI's manifest-drift check guards it between releases.
 - **Name check before first publish:** confirm `stellar-soroban-snap` and `stellar-soroban-snap-connector` are still free on npm at publish time; if taken, the fallback is scoping under the npm account (requires updating `snap.manifest.json` `packageName`, connector `DEFAULT_SNAP_ID`, and docs).
 
+## Build reproducibility (verified; Node 22 only)
+
+The Directory review and any auditor check that the published bundle matches the `shasum` in `snap.manifest.json`, so the build has to be reproducible rather than assumed to be.
+
+**Verified on Node 22.17.1 (2026-08-13):** building twice in place, and building from a fresh `git clone` with `yarn install --immutable`, both produce a byte-identical `packages/snap/dist/bundle.js` (`sha256 490c5358…`) and therefore an identical manifest shasum.
+
+**Supported build runtime is Node 22 only.** `engines.node` is `^22.0.0` in the root, snap, and site packages, and `.nvmrc` pins `22`, matching the CI workflows. Reasons:
+
+- Node 20 reached end of life in April 2026, so declaring support for it means declaring support for an unsupported runtime.
+- The repository previously declared three different things (`^20.0.0 || >=22.0.0` in the root and snap, `>=18.6.0` in the site, `lts/*` in `.nvmrc`, which drifts as new LTS lines ship). There was no single answer to "what builds this", which is exactly the ambiguity a shasum check punishes.
+- Narrowing to one line removes the cross-version question rather than answering it: a reviewer building on the declared runtime gets the bytes we published.
+
+The connector deliberately keeps no `engines` constraint: it is a library that dapp developers consume on whatever runtime they use, and restricting it would warn them without improving the reproducibility of the audited artifact.
+
+If the supported line ever moves (say Node 22 approaching its own end of life in April 2027), re-run the two checks above on the new line before changing `engines`, and re-verify the shasum.
+
 ## Mainnet RPC decision (taken)
 
 **Default Soroban RPC for PUBLIC stays `https://soroban-rpc.mainnet.stellar.gateway.fm`; Horizon stays `https://horizon.stellar.org`.** Rationale: both verified to accept `Origin: null` (snap sandbox) including preflight in Phase 0's CORS spike; Gateway.fm is keyless and SDF-listed. Risks and mitigations: provider CORS/policy can change → **re-run the Phase 0 CORS probe against mainnet endpoints immediately before submission and after any provider incident**; Ankr/OnFinality/Lightsail all passed the same probe and are drop-in replacements (one constant in `state/networks.ts`). A user-configurable custom-network/RPC override remains a tracked post-launch feature.
