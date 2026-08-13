@@ -94,6 +94,8 @@ yarn workspace stellar-soroban-snap test
 
 ## Documentation
 
+- [CHANGELOG.md](CHANGELOG.md): release history
+- [docs/RELEASE.md](docs/RELEASE.md): how a release is cut, and the four files that carry the version
 - [docs/MENTAL-MAP.md](docs/MENTAL-MAP.md): architecture, key decisions, and risk map
 - [docs/PLAN.md](docs/PLAN.md): phased implementation plan
 - Knowledge base ([docs/research/](docs/research/)):

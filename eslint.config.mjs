@@ -52,6 +52,16 @@ const config = createConfig([
   },
 
   {
+    // Repository tooling: real Node scripts, ESM, run by CI and by hand.
+    files: ['scripts/**/*.mjs'],
+    extends: nodejs,
+
+    languageOptions: {
+      sourceType: 'module',
+    },
+  },
+
+  {
     // Snap source runs in the SES sandbox where the `buffer` npm polyfill is
     // provided by the snaps-cli webpack config; importing it explicitly is
     // the sanctioned alternative to the (restricted) Buffer global.

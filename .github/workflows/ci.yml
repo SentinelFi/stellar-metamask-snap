@@ -31,6 +31,12 @@ jobs:
       - name: Lint (eslint + prettier)
         run: yarn lint
 
+      # The release version lives in four files, one of them a hardcoded
+      # constant that pins which snap version dapps install. A bump that
+      # misses one is silent and version-pinned allowlisting would ship it.
+      - name: Verify release versions agree
+        run: yarn check:versions
+
       - name: Build snap (includes SES eval)
         run: yarn workspace stellar-soroban-snap build
 

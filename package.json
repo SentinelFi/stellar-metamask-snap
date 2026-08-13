@@ -18,6 +18,7 @@
   ],
   "scripts": {
     "build": "yarn workspaces foreach --parallel --topological --verbose run build",
+    "check:versions": "node scripts/check-versions.mjs",
     "lint": "yarn lint:eslint && yarn lint:misc --check",
     "lint:eslint": "eslint . --cache",
     "lint:fix": "yarn lint:eslint --fix && yarn lint:misc --write",
