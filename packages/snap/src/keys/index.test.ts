@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { SLIP10Node } from '@metamask/key-tree';
 import { Keypair } from '@stellar/stellar-sdk';
 
-import { getOwnedAccounts, resolveSigningKeypair } from '.';
+import { getOwnedAccounts, resetAddressCache, resolveSigningKeypair } from '.';
 
 /** Official SEP-0005 test vector 1 (no passphrase). */
 const SEP5_MNEMONIC =
@@ -32,6 +32,7 @@ describe('key derivation', () => {
       derivationPath: [`bip39:${SEP5_MNEMONIC}`, `slip10:44'`, `slip10:148'`],
       curve: 'ed25519',
     });
+    resetAddressCache();
     entropyRequests = 0;
     stored = {
       version: 2,
@@ -108,6 +109,23 @@ describe('key derivation', () => {
           'Unknown address',
         );
       }
+    });
+
+    it('performs no derivation for a repeated unowned address', async () => {
+      // An origin can submit a valid-looking address the wallet does not hold
+      // before any dialog or throttle applies. Resolution must not sweep and
+      // derive every revealed account each time it does.
+      await expect(resolveSigningKeypair(FOREIGN_ADDRESS)).rejects.toThrow(
+        'Unknown address',
+      );
+      const afterFirst = entropyRequests;
+
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await expect(resolveSigningKeypair(FOREIGN_ADDRESS)).rejects.toThrow(
+          'Unknown address',
+        );
+      }
+      expect(entropyRequests).toBe(afterFirst);
     });
 
     it('derives the entropy node once per resolution', async () => {

@@ -1,11 +1,21 @@
 import { getWalletAddress } from '../keys';
 import { userRejected } from '../rpc/errors';
-import { connectOrigin, getState, isOriginConnected } from '../state';
+import {
+  connectOrigin,
+  getState,
+  hasCurrentDisclosure,
+  isOriginConnected,
+} from '../state';
 import { ConnectDialog } from '../ui/dialogs';
 
 /**
  * `requestAccess` — SEP-43 entry point. Shows a connect dialog on first use;
  * silently returns the address for already-granted origins.
+ *
+ * A grant recorded under an older disclosure is treated as needing consent
+ * again, so the dialog is shown rather than skipped. That is what lets an
+ * origin regain a capability the snap has since started disclosing (today:
+ * account enumeration) without ever granting it silently on update.
  *
  * @param origin - The requesting dapp origin.
  * @returns The wallet address.
@@ -15,7 +25,7 @@ export async function requestAccess(
 ): Promise<{ address: string }> {
   const address = await getWalletAddress();
 
-  if (await isOriginConnected(origin)) {
+  if (await hasCurrentDisclosure(origin)) {
     return { address };
   }
 

@@ -663,7 +663,18 @@ export function summarizeAuthEntries(
         } else if (decoded.credentialsType === 'unknown') {
           who = 'unknown credentials — review the raw XDR';
         }
-        return `#${index + 1} [${who}]\n${decoded.invocations.join('\n')}`;
+        // The nonce and expiry are signed fields that bound replay and
+        // lifetime. The decoder already has them, so omitting them from the
+        // summary would hide part of what the envelope signature authorizes.
+        const meta =
+          decoded.credentialsType === 'address'
+            ? `\nnonce: ${decoded.nonce ?? '0'}, valid until ledger: ${
+                decoded.signatureExpirationLedger ?? 0
+              }`
+            : '';
+        return `#${index + 1} [${who}]${meta}\n${decoded.invocations.join(
+          '\n',
+        )}`;
       } catch {
         return `#${index + 1} (undecodable — review the raw XDR)`;
       }
@@ -674,6 +685,128 @@ export function summarizeAuthEntries(
     );
   }
   return lines;
+}
+
+/** Footprint keys rendered before the summary is marked incomplete. */
+export const MAX_FOOTPRINT_KEYS = 20;
+
+/**
+ * Extracts a transaction's Soroban data, when it carries any.
+ *
+ * @param tx - The operation-bearing transaction.
+ * @returns The Soroban transaction data, or null for a classic transaction.
+ */
+export function getSorobanData(
+  tx: Transaction,
+): xdr.SorobanTransactionData | null {
+  try {
+    return tx.toEnvelope().v1().tx().ext().sorobanData() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Describes one ledger key from a Soroban footprint.
+ *
+ * @param key - The ledger key.
+ * @returns A display string identifying what the key addresses.
+ */
+function describeLedgerKey(key: xdr.LedgerKey): string {
+  // Deliberately non-exhaustive: only the key types a Soroban footprint can
+  // actually contain are named; anything else falls through to the explicit
+  // "review the raw XDR" label rather than being mislabelled.
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check
+  switch (key.switch().name) {
+    case 'contractData': {
+      const data = key.contractData();
+      return `contract data ${Address.fromScAddress(
+        data.contract(),
+      ).toString()} key=${formatScVal(data.key())} (${data.durability().name})`;
+    }
+    case 'contractCode':
+      return `contract code ${key.contractCode().hash().toString('hex')}`;
+    case 'account':
+      return `account ${Address.account(
+        key.account().accountId().ed25519(),
+      ).toString()}`;
+    case 'trustline':
+      return `trustline of ${Address.account(
+        key.trustLine().accountId().ed25519(),
+      ).toString()}`;
+    case 'ttl':
+      return `ttl ${key.ttl().keyHash().toString('hex')}`;
+    default:
+      return `${key.switch().name} (review the raw XDR)`;
+  }
+}
+
+/** A rendered Soroban footprint and its resource commitment. */
+export type FootprintSummary = {
+  lines: string[];
+  /** A key or resource value could not be rendered in full. */
+  truncated: boolean;
+};
+
+/**
+ * Summarizes the Soroban transaction footprint: which ledger entries the
+ * transaction may read and write, and what resources it commits to.
+ *
+ * The footprint is a signed field that bounds the transaction's entire
+ * state access. Rendering only "extends contract data" or "restores archived
+ * data" tells the user nothing about which data, so the scope they approve is
+ * not the scope they can see.
+ *
+ * @param sorobanData - The transaction's Soroban data, when present.
+ * @returns The summary, or null when the transaction carries no footprint.
+ */
+export function summarizeFootprint(
+  sorobanData: xdr.SorobanTransactionData | null | undefined,
+): FootprintSummary | null {
+  if (!sorobanData) {
+    return null;
+  }
+
+  const lines: string[] = [];
+  let truncated = false;
+
+  try {
+    const resources = sorobanData.resources();
+    const footprint = resources.footprint();
+
+    for (const [label, keys] of [
+      ['Read-only', footprint.readOnly()],
+      ['Read-write', footprint.readWrite()],
+    ] as const) {
+      if (keys.length === 0) {
+        continue;
+      }
+      lines.push(`${label} (${keys.length}):`);
+      for (const key of keys.slice(0, MAX_FOOTPRINT_KEYS)) {
+        lines.push(`  ${describeLedgerKey(key)}`);
+      }
+      if (keys.length > MAX_FOOTPRINT_KEYS) {
+        truncated = true;
+        lines.push(`  …+${keys.length - MAX_FOOTPRINT_KEYS} more`);
+      }
+    }
+
+    lines.push(
+      `Instructions: ${resources.instructions()}`,
+      `Disk read bytes: ${resources.diskReadBytes()}`,
+      `Write bytes: ${resources.writeBytes()}`,
+      `Resource fee: ${sorobanData.resourceFee().toString()} stroops`,
+    );
+  } catch {
+    // A footprint this decoder cannot walk must be reported as incomplete
+    // rather than shown as an empty scope.
+    return {
+      lines: ['Footprint could not be decoded — review the raw XDR'],
+      truncated: true,
+    };
+  }
+
+  return lines.length > 0 ? { lines, truncated } : null;
 }
 
 /** Caps on endpoint-controlled simulation arrays (resource bound). */

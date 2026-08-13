@@ -10,7 +10,7 @@ import {
   type,
 } from '@metamask/superstruct';
 
-import { readJsonBounded } from './http';
+import { discardBody, readJsonBounded } from './http';
 import { externalServiceError } from '../rpc/errors';
 
 export type HorizonBalance = {
@@ -234,6 +234,9 @@ export async function getAccountChecks(
       },
     );
     if (response.status === 404) {
+      // Nothing to read, but the body must still be released while the abort
+      // timer is armed.
+      await discardBody(response);
       return {
         exists: false,
         memoRequired: false,
@@ -242,6 +245,7 @@ export async function getAccountChecks(
       };
     }
     if (!response.ok) {
+      await discardBody(response);
       return null;
     }
     // Bounded read: an oversized body throws and degrades to null below.

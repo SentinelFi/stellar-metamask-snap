@@ -6,8 +6,10 @@ import {
   displayOrigin,
   escapeHiddenCharacters,
   formatAsset,
+  formatLiquidityPool,
   formatMemo,
   formatTokenAsset,
+  isLossyInline,
   originLooksConfusable,
   sanitizeInlineText,
   stroopsToXlm,
@@ -40,13 +42,61 @@ describe('formatAsset', () => {
     expect(formatAsset(new Asset('USDC', ISSUER))).toBe('USDC (GDRX…JUJ6)');
   });
 
-  it('labels liquidity-pool assets', () => {
+  it('names the constituents of a liquidity-pool asset', () => {
+    // Regression: every pool rendered as the same opaque "Liquidity pool
+    // shares" label, so a trustline against one pool was indistinguishable
+    // from one against any other.
     const pool = new LiquidityPoolAsset(
       Asset.native(),
       new Asset('USDC', ISSUER),
       30,
     );
-    expect(formatAsset(pool)).toBe('Liquidity pool shares');
+    expect(formatAsset(pool)).toBe('Pool shares: XLM / USDC (GDRX…JUJ6)');
+  });
+});
+
+describe('formatLiquidityPool', () => {
+  it('gives the full identity of the pool a trustline is for', () => {
+    const pool = new LiquidityPoolAsset(
+      Asset.native(),
+      new Asset('USDC', ISSUER),
+      30,
+    );
+    const lines = formatLiquidityPool(pool);
+
+    expect(lines).toStrictEqual([
+      'Asset A: XLM (native)',
+      `Asset B: USDC:${ISSUER}`,
+      'Pool fee: 30 basis points',
+      // The pool ID is derived from the constituents and fee, so it is a
+      // commitment to exactly the pool being trusted.
+      expect.stringMatching(/^Pool ID: [0-9a-f]{64}$/u),
+    ]);
+  });
+
+  it('returns null for assets that are not pools', () => {
+    expect(formatLiquidityPool(Asset.native())).toBeNull();
+    expect(formatLiquidityPool(new Asset('USDC', ISSUER))).toBeNull();
+    expect(formatLiquidityPool(undefined)).toBeNull();
+  });
+});
+
+describe('isLossyInline', () => {
+  it('flags ordinary tabs and line breaks, not only hidden characters', () => {
+    // Regression: the exact-value view was gated on containsHiddenCharacters,
+    // which deliberately tolerates \t\n\r, so `one\ntwo` displayed as
+    // `one two` with no warning and no exact representation anywhere.
+    expect(isLossyInline('one\ntwo')).toBe(true);
+    expect(isLossyInline('one\ttwo')).toBe(true);
+    expect(isLossyInline('one  two')).toBe(true);
+    expect(isLossyInline(' padded ')).toBe(true);
+    expect(isLossyInline('one‮two')).toBe(true);
+  });
+
+  it('leaves exactly-representable text alone', () => {
+    expect(isLossyInline('ordinary text')).toBe(false);
+    expect(isLossyInline('')).toBe(false);
+    expect(isLossyInline('ünïcödé 🙂')).toBe(false);
   });
 });
 

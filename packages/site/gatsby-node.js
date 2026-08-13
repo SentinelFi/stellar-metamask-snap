@@ -1,4 +1,4 @@
-const { readFileSync, existsSync } = require('fs');
+const { readFileSync, existsSync, readdirSync } = require('fs');
 const { dirname, join } = require('path');
 
 // Use the exact webpack instance bundled with Gatsby — a second webpack copy
@@ -38,22 +38,27 @@ module.exports.onCreateWebpackConfig = ({ actions }) => {
   });
 };
 
+const snapPackage = require('../snap/package.json');
+
 /**
- * Production guard: a production build must be bound to
- * the audited npm snap release, never the localhost development fallback.
- *
- * Gatsby only exposes non-`GATSBY_` variables to the browser bundle when they
- * come from the `.env.<environment>` file, so this reads the same file the
- * bundle will see instead of trusting `process.env.SNAP_ORIGIN` (an OS-level
- * variable would pass a naive check yet never reach the client).
- *
- * `onPreBuild` only runs for `gatsby build`, so `gatsby develop` keeps the
- * localhost fallback untouched.
- *
- * @param {object} args - Gatsby onPreBuild args.
- * @param {object} args.reporter - Gatsby reporter.
+ * The only snap identity a production build may install. Derived from the
+ * snap package itself so the expected name cannot drift from what is
+ * actually published.
  */
-module.exports.onPreBuild = ({ reporter }) => {
+const EXPECTED_SNAP_ORIGIN = `npm:${snapPackage.name}`;
+
+/** An exact semver release. Ranges (`^1.2.3`, `~1.2`, `latest`) are refused. */
+const EXACT_VERSION =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+
+/**
+ * Reads the build's `.env.<environment>` file, the same file Gatsby loads
+ * when it assembles the client environment.
+ *
+ * @returns {{ envFile: string, parsed: Record<string, string>, snapOrigin: string, snapVersion: string, allowLocal: boolean }}
+ * The resolved release configuration.
+ */
+function readReleaseConfig() {
   // Build-time environment inspection mirrors what Gatsby itself does when
   // it assembles the client env, so the sync reads are intentional here.
   /* eslint-disable n/no-process-env, n/no-sync */
@@ -63,28 +68,108 @@ module.exports.onPreBuild = ({ reporter }) => {
   const parsed = existsSync(envFile)
     ? dotenv.parse(readFileSync(envFile, 'utf8'))
     : {};
-
-  const snapOrigin = parsed.SNAP_ORIGIN ?? '';
   const allowLocal =
     (parsed.ALLOW_LOCAL_SNAP ?? process.env.ALLOW_LOCAL_SNAP) === 'true';
   /* eslint-enable n/no-process-env, n/no-sync */
 
-  if (!snapOrigin.startsWith('npm:') && !allowLocal) {
+  return {
+    envFile,
+    parsed,
+    snapOrigin: parsed.GATSBY_SNAP_ORIGIN ?? '',
+    snapVersion: parsed.GATSBY_SNAP_VERSION ?? '',
+    allowLocal,
+  };
+}
+
+/**
+ * Production guard: a production build must be bound to the audited npm snap
+ * release, never the localhost development fallback and never some other npm
+ * package.
+ *
+ * This reads the same `.env.<environment>` file the client bundle is built
+ * from, rather than `process.env`: an OS-level variable would pass a naive
+ * check here yet never be embedded in the emitted JavaScript. The variables
+ * carry Gatsby's documented `GATSBY_` prefix, and `onPostBuild` below
+ * re-verifies that they actually reached the build output.
+ *
+ * `onPreBuild` only runs for `gatsby build`, so `gatsby develop` keeps the
+ * localhost fallback untouched.
+ *
+ * @param {object} args - Gatsby onPreBuild args.
+ * @param {object} args.reporter - Gatsby reporter.
+ */
+module.exports.onPreBuild = ({ reporter }) => {
+  const { envFile, snapOrigin, snapVersion, allowLocal } = readReleaseConfig();
+
+  if (allowLocal) {
+    return;
+  }
+
+  // Exact identity, not merely an "npm:" prefix: a prefix check would accept
+  // any package, including an unaudited one with a confusable name.
+  if (snapOrigin !== EXPECTED_SNAP_ORIGIN) {
     reporter.panic(
-      `Production builds must install the audited snap release. Set ` +
-        `SNAP_ORIGIN to the audited "npm:" snap ID (and SNAP_VERSION to the ` +
-        `exact audited version) in packages/site/.env.production, or set ` +
-        `ALLOW_LOCAL_SNAP=true to explicitly allow a local snap build. ` +
-        `Current SNAP_ORIGIN from ${envFile}: "${snapOrigin}".`,
+      `Production builds must install the audited snap release. ` +
+        `GATSBY_SNAP_ORIGIN must be exactly "${EXPECTED_SNAP_ORIGIN}", ` +
+        `but ${envFile} has "${snapOrigin}". Set it to the audited snap ID, ` +
+        `or set ALLOW_LOCAL_SNAP=true to explicitly allow a local build.`,
     );
   }
 
-  if (snapOrigin.startsWith('npm:') && !parsed.SNAP_VERSION) {
+  // Exact version, not a range: a range lets npm resolve to a release that
+  // was never audited.
+  if (!EXACT_VERSION.test(snapVersion)) {
     reporter.panic(
-      `SNAP_VERSION is not set in ${envFile}. A production build must pin ` +
-        `the install request to the exact audited release; without it the ` +
-        `site would request an unpinned snap. Set SNAP_VERSION to the ` +
-        `audited version.`,
+      `GATSBY_SNAP_VERSION must be an exact version (for example "1.2.3"), but ` +
+        `${envFile} has "${snapVersion}". A range or tag would let the ` +
+        `install resolve to a release that was never audited.`,
     );
   }
+};
+
+/**
+ * Post-build verification: confirm the values actually reached the emitted
+ * JavaScript.
+ *
+ * The pre-build guard checks configuration; this checks the artifact. Gatsby
+ * exposing non-`GATSBY_` variables from an env file to browser code is
+ * behaviour that could change on upgrade, and if it did, the guard would
+ * still pass while the shipped bundle silently fell back to the localhost
+ * development snap. Reading the build output is the only check that cannot be
+ * fooled by that.
+ *
+ * @param {object} args - Gatsby onPostBuild args.
+ * @param {object} args.reporter - Gatsby reporter.
+ */
+module.exports.onPostBuild = ({ reporter }) => {
+  const { snapOrigin, snapVersion, allowLocal } = readReleaseConfig();
+
+  if (allowLocal) {
+    return;
+  }
+
+  /* eslint-disable n/no-sync */
+  const publicDir = join(__dirname, 'public');
+  const scripts = readdirSync(publicDir).filter((name) => name.endsWith('.js'));
+  const emitted = scripts.map((name) =>
+    readFileSync(join(publicDir, name), 'utf8'),
+  );
+  /* eslint-enable n/no-sync */
+
+  const hasOrigin = emitted.some((code) => code.includes(snapOrigin));
+  const hasVersion = emitted.some((code) => code.includes(snapVersion));
+
+  if (!hasOrigin || !hasVersion) {
+    reporter.panic(
+      `The built site does not carry the audited snap identity. Expected ` +
+        `"${snapOrigin}" (found: ${hasOrigin}) and version "${snapVersion}" ` +
+        `(found: ${hasVersion}) in the emitted JavaScript. The browser ` +
+        `bundle would fall back to the development snap. Check how the ` +
+        `Gatsby version in use exposes environment variables to client code.`,
+    );
+  }
+
+  reporter.info(
+    `Release check: the built site requests ${snapOrigin} @ ${snapVersion}.`,
+  );
 };

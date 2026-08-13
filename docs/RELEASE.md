@@ -19,7 +19,7 @@ A bump has to touch all four. They are checked in CI (`yarn check:versions`), wh
 
 The last one is the easy one to miss: it is a hardcoded constant, not read from `package.json`, because the snap bundle must not depend on package metadata at runtime. It is what dapps get when they do not pass an explicit version.
 
-A fifth location is **not** part of the bump but must be updated before a production site build: `SNAP_VERSION` in `packages/site/.env.production` (see `.env.production.dist`). `gatsby-node.js` refuses a production build when `SNAP_ORIGIN` is an `npm:` ID without a pinned `SNAP_VERSION`.
+A fifth location is **not** part of the bump but must be updated before a production site build: `GATSBY_SNAP_VERSION` in `packages/site/.env.production` (see `.env.production.dist`). A production build is refused unless `GATSBY_SNAP_ORIGIN` is exactly the audited `npm:` snap ID and `GATSBY_SNAP_VERSION` is an exact release version; after the build, `gatsby-node.js` also verifies that both actually reached the emitted JavaScript. The `GATSBY_` prefix is Gatsby's documented contract for reaching browser code, and is required.
 
 ## Versioning
 
@@ -87,7 +87,7 @@ Run from a clean tree on `main`, with CI green.
 
 9. **Submit to the Snaps Directory** with the new version, the audit report, screenshots, and a demo video. Allowlisting is per version: until the review completes, users installing through the Directory continue to get the previous listed version.
 
-10. **After the listing is live:** update `packages/site/.env.production` (`SNAP_ORIGIN`, `SNAP_VERSION`) and redeploy the companion dapp, and open or update the Stellar Wallets Kit PR to reference the new version.
+10. **After the listing is live:** update `packages/site/.env.production` (`GATSBY_SNAP_ORIGIN`, `GATSBY_SNAP_VERSION`) and redeploy the companion dapp, and open or update the Stellar Wallets Kit PR to reference the new version.
 
 ## First release
 

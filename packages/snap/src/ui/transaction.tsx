@@ -21,11 +21,12 @@ import { Buffer } from 'buffer';
 import { ConnectionGrantNotice, originCautionBanner } from './dialogs';
 import {
   bytesToDisplay,
-  containsHiddenCharacters,
+  isLossyInline,
   displayOrigin,
   escapeHiddenCharacters,
   formatAsset,
   formatAssetFull,
+  formatLiquidityPool,
   formatMemo,
   sanitizeInlineText,
   stroopsToXlm,
@@ -35,7 +36,9 @@ import type { SimulationSummary } from '../stellar/soroban';
 import {
   decodeHostFunction,
   formatSymbolName,
+  getSorobanData,
   summarizeAuthEntries,
+  summarizeFootprint,
 } from '../stellar/soroban';
 
 /**
@@ -58,29 +61,30 @@ export const SUPPORTED_OPERATION_TYPES = new Set([
 ]);
 
 /**
- * Warns when any of the given untrusted strings carries hidden or
- * direction-altering characters. The strings are displayed sanitized, but
- * the signed bytes keep the originals, so the user must be told the display
- * differs from what is signed.
+ * Warns when the inline preview of any of the given untrusted strings
+ * differs from the value itself.
+ *
+ * This covers invisible and direction-altering characters, and equally the
+ * ordinary tabs and line breaks that inline rendering collapses: in both
+ * cases the preview reads differently from the bytes being signed, and the
+ * user has no way to tell without being told.
  *
  * @param values - Untrusted strings that are rendered inline.
- * @returns A warning banner, or null when all values are clean.
+ * @returns A warning banner, or null when every preview is exact.
  */
-function hiddenCharactersBanner(
+function lossyTextBanner(
   values: (string | undefined)[],
 ): GenericSnapElement | null {
-  if (
-    !values.some(
-      (value) => value !== undefined && containsHiddenCharacters(value),
-    )
-  ) {
+  if (!values.some((value) => value !== undefined && isLossyInline(value))) {
     return null;
   }
   return (
-    <Banner title="Hidden characters" severity="warning">
+    <Banner title="Display differs from signed text" severity="warning">
       <Text>
-        A text field here contains invisible or direction-altering characters.
-        They are removed from this preview but remain in what you sign.
+        A text field here contains characters that this preview cannot show
+        exactly, such as line breaks, tabs, or invisible marks. They are
+        collapsed above but remain in what you sign. Compare the exact value
+        shown below it.
       </Text>
     </Banner>
   );
@@ -240,6 +244,7 @@ function renderOperationBody(
 
     case 'changeTrust': {
       const removing = operation.limit === '0';
+      const poolLines = formatLiquidityPool(operation.line);
       return (
         <Section>
           <Text>
@@ -251,6 +256,15 @@ function renderOperationBody(
             <Text>{formatAsset(operation.line)}</Text>
           </Row>
           {renderAssetFull('Asset (full)', operation.line)}
+          {/* A pool trustline is defined by its constituents, fee, and pool
+              ID; without them the row above cannot distinguish one pool from
+              another. */}
+          {poolLines === null ? null : (
+            <Box>
+              <Text>Liquidity pool (full)</Text>
+              <Copyable value={poolLines.join('\n')} />
+            </Box>
+          )}
           <Row label="Limit" variant={removing ? 'warning' : 'default'}>
             <Text>{removing ? 'Remove (0)' : operation.limit}</Text>
           </Row>
@@ -318,7 +332,7 @@ function renderOperationBody(
           <Text>
             <Bold>{`${title}: Manage data`}</Bold>
           </Text>
-          {hiddenCharactersBanner([operation.name])}
+          {lossyTextBanner([operation.name])}
           <Text>Key</Text>
           <Copyable value={operation.name} />
           {value === undefined ? (
@@ -357,6 +371,15 @@ function renderOperationBody(
           </Row>,
         );
       }
+      if (operation.inflationDest !== undefined) {
+        // Inflation payouts are retired, but the destination is still a
+        // signed field of the operation and must not be silently dropped
+        // from what the user is approving.
+        rows.push(
+          <Text>Inflation destination</Text>,
+          <Copyable value={String(operation.inflationDest)} />,
+        );
+      }
       for (const [label, value] of [
         ['Low threshold', operation.lowThreshold],
         ['Medium threshold', operation.medThreshold],
@@ -385,14 +408,14 @@ function renderOperationBody(
               controls the account. Review carefully.
             </Text>
           </Banner>
-          {hiddenCharactersBanner([operation.homeDomain])}
+          {lossyTextBanner([operation.homeDomain])}
           {rows}
           {operation.homeDomain !== undefined &&
-          containsHiddenCharacters(operation.homeDomain) ? (
+          isLossyInline(operation.homeDomain) ? (
             // The row above is a sanitized preview; show the exact signed
             // value with hidden characters escaped visibly.
             <Box>
-              <Text>Home domain (exact, hidden characters escaped)</Text>
+              <Text>Home domain (exact, special characters escaped)</Text>
               <Copyable value={escapeHiddenCharacters(operation.homeDomain)} />
             </Box>
           ) : null}
@@ -675,7 +698,7 @@ function renderSummary(tx: Transaction): GenericSnapElement {
     tx.memo.type === 'text' ? tx.memo.value?.toString() : undefined;
   return (
     <Section>
-      {hiddenCharactersBanner([rawMemoText])}
+      {lossyTextBanner([rawMemoText])}
       <Text>Source</Text>
       <Copyable value={tx.source} />
       <Row label="Max fee">
@@ -689,15 +712,53 @@ function renderSummary(tx: Transaction): GenericSnapElement {
           <Text>{memo[1]}</Text>
         </Row>
       ) : null}
-      {rawMemoText !== undefined && containsHiddenCharacters(rawMemoText) ? (
+      {rawMemoText !== undefined && isLossyInline(rawMemoText) ? (
         // The inline row above is a sanitized preview; give the user the
         // exact signed text with hidden characters escaped visibly.
         <Box>
-          <Text>Memo (exact, hidden characters escaped)</Text>
+          <Text>Memo (exact, special characters escaped)</Text>
           <Copyable value={escapeHiddenCharacters(rawMemoText)} />
         </Box>
       ) : null}
       {renderPreconditions(tx)}
+    </Section>
+  );
+}
+
+/**
+ * Renders the transaction's Soroban footprint: the ledger entries it may
+ * read and write, and the resources it commits to.
+ *
+ * The footprint bounds the transaction's entire state access and is part of
+ * what is signed, so a dialog that omits it lets the user approve a scope
+ * they cannot see. This applies to every Soroban transaction, not only the
+ * TTL and restore operations whose whole content is their footprint.
+ *
+ * @param tx - The transaction carrying the operations.
+ * @returns The footprint section, or null when there is no footprint.
+ */
+function renderFootprint(
+  tx: Transaction | FeeBumpTransaction,
+): GenericSnapElement | null {
+  const inner = tx instanceof Transaction ? tx : tx.innerTransaction;
+  const summary = summarizeFootprint(getSorobanData(inner));
+  if (!summary) {
+    return null;
+  }
+  return (
+    <Section>
+      <Text>
+        <Bold>Contract data accessed</Bold>
+      </Text>
+      {summary.truncated ? (
+        <Banner title="Footprint not shown in full" severity="warning">
+          <Text>
+            This transaction touches more ledger entries than can be listed
+            here. Review the raw transaction XDR below.
+          </Text>
+        </Banner>
+      ) : null}
+      <Copyable value={summary.lines.join('\n')} />
     </Section>
   );
 }
@@ -884,6 +945,7 @@ export function buildSignTransactionDialog({
         </Text>
         {renderSummary(inner)}
         {inner.operations.map(renderOperation)}
+        {renderFootprint(tx)}
         {renderSimulation(simulation ?? null)}
         {grantNotice}
         <Divider />

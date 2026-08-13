@@ -68,6 +68,32 @@ export const AccountIndexStruct = refine(number(), 'AccountIndex', (value) =>
     : `Expected an integer account index between 0 and ${MAX_ACCOUNT_INDEX - 1}.`,
 );
 
+/**
+ * The disclosure the user must have seen for a grant to carry its full
+ * capability set.
+ *
+ * Bump this whenever a connection grant starts to permit something the
+ * previous consent dialog did not describe. Grants recorded under an older
+ * disclosure keep working for what was disclosed at the time, and the newly
+ * disclosed capability stays refused until the user re-consents.
+ *
+ * Version 1 is the disclosure that a connected site can enumerate every
+ * revealed account, and therefore link them to each other. Grants predating
+ * it (including every grant migrated from state version 1) carry no version
+ * and cannot enumerate accounts until `requestAccess` is approved again.
+ */
+export const CURRENT_DISCLOSURE_VERSION = 1;
+
+/** A recorded connection grant. */
+export type OriginGrant = {
+  connectedAt: string;
+  /**
+   * The disclosure version the user approved. Absent on grants recorded
+   * before disclosure versioning existed.
+   */
+  disclosureVersion?: number;
+};
+
 export type SnapState = {
   version: 2;
   /** The active network. Defaults to TESTNET until mainnet UX hardens. */
@@ -82,10 +108,19 @@ export type SnapState = {
    */
   accounts: number[];
   /** Origins the user has approved, with the grant timestamp. */
-  origins: Record<string, { connectedAt: string }>;
+  origins: Record<string, OriginGrant>;
   /** Soroban tokens the user has added, keyed by network. */
   tokens?: Partial<Record<NetworkName, TrackedToken[]>>;
 };
+
+/**
+ * A persisted grant. `disclosureVersion` is optional so grants written before
+ * disclosure versioning still validate rather than resetting the whole store.
+ */
+const GrantStruct = object({
+  connectedAt: string(),
+  disclosureVersion: optional(number()),
+});
 
 /** Structural schema for persisted state — see {@link parseState}. */
 const SnapStateStruct = object({
@@ -93,7 +128,7 @@ const SnapStateStruct = object({
   network: enums(NETWORK_NAMES),
   activeAccount: AccountIndexStruct,
   accounts: size(array(AccountIndexStruct), 1, MAX_ACCOUNT_INDEX),
-  origins: record(string(), object({ connectedAt: string() })),
+  origins: record(string(), GrantStruct),
   tokens: optional(
     record(
       enums(NETWORK_NAMES),
@@ -114,7 +149,7 @@ const SnapStateStruct = object({
 const SnapStateV1Struct = object({
   version: literal(1),
   network: enums(NETWORK_NAMES),
-  origins: record(string(), object({ connectedAt: string() })),
+  origins: record(string(), GrantStruct),
   tokens: optional(
     record(
       enums(NETWORK_NAMES),
@@ -373,7 +408,45 @@ export async function isOriginConnected(origin: string): Promise<boolean> {
 }
 
 /**
- * Records a connection grant for the origin (idempotent).
+ * Whether the origin's grant was approved under the current disclosure.
+ *
+ * A grant recorded before a capability was disclosed must not silently gain
+ * that capability when the snap updates: the user consented to what the
+ * dialog said at the time, not to what it says now.
+ *
+ * @param origins - The origins map from state.
+ * @param origin - The dapp origin.
+ * @returns True when the grant carries the current disclosure version.
+ */
+export function grantHasCurrentDisclosure(
+  origins: SnapState['origins'],
+  origin: string,
+): boolean {
+  if (!originHasGrant(origins, origin)) {
+    return false;
+  }
+  return origins[origin]?.disclosureVersion === CURRENT_DISCLOSURE_VERSION;
+}
+
+/**
+ * Whether the origin may use capabilities introduced by the current
+ * disclosure (today: enumerating every revealed account).
+ *
+ * @param origin - The dapp origin.
+ * @returns True when the user approved the current disclosure.
+ */
+export async function hasCurrentDisclosure(origin: string): Promise<boolean> {
+  const state = await getState();
+  return grantHasCurrentDisclosure(state.origins, origin);
+}
+
+/**
+ * Records a connection grant for the origin, stamped with the disclosure the
+ * user has just seen.
+ *
+ * Idempotent for a grant already at the current disclosure; a grant recorded
+ * under an older disclosure is upgraded in place, which is what re-approving
+ * the connect dialog is for.
  *
  * @param origin - The dapp origin the user approved.
  */
@@ -383,10 +456,19 @@ export async function connectOrigin(origin: string): Promise<void> {
   }
   await withStateLock(async () => {
     const state = await getState();
-    if (!originHasGrant(state.origins, origin)) {
-      state.origins[origin] = { connectedAt: new Date().toISOString() };
-      await saveState(state);
+    if (grantHasCurrentDisclosure(state.origins, origin)) {
+      return;
     }
+    const existing = originHasGrant(state.origins, origin)
+      ? state.origins[origin]
+      : undefined;
+    state.origins[origin] = {
+      // An upgraded grant keeps the original connection time; only the
+      // disclosure it was approved under changes.
+      connectedAt: existing?.connectedAt ?? new Date().toISOString(),
+      disclosureVersion: CURRENT_DISCLOSURE_VERSION,
+    };
+    await saveState(state);
   });
 }
 

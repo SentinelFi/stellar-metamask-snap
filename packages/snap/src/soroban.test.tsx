@@ -31,7 +31,9 @@ const CONNECTED_STATE = {
   network: 'TESTNET',
   activeAccount: 0,
   accounts: [0],
-  origins: { [ORIGIN]: { connectedAt: '2026-08-12T00:00:00Z' } },
+  origins: {
+    [ORIGIN]: { connectedAt: '2026-08-12T00:00:00Z', disclosureVersion: 1 },
+  },
   tokens: {},
 };
 

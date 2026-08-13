@@ -35,8 +35,16 @@ const FOREIGN_ADDRESS = Keypair.fromRawEd25519Seed(
 
 const ORIGIN = 'https://dapp.example';
 
-/** A state fragment granting {@link ORIGIN} a connection. */
-const CONNECTED = { [ORIGIN]: { connectedAt: '2026-08-12T00:00:00Z' } };
+/** A state fragment granting {@link ORIGIN} a current-disclosure connection. */
+const CONNECTED = {
+  [ORIGIN]: { connectedAt: '2026-08-12T00:00:00Z', disclosureVersion: 1 },
+};
+
+/**
+ * A grant recorded before account enumeration was disclosed: no
+ * disclosureVersion, exactly as every pre-existing and migrated grant looks.
+ */
+const PRE_DISCLOSURE = { [ORIGIN]: { connectedAt: '2026-08-12T00:00:00Z' } };
 
 /**
  * Builds a version-2 state object.
@@ -573,7 +581,7 @@ describe('state migration', () => {
     const { request } = await install({
       version: 1,
       network: 'TESTNET',
-      origins: CONNECTED,
+      origins: PRE_DISCLOSURE,
       tokens: {},
     });
 
@@ -582,14 +590,101 @@ describe('state migration', () => {
       await request({ origin: ORIGIN, method: 'getAddress' }),
     );
     expect(address.address).toBe(SEP5_ADDRESS_0);
+  }, 45000);
+});
+
+describe('disclosure-versioned grants', () => {
+  /*
+   * A grant records which consent dialog the user actually saw. Account
+   * enumeration links every revealed address to the same wallet, so it is
+   * only permitted under the disclosure that says so: updating the snap must
+   * never hand an already-connected origin a capability it was never shown.
+   */
+
+  it('refuses enumeration for a grant predating the disclosure', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1, 2], origins: PRE_DISCLOSURE }),
+    );
+
+    const error = getError(
+      await request({ origin: ORIGIN, method: 'getAccounts' }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('re-confirm');
+
+    // The rest of the original grant still works: the user did consent to
+    // the site reading the active address.
+    expect(
+      getResult<{ address: string }>(
+        await request({ origin: ORIGIN, method: 'getAddress' }),
+      ).address,
+    ).toBe(SEP5_ADDRESS_0);
+  }, 45000);
+
+  it('refuses enumeration for a grant migrated from version 1', async () => {
+    const { request } = await install({
+      version: 1,
+      network: 'TESTNET',
+      origins: PRE_DISCLOSURE,
+      tokens: {},
+    });
+
+    const error = getError(
+      await request({ origin: ORIGIN, method: 'getAccounts' }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('re-confirm');
+  }, 45000);
+
+  it('re-prompts a stale grant and restores enumeration on approval', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], origins: PRE_DISCLOSURE }),
+    );
+
+    // requestAccess does not return silently for a stale grant: the user is
+    // shown the current disclosure again.
+    const pending = request({ origin: ORIGIN, method: 'requestAccess' });
+    const ui = await pending.getInterface();
+    expect(JSON.stringify(ui.content)).toContain('Connect to Stellar');
+    await (ui as { ok: () => Promise<void> }).ok();
+    await pending;
 
     const result = getResult<{
       accounts: { index: number; address: string }[];
-      activeIndex: number;
     }>(await request({ origin: ORIGIN, method: 'getAccounts' }));
-    expect(result).toStrictEqual({
-      accounts: [{ index: 0, address: SEP5_ADDRESS_0 }],
-      activeIndex: 0,
-    });
+    expect(result.accounts).toStrictEqual([
+      { index: 0, address: SEP5_ADDRESS_0 },
+      { index: 1, address: SEP5_ADDRESS_1 },
+    ]);
+  }, 45000);
+
+  it('keeps enumeration refused when the re-prompt is rejected', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], origins: PRE_DISCLOSURE }),
+    );
+
+    const pending = request({ origin: ORIGIN, method: 'requestAccess' });
+    const ui = await pending.getInterface();
+    await (ui as { cancel: () => Promise<void> }).cancel();
+    expect(getError(await pending).data?.code).toBe(-4);
+
+    expect(
+      getError(await request({ origin: ORIGIN, method: 'getAccounts' }))
+        .message,
+    ).toContain('re-confirm');
+  }, 45000);
+
+  it('grants the current disclosure to a newly connected origin', async () => {
+    const { request } = await install(stateV2({ accounts: [0, 1] }));
+
+    const pending = request({ origin: ORIGIN, method: 'requestAccess' });
+    const ui = await pending.getInterface();
+    await (ui as { ok: () => Promise<void> }).ok();
+    await pending;
+
+    const result = getResult<{
+      accounts: { index: number; address: string }[];
+    }>(await request({ origin: ORIGIN, method: 'getAccounts' }));
+    expect(result.accounts).toHaveLength(2);
   }, 45000);
 });

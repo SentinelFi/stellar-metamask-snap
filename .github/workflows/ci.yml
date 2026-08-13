@@ -88,9 +88,59 @@ jobs:
       - name: Build site
         # CI verifies the site builds; it does not produce a deployed
         # artifact. ALLOW_LOCAL_SNAP opts out of the production guard that
-        # requires the audited npm: SNAP_ORIGIN (gatsby-node.js onPreBuild).
+        # requires the audited npm: GATSBY_SNAP_ORIGIN (gatsby-node.js onPreBuild).
         # Remove once the audited release is published and
         # .env.production carries the pinned npm: origin.
         run: yarn workspace site build
         env:
           ALLOW_LOCAL_SNAP: 'true'
+
+  release-site:
+    name: Build companion dapp in release configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Build connector (site dependency)
+        run: yarn workspace stellar-soroban-snap-connector build
+
+      # The job above builds with the release guard disabled, so it never
+      # exercises the configuration users will actually install. This one
+      # builds the way a release does: the exact audited npm snap ID and an
+      # exact version, no local override. gatsby-node.js then verifies both
+      # the configuration (onPreBuild) and the emitted JavaScript
+      # (onPostBuild), so a build that silently fell back to the development
+      # snap fails here rather than at submission.
+      - name: Write release environment
+        run: |
+          SNAP_NAME=$(node -p "require('./packages/snap/package.json').name")
+          SNAP_VERSION=$(node -p "require('./packages/snap/package.json').version")
+          printf 'GATSBY_SNAP_ORIGIN=npm:%s\nGATSBY_SNAP_VERSION=%s\n' \
+            "$SNAP_NAME" "$SNAP_VERSION" > packages/site/.env.production
+          cat packages/site/.env.production
+
+      - name: Build site (release configuration)
+        run: yarn workspace site build
+
+      - name: Verify the emitted bundle requests the audited snap
+        run: |
+          SNAP_NAME=$(node -p "require('./packages/snap/package.json').name")
+          SNAP_VERSION=$(node -p "require('./packages/snap/package.json').version")
+          if ! grep -rq "npm:$SNAP_NAME" packages/site/public/*.js; then
+            echo "Emitted bundle does not reference npm:$SNAP_NAME"; exit 1
+          fi
+          if grep -rq "local:http://localhost:8080\"" packages/site/public/*.js; then
+            echo "Note: the localhost literal is present as the unused fallback arm."
+          fi
+          echo "Release bundle requests npm:$SNAP_NAME @ $SNAP_VERSION"

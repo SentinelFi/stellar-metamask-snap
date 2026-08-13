@@ -9,7 +9,7 @@ import type { Snap } from '../types';
  * @param snapId - The requested Snap ID. Defaults to the snap ID specified in the
  * config.
  * @param version - The requested version. Defaults to the version specified in
- * the config (`SNAP_VERSION`), so production installs pin the audited release.
+ * the config (`GATSBY_SNAP_VERSION`), so production installs pin the audited release.
  * @returns The `wallet_requestSnaps` wrapper.
  */
 export const useRequestSnap = (

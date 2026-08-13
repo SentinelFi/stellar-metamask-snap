@@ -13,7 +13,7 @@ import {
   type,
 } from '@metamask/superstruct';
 
-import { readJsonBounded } from './http';
+import { discardBody, readJsonBounded } from './http';
 import { externalServiceError } from '../rpc/errors';
 
 /**
@@ -102,7 +102,15 @@ async function rpcCall<Type, Schema>(
       signal: controller.signal,
     });
     ({ status, ok } = response);
-    body = ok ? await readJsonBounded(response, 'Stellar RPC') : null;
+    if (ok) {
+      body = await readJsonBounded(response, 'Stellar RPC');
+    } else {
+      // Release the connection while the abort timer is still armed. Dropping
+      // an unread body here would let an error status with an endless body
+      // outlive the timeout boundary this function establishes.
+      await discardBody(response);
+      body = null;
+    }
   } catch (error) {
     // readJsonBounded throws a typed oversized-response error; keep it.
     if (error instanceof SnapError) {

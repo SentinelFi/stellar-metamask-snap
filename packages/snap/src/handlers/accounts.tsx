@@ -2,7 +2,11 @@ import { assertConnected } from './account';
 import { getAddressForIndex, getOwnedAccounts } from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
 import { SetActiveAccountParams, validate } from '../rpc/validation';
-import { getState, setActiveAccount as setActiveAccountState } from '../state';
+import {
+  getState,
+  hasCurrentDisclosure,
+  setActiveAccount as setActiveAccountState,
+} from '../state';
 import { SwitchAccountDialog } from '../ui/dialogs';
 
 /** A revealed account as returned to dapps. */
@@ -22,6 +26,16 @@ export async function getAccounts(
   origin: string,
 ): Promise<{ accounts: AccountInfo[]; activeIndex: number }> {
   await assertConnected(origin);
+  // Enumeration is only permitted under the disclosure that describes it. A
+  // grant predating that disclosure (including any migrated from state
+  // version 1) must be re-approved first, so the capability is never acquired
+  // silently by updating the snap.
+  if (!(await hasCurrentDisclosure(origin))) {
+    throw invalidRequest(
+      'This site was connected before account enumeration was disclosed. ' +
+        'Call requestAccess to re-confirm the connection first.',
+    );
+  }
   const state = await getState();
   const accounts = await getOwnedAccounts();
   return { accounts, activeIndex: state.activeAccount };

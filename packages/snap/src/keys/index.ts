@@ -69,13 +69,53 @@ export async function deriveKeypair(index = 0): Promise<Keypair> {
 }
 
 /**
+ * Public addresses by account index, memoized for this execution context.
+ *
+ * Addresses are public, so this holds no secret. It exists so that resolving
+ * a dapp-supplied address does not have to derive every revealed account on
+ * every request: without it, repeatedly submitting an address the wallet does
+ * not hold forces a full sweep each time, before any dialog or throttle can
+ * intervene.
+ */
+const addressCache = new Map<number, string>();
+
+/** Clears the memoized addresses. Test hook. */
+export function resetAddressCache(): void {
+  addressCache.clear();
+}
+
+/**
+ * Fills the address cache for any of the given indices not already known,
+ * deriving the parent node at most once.
+ *
+ * @param indices - The account indices to cache.
+ */
+async function cacheAddresses(indices: number[]): Promise<void> {
+  const missing = indices.filter((index) => !addressCache.has(index));
+  if (missing.length === 0) {
+    return;
+  }
+  const node = await getAccountParentNode();
+  await Promise.all(
+    missing.map(async (index) => {
+      addressCache.set(index, (await deriveFromNode(node, index)).publicKey());
+    }),
+  );
+}
+
+/**
  * The public address for a SEP-0005 account index.
  *
  * @param index - The account index.
  * @returns The `G...` address.
  */
 export async function getAddressForIndex(index: number): Promise<string> {
+  const cached = addressCache.get(index);
+  if (cached !== undefined) {
+    return cached;
+  }
   const keypair = await deriveKeypair(index);
+  addressCache.set(index, keypair.publicKey());
   return keypair.publicKey();
 }
 
@@ -98,13 +138,11 @@ export async function getOwnedAccounts(): Promise<
   { index: number; address: string }[]
 > {
   const state = await getState();
-  const node = await getAccountParentNode();
-  return Promise.all(
-    state.accounts.map(async (index) => ({
-      index,
-      address: (await deriveFromNode(node, index)).publicKey(),
-    })),
-  );
+  await cacheAddresses(state.accounts);
+  return state.accounts.map((index) => ({
+    index,
+    address: addressCache.get(index) as string,
+  }));
 }
 
 /**
@@ -122,27 +160,30 @@ export async function resolveSigningKeypair(
   requestedAddress?: string,
 ): Promise<{ keypair: Keypair; index: number }> {
   const state = await getState();
-  const node = await getAccountParentNode();
   if (requestedAddress === undefined) {
     return {
-      keypair: await deriveFromNode(node, state.activeAccount),
+      keypair: await deriveKeypair(state.activeAccount),
       index: state.activeAccount,
     };
   }
-  // Every revealed account is derived before comparing, so the work done —
-  // and thus the time taken — does not depend on where (or whether) the
-  // requested address sits in the set.
-  const candidates = await Promise.all(
-    state.accounts.map(async (index) => ({
-      index,
-      keypair: await deriveFromNode(node, index),
-    })),
+
+  // Resolve through the address index, so an address the wallet does not hold
+  // is rejected without deriving anything. Repeating an unowned address is
+  // then a map lookup rather than a full sweep of every revealed account.
+  await cacheAddresses(state.accounts);
+  const index = state.accounts.find(
+    (candidate) => addressCache.get(candidate) === requestedAddress,
   );
-  const match = candidates.find(
-    (candidate) => candidate.keypair.publicKey() === requestedAddress,
-  );
-  if (!match) {
+  if (index === undefined) {
     throw invalidRequest('Unknown address: this wallet does not hold it.');
   }
-  return match;
+
+  const keypair = await deriveKeypair(index);
+  // The cache is derived state; never sign on it without confirming the key
+  // it pointed at really is the address that was asked for.
+  if (keypair.publicKey() !== requestedAddress) {
+    addressCache.clear();
+    throw invalidRequest('Unknown address: this wallet does not hold it.');
+  }
+  return { keypair, index };
 }

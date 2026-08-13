@@ -500,7 +500,9 @@ describe('transaction dialog properties', () => {
       accountIndex: 0,
     });
 
-    expect(collectInlineText(content).join('\n')).toContain('hidden');
+    expect(collectInlineText(content).join('\n')).toContain(
+      'Display differs from signed text',
+    );
     expect(
       collectInlineText(content).filter((text) =>
         containsHiddenCharacters(text),

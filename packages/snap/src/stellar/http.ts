@@ -98,3 +98,27 @@ export async function readJsonBounded(
     return null;
   }
 }
+
+/**
+ * Releases a response body the caller will not read.
+ *
+ * A response thrown away without being consumed or cancelled can keep its
+ * connection open, outside the abort timer the caller is about to clear. A
+ * hostile or malfunctioning endpoint can exploit that by answering with an
+ * error status and then holding an endless body. Cancelling is best effort:
+ * failing to release must never mask the error being reported.
+ *
+ * @param response - The response whose body will not be read.
+ */
+export async function discardBody(
+  response: Awaited<ReturnType<typeof fetch>>,
+): Promise<void> {
+  try {
+    const { body } = response as unknown as {
+      body?: { cancel?: () => Promise<void> };
+    };
+    await body?.cancel?.();
+  } catch {
+    // Nothing useful to do here: the caller is already reporting a failure.
+  }
+}

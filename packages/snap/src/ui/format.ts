@@ -1,5 +1,9 @@
 import type { Memo } from '@stellar/stellar-sdk';
-import { Asset } from '@stellar/stellar-sdk';
+import {
+  Asset,
+  getLiquidityPoolId,
+  LiquidityPoolAsset,
+} from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 /**
@@ -28,7 +32,46 @@ export function formatAsset(asset: unknown): string {
       ? 'XLM'
       : `${asset.getCode()} (${truncate(asset.getIssuer() ?? '', 4)})`;
   }
+  if (asset instanceof LiquidityPoolAsset) {
+    // Name the pool's constituents inline. "Liquidity pool shares" alone
+    // cannot tell one pool from another, so it does not identify what a
+    // trustline is actually being opened against.
+    return `Pool shares: ${formatAsset(asset.assetA)} / ${formatAsset(
+      asset.assetB,
+    )}`;
+  }
   return 'Liquidity pool shares';
+}
+
+/**
+ * Full identity of a liquidity-pool asset: both constituent assets with
+ * complete issuers, the pool fee, and the pool ID the trustline is for.
+ *
+ * @param asset - A stellar-sdk asset.
+ * @returns Display lines, or null when the asset is not a pool asset or its
+ * identity cannot be computed.
+ */
+export function formatLiquidityPool(asset: unknown): string[] | null {
+  if (!(asset instanceof LiquidityPoolAsset)) {
+    return null;
+  }
+  const lines = [
+    `Asset A: ${asset.assetA.isNative() ? 'XLM (native)' : asset.assetA.toString()}`,
+    `Asset B: ${asset.assetB.isNative() ? 'XLM (native)' : asset.assetB.toString()}`,
+    `Pool fee: ${asset.fee} basis points`,
+  ];
+  try {
+    const poolId = getLiquidityPoolId(
+      'constant_product',
+      asset.getLiquidityPoolParameters(),
+    ).toString('hex');
+    lines.push(`Pool ID: ${poolId}`);
+  } catch {
+    // Without the pool ID the constituents still identify the pool; the
+    // caller decides whether that is enough to display.
+    return null;
+  }
+  return lines;
 }
 
 /**
@@ -170,6 +213,23 @@ export function sanitizeInlineText(value: string): string {
     .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim();
+}
+
+/**
+ * Whether inline display would lose information about a value.
+ *
+ * Broader than {@link containsHiddenCharacters}, which deliberately tolerates
+ * ordinary tabs and line breaks. Those are not hidden, but
+ * {@link sanitizeInlineText} still collapses them, so `one\ntwo` renders as
+ * `one two`: a difference between what the user reads and what they sign,
+ * with nothing to signal it. This is the condition that decides whether an
+ * exact, escaped copy is shown alongside the inline preview.
+ *
+ * @param value - The untrusted string.
+ * @returns True when the inline rendering differs from the value itself.
+ */
+export function isLossyInline(value: string): boolean {
+  return sanitizeInlineText(value) !== value;
 }
 
 /**
