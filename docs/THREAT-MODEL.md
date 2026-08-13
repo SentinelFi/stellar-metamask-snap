@@ -50,7 +50,9 @@
 | Token metadata/balances via read-only simulation              | `src/stellar/token.ts`                                                 |
 | Bundle-level randomness rewrite                               | `snap.config.ts`                                                       |
 
-Test anchors: SEP-5 official vectors (indices 0 to 2), cryptographic verification of every signature type against the derived public key, SEP-43 error codes, dialog-content assertions, persisted-state schema validation and migration (including hostile version-1 fixtures), account add/switch/resolution flows, entropy-request counts on the derivation path, contract-metadata bounds checking, and home-page consent interactions (205 snap tests across 13 suites, plus 11 connector tests).
+Test anchors: SEP-5 official vectors (indices 0 to 2), cryptographic verification of every signature type against the derived public key, SEP-43 error codes, dialog-content assertions, persisted-state schema validation and migration (including hostile version-1 fixtures), account add/switch/resolution flows, entropy-request counts on the derivation path, contract-metadata bounds checking, and home-page consent interactions (229 snap tests across 15 suites, plus 11 connector tests).
+
+Property tests back claim 2 specifically: `src/stellar/soroban-fuzz.test.ts` and `src/ui/transaction-fuzz.test.tsx` drive randomized ScVals, authorization trees, host functions, transactions, and byte-mutated envelopes through the decoders and the dialog builder, asserting on every case that nothing throws unhandled, that no rendered inline text carries control, bidi, or zero-width characters, that every visible truncation also sets the flag the signing paths refuse on, and that the raw XDR stays on offer. Generation is seeded over a fixed range, so the corpus is identical on every run and a failure reports the seed that produced it. A corpus-coverage assertion pins how many cases actually reach truncation, escaping, and nesting, so the invariants cannot quietly become vacuous.
 
 ## 5. Residual risks & accepted trade-offs
 
