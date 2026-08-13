@@ -17,7 +17,13 @@ import type { NetworkName } from '../state/networks';
 import type { AccountSummary } from '../stellar/horizon';
 import { getAccountSummary } from '../stellar/horizon';
 import { readTokenBalance } from '../stellar/token';
-import { displayOrigin, formatTokenAsset, truncate } from '../ui/format';
+import {
+  displayOrigin,
+  escapeHiddenCharacters,
+  formatTokenAsset,
+  isOriginDisplayLossy,
+  truncate,
+} from '../ui/format';
 
 /** Button-name prefix for per-origin disconnect actions (`onUserInput`). */
 export const DISCONNECT_PREFIX = 'disconnect:';
@@ -157,6 +163,11 @@ const HomePage: SnapComponent<HomePageProps> = ({
             {/* Sanitized like the dialogs; the raw origin stays in the
                 button name because it is the disconnect key. */}
             <Text>{displayOrigin(origin)}</Text>
+            {isOriginDisplayLossy(origin) ? (
+              // Middle truncation can make two long origins display
+              // identically; the complete origin must stay reviewable.
+              <Copyable value={escapeHiddenCharacters(origin)} />
+            ) : null}
             <Button name={`${DISCONNECT_PREFIX}${origin}`}>Disconnect</Button>
           </Box>
         ))

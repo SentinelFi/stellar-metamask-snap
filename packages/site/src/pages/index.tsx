@@ -4,6 +4,7 @@ import {
   Asset,
   Memo,
   Operation,
+  SorobanDataBuilder,
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk/base';
@@ -19,9 +20,13 @@ import {
   Card,
   SnapLogo,
 } from '../components';
-import { defaultSnapOrigin } from '../config';
+import { defaultSnapOrigin, defaultSnapVersion } from '../config';
 import { useMetaMask, useMetaMaskContext, useRequestSnap } from '../hooks';
-import { isLocalSnap, shouldDisplayReconnectButton } from '../utils';
+import {
+  isExpectedSnapVersion,
+  isLocalSnap,
+  shouldDisplayReconnectButton,
+} from '../utils';
 
 const Container = styled.div`
   display: flex;
@@ -233,11 +238,17 @@ const Index = () => {
   const [busy, setBusy] = useState(false);
   const [tokenContract, setTokenContract] = useState('');
 
-  // The connector: a typed SEP-43 client over wallet_invokeSnap.
+  // The connector: a typed SEP-43 client over wallet_invokeSnap. The
+  // configured release version rides along so connector-driven installs pin
+  // the same audited release as the site build.
   const snapClient = useMemo(
     () =>
       provider
-        ? new StellarSnap({ snapId: defaultSnapOrigin, provider })
+        ? new StellarSnap({
+            snapId: defaultSnapOrigin,
+            ...(defaultSnapVersion ? { version: defaultSnapVersion } : {}),
+            provider,
+          })
         : null,
     [provider],
   );
@@ -245,6 +256,13 @@ const Index = () => {
   const isMetaMaskReady = isLocalSnap(defaultSnapOrigin)
     ? isFlask
     : snapsDetected;
+
+  // An installed snap of the wrong version must not be treated as the
+  // audited release: every control below stays disabled until the user
+  // updates to the exact version this site was built for.
+  const versionMismatch =
+    installedSnap !== null && !isExpectedSnapVersion(installedSnap);
+  const snapReady = installedSnap !== null && !versionMismatch;
 
   type WalletStatus = {
     network: string;
@@ -260,7 +278,13 @@ const Index = () => {
    * silent connector calls. Runs on load and after every action.
    */
   const refreshStatus = useCallback(async () => {
-    if (!installedSnap || !snapClient) {
+    if (
+      !installedSnap ||
+      !snapClient ||
+      !isExpectedSnapVersion(installedSnap)
+    ) {
+      // A wrong-version snap is not interacted with, not even for reads:
+      // the status strip must never present it as the audited release.
       setStatus(null);
       return;
     }
@@ -304,7 +328,7 @@ const Index = () => {
   const run = async <Type,>(
     work: (client: StellarSnap) => Promise<Type>,
   ): Promise<Type | null> => {
-    if (busy || !snapClient) {
+    if (busy || !snapClient || !snapReady) {
       return null;
     }
     setBusy(true);
@@ -373,6 +397,18 @@ const Index = () => {
 
       // 1 XLM self-transfer through the SAC — demonstrates the decoded
       // invocation + in-snap simulation review (not meant for submission).
+      // The snap refuses Soroban envelopes without a footprint (their signed
+      // state-access scope would be invisible), so attach demo Soroban data
+      // covering the SAC contract instance and the account entry.
+      const footprint = [
+        xdr.LedgerKey.contractData(
+          new xdr.LedgerKeyContractData({
+            contract: new Address(contract).toScAddress(),
+            key: xdr.ScVal.scvLedgerKeyContractInstance(),
+            durability: xdr.ContractDataDurability.persistent(),
+          }),
+        ),
+      ];
       const transaction = new TransactionBuilder(
         new Account(address, sequence),
         {
@@ -396,6 +432,12 @@ const Index = () => {
             ],
           }),
         )
+        .setSorobanData(
+          new SorobanDataBuilder()
+            .setFootprint(footprint, [])
+            .setResourceFee(1000000n)
+            .build(),
+        )
         .setTimeout(300)
         .build();
 
@@ -408,7 +450,7 @@ const Index = () => {
         <Span>Stellar Soroban</Span> Snap
       </Heading>
       <Subtitle>Phase 3 — connector-powered test bench</Subtitle>
-      {installedSnap && (
+      {snapReady && (
         <StatusCard>
           <SnapLogo size={56} />
           <StatusInfo>
@@ -460,6 +502,20 @@ const Index = () => {
             disabled={!isMetaMaskReady}
           />
         )}
+        {versionMismatch && installedSnap && (
+          <Card
+            content={{
+              title: 'Update required',
+              description: `The installed snap is version ${installedSnap.version}, but this site was built for version ${defaultSnapVersion ?? 'unknown'}. Update to the expected release before using it here.`,
+              button: (
+                <ActionButton onClick={requestSnap} disabled={busy}>
+                  {`Update to ${defaultSnapVersion ?? 'expected version'}`}
+                </ActionButton>
+              ),
+            }}
+            fullWidth
+          />
+        )}
         {shouldDisplayReconnectButton(installedSnap) && (
           <Card
             content={{
@@ -484,13 +540,13 @@ const Index = () => {
             button: (
               <ActionButton
                 onClick={handleRequestAccess}
-                disabled={!installedSnap || busy}
+                disabled={!snapReady || busy}
               >
                 Request access
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap || busy}
+          disabled={!snapReady || busy}
         />
         <Card
           content={{
@@ -500,13 +556,13 @@ const Index = () => {
             button: (
               <ActionButton
                 onClick={async () => run(async (client) => client.getAddress())}
-                disabled={!installedSnap || busy}
+                disabled={!snapReady || busy}
               >
                 Get address
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap || busy}
+          disabled={!snapReady || busy}
         />
         <Card
           content={{
@@ -518,7 +574,7 @@ const Index = () => {
                   onClick={async () =>
                     run(async (client) => client.getNetworkDetails())
                   }
-                  disabled={!installedSnap || busy}
+                  disabled={!snapReady || busy}
                 >
                   Details
                 </ActionButton>
@@ -526,7 +582,7 @@ const Index = () => {
                   onClick={async () =>
                     run(async (client) => client.setNetwork('TESTNET'))
                   }
-                  disabled={!installedSnap || busy}
+                  disabled={!snapReady || busy}
                 >
                   Testnet
                 </ActionButton>
@@ -534,7 +590,7 @@ const Index = () => {
                   onClick={async () =>
                     run(async (client) => client.setNetwork('FUTURENET'))
                   }
-                  disabled={!installedSnap || busy}
+                  disabled={!snapReady || busy}
                 >
                   Futurenet
                 </ActionButton>
@@ -542,14 +598,14 @@ const Index = () => {
                   onClick={async () =>
                     run(async (client) => client.setNetwork('PUBLIC'))
                   }
-                  disabled={!installedSnap || busy}
+                  disabled={!snapReady || busy}
                 >
                   Public (mainnet)
                 </ActionButton>
               </ButtonGroup>
             ),
           }}
-          disabled={!installedSnap || busy}
+          disabled={!snapReady || busy}
         />
         <Card
           content={{
@@ -559,13 +615,13 @@ const Index = () => {
             button: (
               <ActionButton
                 onClick={async () => run(async (client) => client.fund())}
-                disabled={!installedSnap || busy}
+                disabled={!snapReady || busy}
               >
                 Fund
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap || busy}
+          disabled={!snapReady || busy}
         />
         <Card
           content={{
@@ -577,13 +633,13 @@ const Index = () => {
                 onClick={async () =>
                   run(async (client) => client.getBalances())
                 }
-                disabled={!installedSnap || busy}
+                disabled={!snapReady || busy}
               >
                 Balances
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap || busy}
+          disabled={!snapReady || busy}
         />
         <Card
           content={{
@@ -593,13 +649,13 @@ const Index = () => {
             button: (
               <ActionButton
                 onClick={handleSignPayment}
-                disabled={!installedSnap || !address || busy}
+                disabled={!snapReady || !address || busy}
               >
                 Sign payment
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap || !address || busy}
+          disabled={!snapReady || !address || busy}
         />
         <Card
           content={{
@@ -609,13 +665,13 @@ const Index = () => {
             button: (
               <ActionButton
                 onClick={handleSignSoroban}
-                disabled={!installedSnap || !address || busy}
+                disabled={!snapReady || !address || busy}
               >
                 Sign Soroban invoke
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap || !address || busy}
+          disabled={!snapReady || !address || busy}
         />
         <Card
           content={{
@@ -633,14 +689,14 @@ const Index = () => {
                   onClick={async () =>
                     run(async (client) => client.addToken(tokenContract.trim()))
                   }
-                  disabled={!installedSnap || !tokenContract.trim() || busy}
+                  disabled={!snapReady || !tokenContract.trim() || busy}
                 >
                   Add token
                 </ActionButton>
               </>
             ),
           }}
-          disabled={!installedSnap || busy}
+          disabled={!snapReady || busy}
         />
         <Card
           content={{
@@ -653,13 +709,13 @@ const Index = () => {
                     client.signMessage('Hello from the Stellar Soroban Snap!'),
                   )
                 }
-                disabled={!installedSnap || busy}
+                disabled={!snapReady || busy}
               >
                 Sign message
               </ActionButton>
             ),
           }}
-          disabled={!installedSnap || busy}
+          disabled={!snapReady || busy}
         />
         {error && (
           <ErrorMessage>

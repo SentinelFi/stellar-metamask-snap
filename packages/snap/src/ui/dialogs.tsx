@@ -13,27 +13,55 @@ import {
   Text,
 } from '@metamask/snaps-sdk/jsx';
 
-import { displayOrigin, originLooksConfusable } from './format';
+import {
+  displayOrigin,
+  escapeHiddenCharacters,
+  isOriginDisplayLossy,
+  originLooksConfusable,
+} from './format';
 import type { NetworkName } from '../state/networks';
 
 /**
- * Warns when the requesting origin contains internationalized (punycode) or
- * non-ASCII characters that could visually imitate another site's address.
+ * Origin cautions shown on every consent dialog: a warning when the origin
+ * contains internationalized (punycode) or non-ASCII characters that could
+ * visually imitate another site's address, and the complete origin whenever
+ * the inline display had to shorten or sanitize it — middle truncation keeps
+ * only a prefix and suffix, so two long origins can otherwise display
+ * identically.
  *
  * @param origin - The requesting dapp origin.
- * @returns A warning banner, or null for ordinary ASCII origins.
+ * @returns The caution elements, or null when the inline display is exact
+ * and unsuspicious.
  */
 export function originCautionBanner(origin: string): GenericSnapElement | null {
-  if (!originLooksConfusable(origin)) {
+  const confusable = originLooksConfusable(origin);
+  const lossy = isOriginDisplayLossy(origin);
+  if (!confusable && !lossy) {
     return null;
   }
   return (
-    <Banner title="Check the site address" severity="warning">
-      <Text>
-        This site's address contains internationalized or unusual characters
-        that can imitate another site. Verify the address before approving.
-      </Text>
-    </Banner>
+    <Box>
+      {confusable ? (
+        <Banner title="Check the site address" severity="warning">
+          <Text>
+            This site's address contains internationalized or unusual characters
+            that can imitate another site. Verify the address before approving.
+          </Text>
+        </Banner>
+      ) : null}
+      {lossy ? (
+        <Box>
+          <Banner title="Site address shortened" severity="warning">
+            <Text>
+              This site's address is too long to show in full above, and two
+              different long addresses can look identical when shortened. Verify
+              the complete address below before approving.
+            </Text>
+          </Banner>
+          <Copyable value={escapeHiddenCharacters(origin)} />
+        </Box>
+      ) : null}
+    </Box>
   );
 }
 
@@ -353,14 +381,23 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
       <Banner title="Hidden characters" severity="warning">
         <Text>
           This message contains invisible or direction-altering characters —
-          what you read here may not be what the site intends. Only sign if you
-          trust the requesting site.
+          what you read here may not be what the site intends. Compare the exact
+          escaped form below. Only sign if you trust the requesting site.
         </Text>
       </Banner>
     ) : null}
     <Section>
       <Text>Message</Text>
       <Copyable value={message} />
+      {hasHiddenCharacters ? (
+        // The block above shows (and copies) the raw message, in which
+        // hidden characters stay hidden; this one makes every such code
+        // point visible so the user can see exactly what they sign.
+        <Box>
+          <Text>Message (exact, special characters escaped)</Text>
+          <Copyable value={escapeHiddenCharacters(message)} />
+        </Box>
+      ) : null}
       <Row label="Signing account">
         <Text>{`Account ${accountIndex}`}</Text>
       </Row>

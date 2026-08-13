@@ -335,6 +335,14 @@ function renderOperationBody(
           {lossyTextBanner([operation.name])}
           <Text>Key</Text>
           <Copyable value={operation.name} />
+          {isLossyInline(operation.name) ? (
+            // The raw key above keeps hidden characters hidden; this view
+            // makes every such code point visible.
+            <Box>
+              <Text>Key (exact, special characters escaped)</Text>
+              <Copyable value={escapeHiddenCharacters(operation.name)} />
+            </Box>
+          ) : null}
           {value === undefined ? (
             <Row label="Value">
               <Text>Delete entry</Text>
@@ -787,7 +795,9 @@ function renderSimulation(
           </Text>
         </Banner>
         <Row label="Reason">
-          <Text>{simulation.error}</Text>
+          {/* Endpoint-controlled text: sanitize so a hostile RPC cannot
+              forge dialog lines or reorder the warning. */}
+          <Text>{sanitizeInlineText(simulation.error)}</Text>
         </Row>
       </Section>
     );
@@ -980,6 +990,7 @@ export function buildSignTransactionDialog({
         </Banner>
         {renderSummary(tx)}
         {tx.operations.map(renderOperation)}
+        {renderFootprint(tx)}
         {grantNotice}
         <Divider />
         <Text>Raw challenge (XDR)</Text>
@@ -1004,6 +1015,7 @@ export function buildSignTransactionDialog({
       {renderWarnings(warnings)}
       {renderSummary(tx)}
       {tx.operations.map(renderOperation)}
+      {renderFootprint(tx)}
       {renderSimulation(simulation ?? null)}
       {grantNotice}
       <Divider />

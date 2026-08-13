@@ -1,8 +1,13 @@
 import type { OperationRecord, Transaction } from '@stellar/stellar-sdk';
 import { Address, Asset, hash, scValToNative, xdr } from '@stellar/stellar-sdk';
+import { Buffer } from 'buffer';
 
 import { simulateTransaction } from './rpc';
-import { escapeHiddenCharacters, truncate } from '../ui/format';
+import {
+  escapeHiddenCharacters,
+  sanitizeInlineText,
+  truncate,
+} from '../ui/format';
 
 /** Soroban operation types (exactly one allowed per transaction). */
 const SOROBAN_OPERATION_TYPES = [
@@ -707,22 +712,68 @@ export function getSorobanData(
 }
 
 /**
+ * Renders a trustline asset from a footprint trustline key. The asset is
+ * half of the trustline's identity: `trustline of G…` alone cannot tell two
+ * trustlines of the same account apart.
+ *
+ * @param asset - The XDR trustline asset.
+ * @param flags - Walk flags; `truncated` is set when the variant is unknown.
+ * @returns A display string identifying the asset.
+ */
+function describeTrustLineAsset(
+  asset: xdr.TrustLineAsset,
+  flags: TruncationFlags,
+): string {
+  switch (asset.switch().name) {
+    case 'assetTypeNative':
+      return 'XLM (native)';
+    case 'assetTypeCreditAlphanum4':
+    case 'assetTypeCreditAlphanum12': {
+      try {
+        const parsed = Asset.fromOperation(
+          asset.switch().name === 'assetTypeCreditAlphanum4'
+            ? xdr.Asset.assetTypeCreditAlphanum4(asset.alphaNum4())
+            : xdr.Asset.assetTypeCreditAlphanum12(asset.alphaNum12()),
+        );
+        return `${parsed.getCode()}:${parsed.getIssuer()}`;
+      } catch {
+        flags.truncated = true;
+        return 'asset (undecodable — review the raw XDR)';
+      }
+    }
+    case 'assetTypePoolShare':
+      return `pool ${Buffer.from(
+        asset.liquidityPoolId() as unknown as Uint8Array,
+      ).toString('hex')}`;
+    default:
+      // An unknown future variant cannot be identified faithfully; flag it
+      // so the footprint is reported incomplete rather than mislabelled.
+      flags.truncated = true;
+      return `asset (${asset.switch().name} — review the raw XDR)`;
+  }
+}
+
+/**
  * Describes one ledger key from a Soroban footprint.
  *
  * @param key - The ledger key.
+ * @param flags - Walk flags; `truncated` is set when any part of the key
+ * cannot be rendered in full (ScVal limits, unknown variants).
  * @returns A display string identifying what the key addresses.
  */
-function describeLedgerKey(key: xdr.LedgerKey): string {
+function describeLedgerKey(key: xdr.LedgerKey, flags: TruncationFlags): string {
   // Deliberately non-exhaustive: only the key types a Soroban footprint can
-  // actually contain are named; anything else falls through to the explicit
-  // "review the raw XDR" label rather than being mislabelled.
+  // actually contain are named; anything else is reported as incomplete
+  // rather than being mislabelled.
   // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check
   switch (key.switch().name) {
     case 'contractData': {
       const data = key.contractData();
+      // The flags thread through: a contract-data key too large or deep to
+      // render in full marks the whole footprint summary incomplete.
       return `contract data ${Address.fromScAddress(
         data.contract(),
-      ).toString()} key=${formatScVal(data.key())} (${data.durability().name})`;
+      ).toString()} key=${formatScVal(data.key(), 0, flags)} (${data.durability().name})`;
     }
     case 'contractCode':
       return `contract code ${key.contractCode().hash().toString('hex')}`;
@@ -733,10 +784,16 @@ function describeLedgerKey(key: xdr.LedgerKey): string {
     case 'trustline':
       return `trustline of ${Address.account(
         key.trustLine().accountId().ed25519(),
-      ).toString()}`;
+      ).toString()} asset=${describeTrustLineAsset(
+        key.trustLine().asset(),
+        flags,
+      )}`;
     case 'ttl':
       return `ttl ${key.ttl().keyHash().toString('hex')}`;
     default:
+      // An unknown key variant means part of the signed state-access scope
+      // cannot be shown; mark the summary incomplete so signing fails closed.
+      flags.truncated = true;
       return `${key.switch().name} (review the raw XDR)`;
   }
 }
@@ -768,7 +825,7 @@ export function summarizeFootprint(
   }
 
   const lines: string[] = [];
-  let truncated = false;
+  const flags: TruncationFlags = { truncated: false };
 
   try {
     const resources = sorobanData.resources();
@@ -783,10 +840,10 @@ export function summarizeFootprint(
       }
       lines.push(`${label} (${keys.length}):`);
       for (const key of keys.slice(0, MAX_FOOTPRINT_KEYS)) {
-        lines.push(`  ${describeLedgerKey(key)}`);
+        lines.push(`  ${describeLedgerKey(key, flags)}`);
       }
       if (keys.length > MAX_FOOTPRINT_KEYS) {
-        truncated = true;
+        flags.truncated = true;
         lines.push(`  …+${keys.length - MAX_FOOTPRINT_KEYS} more`);
       }
     }
@@ -806,7 +863,29 @@ export function summarizeFootprint(
     };
   }
 
-  return lines.length > 0 ? { lines, truncated } : null;
+  return lines.length > 0 ? { lines, truncated: flags.truncated } : null;
+}
+
+/**
+ * Pre-dialog gate for Soroban signing: the footprint bounds the signed
+ * state-access scope, so a Soroban transaction whose footprint is absent or
+ * cannot be rendered in full must not reach the review dialog. Two
+ * transactions may then differ only in footprint keys while presenting the
+ * same decoded confirmation — a confirmation-integrity collision.
+ *
+ * @param sorobanData - The transaction's Soroban data, when present.
+ * @returns `'missing'` when the transaction carries no Soroban data,
+ * `'truncated'` when part of the footprint cannot be shown in full, or null
+ * when the whole footprint is displayable.
+ */
+export function findUndisplayableFootprint(
+  sorobanData: xdr.SorobanTransactionData | null | undefined,
+): 'missing' | 'truncated' | null {
+  const summary = summarizeFootprint(sorobanData);
+  if (!summary) {
+    return 'missing';
+  }
+  return summary.truncated ? 'truncated' : null;
 }
 
 /** Caps on endpoint-controlled simulation arrays (resource bound). */
@@ -851,7 +930,12 @@ export async function simulateForDisplay(
   }
 
   if (response.error) {
-    return { ok: false, error: truncate(response.error, 120) };
+    // Endpoint-controlled text: strip control/bidi characters before the
+    // message can reach a dialog, then bound its length.
+    return {
+      ok: false,
+      error: truncate(sanitizeInlineText(response.error), 120),
+    };
   }
 
   // The response is endpoint-controlled: bound every iterated array so a

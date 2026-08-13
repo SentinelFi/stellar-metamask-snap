@@ -15,6 +15,7 @@ import {
 
 import { discardBody, readJsonBounded } from './http';
 import { externalServiceError } from '../rpc/errors';
+import { sanitizeInlineText } from '../ui/format';
 
 /**
  * Minimal Stellar RPC (JSON-RPC 2.0) client. Hand-rolled over `fetch` to
@@ -136,9 +137,11 @@ async function rpcCall<Type, Schema>(
     envelope.result === undefined
   ) {
     throw externalServiceError(
+      // The endpoint's message is untrusted display text: strip control and
+      // direction-altering characters before it can reach an error surface.
       `Stellar RPC error: ${
         typeof envelope?.error?.message === 'string'
-          ? envelope.error.message.slice(0, 200)
+          ? sanitizeInlineText(envelope.error.message).slice(0, 200)
           : 'empty result'
       }.`,
     );

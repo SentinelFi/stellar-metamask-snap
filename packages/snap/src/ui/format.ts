@@ -186,6 +186,19 @@ export function displayOrigin(origin: string): string {
 }
 
 /**
+ * Whether {@link displayOrigin} loses information for this origin: middle
+ * truncation keeps only the prefix and suffix, so two long origins sharing
+ * those can display identically. Callers must then show the complete origin
+ * alongside the inline form.
+ *
+ * @param origin - The origin string from MetaMask.
+ * @returns True when the inline display is not the complete origin.
+ */
+export function isOriginDisplayLossy(origin: string): boolean {
+  return displayOrigin(origin) !== origin;
+}
+
+/**
  * Whether an origin contains internationalized (punycode `xn--`) labels or
  * non-ASCII characters that could visually imitate another site's address.
  *

@@ -78,6 +78,10 @@ export async function readJsonBounded(
 ): Promise<unknown> {
   const declared = Number(response.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+    // Release the connection before reporting: the caller catches this and
+    // clears its abort timer, and an unreleased body would then outlive the
+    // timeout boundary the caller established.
+    await discardBody(response);
     throw externalServiceError(`${service} returned an oversized response.`);
   }
 
@@ -86,10 +90,15 @@ export async function readJsonBounded(
   if (body && typeof body.getReader === 'function') {
     text = await readStreamBounded(body.getReader(), service);
   } else {
-    text = await response.text();
-    if (text.length > MAX_RESPONSE_BYTES) {
+    // No stream reader: the runtime buffers the whole body before the cap
+    // can be applied, so this cannot prevent pre-buffer allocation — it only
+    // refuses to hand oversized data onward. Count real bytes, not the
+    // UTF-16 code units `text.length` would report.
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > MAX_RESPONSE_BYTES) {
       throw externalServiceError(`${service} returned an oversized response.`);
     }
+    text = Buffer.from(bytes).toString('utf8');
   }
 
   try {

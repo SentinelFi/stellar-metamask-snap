@@ -89,6 +89,35 @@ Run from a clean tree on `main`, with CI green.
 
 10. **After the listing is live:** update `packages/site/.env.production` (`GATSBY_SNAP_ORIGIN`, `GATSBY_SNAP_VERSION`) and redeploy the companion dapp, and open or update the Stellar Wallets Kit PR to reference the new version.
 
+## Binding a release to the audited artifact
+
+The identity and version checks that run in CI derive their expected values
+from the checkout being built: they prove internal consistency, not that the
+checkout is the audited release. A build from an unreviewed or substituted
+checkout would pass all of them. Provenance therefore comes from process, and
+every step below is mandatory for a production release:
+
+1. **Publish only from the annotated release tag** (`vX.Y.Z`) created on the
+   protected default branch. Record the tagged commit hash in the changelog
+   entry and in the release notes; the audit report must name the same
+   commit. Never publish from a working tree, an untagged commit, or a
+   branch.
+2. **Treat the audited snap ID and version as protected release inputs.**
+   When running the production site build or the release CI job, take
+   `GATSBY_SNAP_ORIGIN` and `GATSBY_SNAP_VERSION` from the release record
+   (the changelog entry for the audited version), not from whatever the
+   checkout happens to contain. The build fails if they disagree with the
+   checkout, which is the drift signal this step exists to catch.
+3. **Verify the artifact, not just the build.** After `npm publish`, download
+   the published tarball with `npm pack stellar-soroban-snap@X.Y.Z` in a
+   clean environment, unpack it, and check that `snap.manifest.json`'s
+   `shasum` matches a bundle rebuilt from the tagged commit with the pinned
+   Node 22 toolchain (the reproducibility procedure in
+   [PHASE-5.md](PHASE-5.md)). Archive the tarball hash with the release.
+4. **Retain an attestation.** Keep the CI run URL of the release build, the
+   dependency audit, SBOM, and scan outputs together with the tag, so the
+   published artifact can later be traced to the audited inputs.
+
 ## First release
 
 The first release is not routine, and its ordering is fixed by the audit:

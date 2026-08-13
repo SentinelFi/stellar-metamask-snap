@@ -2,6 +2,7 @@ import type { Json, JsonRpcRequest } from '@metamask/snaps-sdk';
 import { MethodNotFoundError, SnapError } from '@metamask/snaps-sdk';
 
 import { internalError, SEP43_ERROR_CODES } from './errors';
+import { assertRateAllowed, withInflightBudget } from './limiter';
 import {
   assertDialogAllowed,
   clearDialogRejections,
@@ -65,7 +66,12 @@ export async function route(
   origin: string,
   request: JsonRpcRequest,
 ): Promise<Json> {
-  const handler = HANDLERS[request.method];
+  // Own-property dispatch: a name like `constructor` or `toString` resolves
+  // an inherited JavaScript property on a plain object, which must be
+  // method-not-found, never a callable.
+  const handler = Object.prototype.hasOwnProperty.call(HANDLERS, request.method)
+    ? HANDLERS[request.method]
+    : undefined;
   if (!handler) {
     // MethodNotFoundError extends SnapError/Error; the rule cannot see it.
     // eslint-disable-next-line @typescript-eslint/only-throw-error
@@ -76,9 +82,15 @@ export async function route(
   if (dialogMethod) {
     assertDialogAllowed(origin);
   }
+  // Dialog-free methods with external side effects are rate limited, and
+  // every request counts against a per-origin in-flight budget, so parallel
+  // calls cannot multiply pre-dialog work without bound.
+  assertRateAllowed(origin, request.method);
 
   try {
-    const result = await handler(origin, request.params);
+    const result = await withInflightBudget(origin, async () =>
+      handler(origin, request.params),
+    );
     if (dialogMethod) {
       clearDialogRejections(origin);
     }

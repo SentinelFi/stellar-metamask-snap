@@ -8,6 +8,7 @@ import {
   Keypair,
   Networks,
   Operation,
+  SorobanDataBuilder,
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk';
@@ -73,6 +74,31 @@ function getError(response: unknown): {
  */
 function getResult<Type>(response: unknown): Type {
   return (response as { response: { result: Type } }).response.result;
+}
+
+/**
+ * Builds Soroban transaction data whose footprint touches the XLM SAC.
+ * Signing requires a complete, displayable footprint, so every fixture that
+ * should reach the dialog must carry one (an unprepared envelope is
+ * refused).
+ *
+ * @param keyCount - Number of read-only contract-data keys.
+ * @returns The Soroban transaction data.
+ */
+function buildSorobanData(keyCount = 1) {
+  const keys = Array.from({ length: keyCount }, (_, index) =>
+    xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract: new Address(XLM_SAC_TESTNET).toScAddress(),
+        key: xdr.ScVal.scvU32(index),
+        durability: xdr.ContractDataDurability.persistent(),
+      }),
+    ),
+  );
+  return new SorobanDataBuilder()
+    .setFootprint(keys, [])
+    .setResourceFee(1000n)
+    .build();
 }
 
 /**
@@ -154,6 +180,7 @@ describe('signTransaction (Soroban)', () => {
           ],
         }),
       )
+      .setSorobanData(buildSorobanData())
       .setTimeout(300)
       .build();
 
@@ -169,9 +196,102 @@ describe('signTransaction (Soroban)', () => {
     expect(content).toContain('Contract invocation');
     expect(content).toContain(XLM_SAC_TESTNET);
     expect(content).toContain('transfer');
+    // The signed footprint must be disclosed in the ordinary (non-fee-bump)
+    // dialog: it bounds the transaction's whole state-access scope.
+    expect(content).toContain('Contract data accessed');
+    expect(content).toContain('Read-only (1)');
     // A simulation section renders in both outcomes (success or the
     // "Simulation unavailable" warning) — never silently absent.
     expect(content).toMatch(/Simulation/u);
+
+    await (ui as { cancel: () => Promise<void> }).cancel();
+    const error = getError(await pending);
+    expect(error.data?.code).toBe(-4);
+  }, 45000);
+
+  it('rejects a Soroban transaction without a footprint (unprepared)', async () => {
+    const { request } = await install();
+
+    const transaction = new TransactionBuilder(
+      new Account(SEP5_ADDRESS_0, '1'),
+      { fee: '100', networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: XLM_SAC_TESTNET,
+          function: 'transfer',
+          args: [new Address(SEP5_ADDRESS_0).toScVal()],
+        }),
+      )
+      .setTimeout(300)
+      .build();
+
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: { xdr: transaction.toXDR() },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('no footprint');
+  });
+
+  it('rejects a footprint with more keys than the dialog can show', async () => {
+    const { request } = await install();
+
+    const transaction = new TransactionBuilder(
+      new Account(SEP5_ADDRESS_0, '1'),
+      { fee: '100', networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: XLM_SAC_TESTNET,
+          function: 'transfer',
+          args: [new Address(SEP5_ADDRESS_0).toScVal()],
+        }),
+      )
+      // 21 keys exceed the 20-key render cap; a "+1 more" marker would leave
+      // part of the signed state-access scope undisclosed.
+      .setSorobanData(buildSorobanData(21))
+      .setTimeout(300)
+      .build();
+
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: { xdr: transaction.toXDR() },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('Signing is refused');
+  });
+
+  it('renders the footprint for extendFootprintTtl transactions', async () => {
+    const { request } = await install();
+
+    const transaction = new TransactionBuilder(
+      new Account(SEP5_ADDRESS_0, '1'),
+      { fee: '100', networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(Operation.extendFootprintTtl({ extendTo: 1000 }))
+      .setSorobanData(buildSorobanData(2))
+      .setTimeout(300)
+      .build();
+
+    const pending = request({
+      origin: ORIGIN,
+      method: 'signTransaction',
+      params: { xdr: transaction.toXDR() },
+    });
+    const ui = await pending.getInterface();
+    const content = JSON.stringify(ui.content);
+    // The target keys are the operation's entire content: without them two
+    // TTL extensions over different data are indistinguishable.
+    expect(content).toContain('Contract data accessed');
+    expect(content).toContain('Read-only (2)');
+    expect(content).toContain(XLM_SAC_TESTNET);
 
     await (ui as { cancel: () => Promise<void> }).cancel();
     const error = getError(await pending);
@@ -193,6 +313,7 @@ describe('signTransaction (Soroban)', () => {
           auth: [buildAuthEntry()],
         }),
       )
+      .setSorobanData(buildSorobanData())
       .setTimeout(300)
       .build();
 
@@ -276,7 +397,9 @@ describe('signTransaction (Soroban)', () => {
 
 describe('signAuthEntry', () => {
   it('shows the invocation tree and produces a valid signature', async () => {
-    const { request } = await install();
+    // Connected: a standalone entry names its authorizing account, which is
+    // an account selection and now always requires a grant.
+    const { request } = await install(CONNECTED_STATE);
     // Expiry 0 → the snap sets a near-future expiry from the current ledger
     // A fixed absolute ledger would now be rejected as expired since
     // testnet is far past any hardcoded value.
@@ -400,7 +523,7 @@ describe('signAuthEntry', () => {
   });
 
   it('rejection returns SEP-43 code -4', async () => {
-    const { request } = await install();
+    const { request } = await install(CONNECTED_STATE);
     const pending = request({
       origin: ORIGIN,
       // Expiry 0 → snap sets a valid near-future expiry so the dialog shows.

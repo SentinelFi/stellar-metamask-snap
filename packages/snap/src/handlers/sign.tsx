@@ -10,7 +10,7 @@ import {
 import { Buffer } from 'buffer';
 
 import { assertConnected } from './account';
-import { getWalletAddress, resolveSigningKeypair } from '../keys';
+import { resolveSigningKeypair } from '../keys';
 import {
   externalServiceError,
   invalidRequest,
@@ -32,6 +32,8 @@ import {
   decodeAuthEntry,
   decodeHostFunction,
   findUndisplayableAuthEntry,
+  findUndisplayableFootprint,
+  getSorobanData,
   getSorobanOperation,
   hasMisplacedSorobanOperation,
   simulateForDisplay,
@@ -56,6 +58,13 @@ const SIGNED_MESSAGE_PREFIX = 'Stellar Signed Message:\n';
  * wallet and learn which ones it holds. That is precisely the address
  * linkage `getAccounts` is connection-gated to prevent.
  *
+ * Every explicit address requires the grant — including one that happens to
+ * equal the active account. Exempting the active address would let an
+ * unconnected origin distinguish "this guess is the active account" (request
+ * proceeds to a dialog) from "it is not" (immediate rejection): a
+ * membership probe. Cold signing remains possible only by omitting the
+ * address entirely, which reveals nothing.
+ *
  * The grant is checked before the address is resolved, so a caller without
  * one gets the same error whether or not the wallet holds the address.
  *
@@ -67,9 +76,6 @@ async function assertAccountSelectionAllowed(
   requestedAddress?: string,
 ): Promise<void> {
   if (requestedAddress === undefined) {
-    return;
-  }
-  if (requestedAddress === (await getWalletAddress())) {
     return;
   }
   await assertConnected(origin);
@@ -202,6 +208,27 @@ export async function signTransaction(
     }
   }
 
+  // The footprint bounds the transaction's entire signed state-access scope:
+  // two envelopes can differ only in footprint keys while every other decoded
+  // dialog field reads identically. A Soroban transaction whose footprint is
+  // absent (unprepared — it could never execute anyway) or cannot be rendered
+  // in full must therefore fail closed before any dialog opens.
+  if (isSoroban) {
+    const undisplayableFootprint = findUndisplayableFootprint(
+      getSorobanData(innerTx),
+    );
+    if (undisplayableFootprint === 'missing') {
+      throw invalidRequest(
+        'This Soroban transaction carries no footprint (Soroban transaction data). Prepare or simulate the transaction before requesting a signature.',
+      );
+    }
+    if (undisplayableFootprint === 'truncated') {
+      throw invalidRequest(
+        'This transaction touches more ledger entries than can be displayed, or its footprint cannot be decoded in full. Signing is refused.',
+      );
+    }
+  }
+
   // Soroban transactions get a display-verification simulation (Sui-snap
   // pattern): resource fee, required auth signers, restore requirements.
   // The transaction itself is never modified — we sign the provided XDR.
@@ -250,6 +277,18 @@ export async function signTransaction(
   const warningsField = warnings.length > 0 ? { warnings } : {};
 
   if (request.submit) {
+    // The hash of the exact signed envelope, computed locally. Submission
+    // responses are endpoint-controlled input: a hash is accepted only when
+    // it matches this value, so a compromised endpoint cannot make the snap
+    // report an unrelated transaction as the submitted one.
+    const expectedHash = tx.hash().toString('hex');
+    const assertSubmittedHash = (returned: string): void => {
+      if (returned.toLowerCase() !== expectedHash.toLowerCase()) {
+        throw externalServiceError(
+          'The submission endpoint returned a transaction hash that does not match the signed transaction. Treat the submission status as unknown.',
+        );
+      }
+    };
     try {
       // Soroban transactions must go through the RPC; classic ones use
       // Horizon's synchronous endpoint.
@@ -263,6 +302,7 @@ export async function signTransaction(
             `Soroban submission ${sent.status === 'ERROR' ? 'was rejected' : 'was throttled (try again later)'}.`,
           );
         }
+        assertSubmittedHash(sent.hash);
         return {
           signedTxXdr,
           signerAddress,
@@ -275,6 +315,7 @@ export async function signTransaction(
         network.horizonUrl,
         signedTxXdr,
       );
+      assertSubmittedHash(txHash);
       return { signedTxXdr, signerAddress, hash: txHash, ...warningsField };
     } catch (error) {
       // The user did sign — surface the signature alongside the submission

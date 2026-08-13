@@ -34,5 +34,16 @@ Nothing has been published to npm yet, so every change below is still unreleased
 - State mutations serialized so concurrent read-modify-write sequences cannot drop a writer's change.
 - Per-origin cooldown after repeated rejected dialogs.
 - Horizon and Stellar RPC responses schema-validated, with redirects refused, bounded response bodies, and no insecure randomness in the shipped bundle (enforced in CI).
+- The Soroban footprint (the signed state-access scope and resource commitment) is rendered in every Soroban review dialog, ordinary and fee-bump alike, with trustline keys naming their asset; signing fails closed when the footprint is absent, truncated, undecodable, or contains an unknown key variant.
+- The companion site verifies the installed snap version against the release it was built for before enabling any controls, offers an exact-version update when they differ, and passes the pinned version to the connector; the release build also cross-checks `GATSBY_SNAP_VERSION` against the snap package version.
+- Oversized declared response bodies are released before the error is raised, and the no-stream fallback counts real bytes via `arrayBuffer` instead of UTF-16 code units.
+- Persisted token registries are normalized at the parse boundary (per-network cap, contract-ID and metadata validation, duplicate removal); `fund` and `getBalances` are rate limited per origin, identical balance lookups are coalesced through a short-lived cache, and every request counts against a per-origin in-flight budget.
+- Classic safety checks cover account-merge destinations, every effective operation source, and the operation-appropriate signature threshold (high for account merge and signer changes), and disclose when the lookup budget forced any account to be skipped.
+- Every explicit `address` selection requires a connection grant, including the active account, so an unconnected origin can no longer probe whether a guessed address is the active one; cold signing without an address is unchanged.
+- Signed messages and `manageData` keys with hidden characters get an escaped, lossless exact view, and endpoint-derived simulation and RPC error text is sanitized before reaching dialogs.
+- When an origin is too long to display in full, consent dialogs and the home page show the complete origin in a copyable field with a warning, since two long origins can otherwise truncate identically.
+- Submission responses are accepted only when the returned transaction hash matches the locally computed hash of the exact signed envelope.
+- RPC dispatch resolves handlers as own properties only, so names like `constructor` cannot resolve inherited JavaScript properties.
+- Release provenance procedure documented in `docs/RELEASE.md`: publish from the annotated tag, treat the audited ID and version as protected inputs, verify the published tarball against a rebuild, retain an attestation.
 
 [unreleased]: https://github.com/jeffnuclear/stelllar-metamask-snap/commits/main

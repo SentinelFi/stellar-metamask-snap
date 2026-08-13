@@ -335,21 +335,33 @@ describe('signing with the address option', () => {
     ).toBe(SEP5_ADDRESS_1);
   }, 45000);
 
-  it('lets an unconnected origin name the active account explicitly', async () => {
+  it('refuses an unconnected origin naming even the active account', async () => {
+    // Naming the active address used to be exempt from the grant, which let
+    // an unconnected origin distinguish "this guess is the active account"
+    // (request pends on a dialog) from "it is not" (immediate rejection): a
+    // membership probe. Every explicit address now requires a grant; the
+    // answer must match the held/foreign cases exactly.
     const { request } = await install(
       stateV2({ accounts: [0, 1], activeAccount: 1 }),
     );
 
-    const pending = request({
-      origin: 'https://cold.example',
-      method: 'signMessage',
-      params: { message: 'hello', address: SEP5_ADDRESS_1 },
-    });
-    const ui = await pending.getInterface();
-    await (ui as { ok: () => Promise<void> }).ok();
-    expect(
-      getResult<{ signerAddress: string }>(await pending).signerAddress,
-    ).toBe(SEP5_ADDRESS_1);
+    const active = getError(
+      await request({
+        origin: 'https://cold.example',
+        method: 'signMessage',
+        params: { message: 'hello', address: SEP5_ADDRESS_1 },
+      }),
+    );
+    const foreign = getError(
+      await request({
+        origin: 'https://cold.example',
+        method: 'signMessage',
+        params: { message: 'hello', address: FOREIGN_ADDRESS },
+      }),
+    );
+    expect(active.message).toContain('not connected');
+    expect(active.message).toBe(foreign.message);
+    expect(active.data?.code).toBe(foreign.data?.code);
   }, 45000);
 
   it('signTransaction resolves the address option to the revealed account', async () => {

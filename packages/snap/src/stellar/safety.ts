@@ -1,18 +1,66 @@
-import type { Transaction } from '@stellar/stellar-sdk';
+import type { OperationRecord, Transaction } from '@stellar/stellar-sdk';
 
 import { getAccountChecks } from './horizon';
 import type { NetworkConfig } from '../state/networks';
 import { truncate } from '../ui/format';
 
-/** Cap Horizon lookups so dialog latency stays bounded. */
+/** Cap Horizon destination lookups so dialog latency stays bounded. */
 const MAX_DESTINATION_CHECKS = 3;
+
+/** Cap Horizon source lookups so dialog latency stays bounded. */
+const MAX_SOURCE_CHECKS = 3;
+
+/** Stellar operation threshold levels, in ascending order. */
+type ThresholdLevel = 'low' | 'med' | 'high';
+
+const LEVEL_ORDER: Record<ThresholdLevel, number> = { low: 0, med: 1, high: 2 };
+
+const LEVEL_LABEL: Record<ThresholdLevel, string> = {
+  low: 'low',
+  med: 'medium',
+  high: 'high',
+};
+
+/**
+ * The signature threshold an operation requires from its source account.
+ * Only the operation types the snap supports need classification; anything
+ * unrecognized is treated as medium (the protocol default for most types).
+ *
+ * @param operation - The parsed operation.
+ * @returns The required threshold level.
+ */
+function operationThreshold(operation: OperationRecord): ThresholdLevel {
+  // Deliberately non-exhaustive: every operation type not named here
+  // requires the medium threshold, which the default arm returns.
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check
+  switch (operation.type) {
+    case 'accountMerge':
+      return 'high';
+    case 'setOptions':
+      // Signer changes, master-key weight, and threshold changes are
+      // high-threshold; other settings (home domain, flags, inflation
+      // destination) are medium.
+      return operation.signer !== undefined ||
+        operation.masterWeight !== undefined ||
+        operation.lowThreshold !== undefined ||
+        operation.medThreshold !== undefined ||
+        operation.highThreshold !== undefined
+        ? 'high'
+        : 'med';
+    default:
+      return 'med';
+  }
+}
 
 /**
  * Collects best-effort safety warnings for a classic transaction before the
- * review dialog: unfunded destinations (payments would fail), SEP-29
- * memo-required destinations, an unfunded source, and insufficient signature
- * weight (multisig accounts). Degrades silently when Horizon is
- * unreachable — warnings are advisory display aids, never blockers.
+ * review dialog: unfunded or memo-requiring destinations (including account
+ * merges), unfunded source accounts (per effective operation source, not only
+ * the transaction source), and insufficient signature weight measured against
+ * the highest threshold the operations actually require. Degrades silently
+ * when Horizon is unreachable — warnings are advisory display aids, never
+ * blockers — but always says so when a lookup budget forced it to skip
+ * accounts, so partial coverage is never mistaken for a clean check.
  *
  * @param tx - The parsed classic transaction (not seq-0, not fee-bump).
  * @param network - The active network config.
@@ -27,28 +75,69 @@ export async function collectSafetyWarnings(
   const warnings: string[] = [];
 
   // Destinations of value-moving operations (classic G-addresses only).
-  const paymentDestinations = new Set<string>();
+  // Account merges transfer the source's entire XLM balance, so their
+  // destinations carry the same existence and SEP-29 memo risks as payments.
+  const valueDestinations = new Set<string>();
   for (const operation of tx.operations) {
     if (
       (operation.type === 'payment' ||
         operation.type === 'pathPaymentStrictSend' ||
-        operation.type === 'pathPaymentStrictReceive') &&
+        operation.type === 'pathPaymentStrictReceive' ||
+        operation.type === 'accountMerge') &&
+      typeof operation.destination === 'string' &&
       operation.destination.startsWith('G')
     ) {
-      paymentDestinations.add(operation.destination);
+      valueDestinations.add(operation.destination);
     }
   }
 
   const hasMemo = tx.memo.type !== 'none';
-  const destinations = [...paymentDestinations].slice(
-    0,
-    MAX_DESTINATION_CHECKS,
-  );
+  const allDestinations = [...valueDestinations];
+  const destinations = allDestinations.slice(0, MAX_DESTINATION_CHECKS);
+  if (allDestinations.length > destinations.length) {
+    warnings.push(
+      `This transaction pays ${allDestinations.length} different destinations; only the first ${destinations.length} were checked for existence and memo requirements. The rest were NOT checked.`,
+    );
+  }
 
-  const [sourceChecks, ...destinationChecks] = await Promise.all([
-    getAccountChecks(network.horizonUrl, tx.source),
-    ...destinations.map(async (destination) =>
-      getAccountChecks(network.horizonUrl, destination),
+  // The effective source of every operation, with the highest threshold its
+  // operations require. The transaction source is always checked (it pays
+  // the fee and provides the sequence number) even when every operation
+  // overrides it.
+  const requiredBySource = new Map<string, ThresholdLevel>();
+  if (tx.source.startsWith('G')) {
+    requiredBySource.set(tx.source, 'low');
+  }
+  for (const operation of tx.operations) {
+    const source = operation.source ?? tx.source;
+    if (!source.startsWith('G')) {
+      continue;
+    }
+    const level = operationThreshold(operation);
+    const known = requiredBySource.get(source);
+    if (known === undefined || LEVEL_ORDER[level] > LEVEL_ORDER[known]) {
+      requiredBySource.set(source, level);
+    }
+  }
+
+  const allSources = [...requiredBySource.keys()];
+  const sources = allSources.slice(0, MAX_SOURCE_CHECKS);
+  if (allSources.length > sources.length) {
+    warnings.push(
+      `This transaction draws on ${allSources.length} different source accounts; only the first ${sources.length} were checked. The rest were NOT checked.`,
+    );
+  }
+
+  const [destinationChecks, sourceChecks] = await Promise.all([
+    Promise.all(
+      destinations.map(async (destination) =>
+        getAccountChecks(network.horizonUrl, destination),
+      ),
+    ),
+    Promise.all(
+      sources.map(async (source) =>
+        getAccountChecks(network.horizonUrl, source),
+      ),
     ),
   ]);
 
@@ -59,7 +148,7 @@ export async function collectSafetyWarnings(
     }
     if (!checks.exists) {
       warnings.push(
-        `Destination ${truncate(destination)} does not exist on ${network.name}. A payment to it will fail — fund it first or use createAccount.`,
+        `Destination ${truncate(destination)} does not exist on ${network.name}. A payment or merge to it will fail — fund it first or use createAccount.`,
       );
     } else if (checks.memoRequired && !hasMemo) {
       warnings.push(
@@ -68,25 +157,31 @@ export async function collectSafetyWarnings(
     }
   });
 
-  if (sourceChecks) {
-    if (!sourceChecks.exists) {
-      warnings.push(
-        `Source account ${truncate(tx.source)} does not exist on ${network.name} — this transaction will fail if submitted.`,
-      );
-    } else if (sourceChecks.thresholds) {
-      const ownWeight =
-        sourceChecks.signers.find((signer) => signer.key === signerAddress)
-          ?.weight ?? 0;
-      // Medium covers most operations; a heuristic, not a full per-op
-      // threshold analysis.
-      const required = Math.max(sourceChecks.thresholds.med, 1);
-      if (ownWeight < required) {
-        warnings.push(
-          `Your key's weight (${ownWeight}) is below the account's medium threshold (${required}). The signed transaction will need additional co-signers before submission.`,
-        );
-      }
+  sources.forEach((source, index) => {
+    const checks = sourceChecks[index];
+    if (!checks) {
+      return;
     }
-  }
+    if (!checks.exists) {
+      warnings.push(
+        `Source account ${truncate(source)} does not exist on ${network.name} — this transaction will fail if submitted.`,
+      );
+      return;
+    }
+    if (!checks.thresholds) {
+      return;
+    }
+    const level = requiredBySource.get(source) ?? 'med';
+    const required = Math.max(checks.thresholds[level], 1);
+    const ownWeight =
+      checks.signers.find((signer) => signer.key === signerAddress)?.weight ??
+      0;
+    if (ownWeight < required) {
+      warnings.push(
+        `Your key's weight (${ownWeight}) on account ${truncate(source)} is below the ${LEVEL_LABEL[level]} threshold (${required}) its operations require. The signed transaction will need additional co-signers before submission.`,
+      );
+    }
+  });
 
   return warnings;
 }

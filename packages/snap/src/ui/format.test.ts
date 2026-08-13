@@ -10,6 +10,7 @@ import {
   formatMemo,
   formatTokenAsset,
   isLossyInline,
+  isOriginDisplayLossy,
   originLooksConfusable,
   sanitizeInlineText,
   stroopsToXlm,
@@ -239,6 +240,27 @@ describe('displayOrigin', () => {
     const shown = displayOrigin(long);
     expect(shown.length).toBeLessThan(long.length);
     expect(shown).toContain('…');
+  });
+});
+
+describe('isOriginDisplayLossy', () => {
+  it('is false when the inline display is the complete origin', () => {
+    expect(isOriginDisplayLossy('https://example.com')).toBe(false);
+  });
+
+  it('is true when middle truncation would hide part of the origin', () => {
+    // Two long origins sharing a prefix and suffix display identically once
+    // truncated; the caller must show the complete origin alongside.
+    const prefix = `https://${'a'.repeat(40)}`;
+    const suffix = `${'b'.repeat(40)}.example.com`;
+    const first = `${prefix}-one-${suffix}`;
+    const second = `${prefix}-two-${suffix}`;
+    expect(isOriginDisplayLossy(first)).toBe(true);
+    expect(displayOrigin(first)).toBe(displayOrigin(second));
+  });
+
+  it('is true when sanitization altered the origin', () => {
+    expect(isOriginDisplayLossy('https://ex‮ample.com')).toBe(true);
   });
 });
 

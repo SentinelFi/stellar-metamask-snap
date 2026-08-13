@@ -125,6 +125,20 @@ module.exports.onPreBuild = ({ reporter }) => {
         `install resolve to a release that was never audited.`,
     );
   }
+
+  // The configured browser version must be the version of the snap package
+  // this release is assembled from, not merely exact-semver-shaped: an
+  // otherwise valid stale value would make the site pin (and demand at
+  // runtime) a different release than the one being shipped. Note this
+  // check is still relative to the checkout; binding the checkout itself to
+  // the audited release is the release process's job (docs/RELEASE.md).
+  if (snapVersion !== snapPackage.version) {
+    reporter.panic(
+      `GATSBY_SNAP_VERSION ("${snapVersion}") does not match the snap ` +
+        `package version ("${snapPackage.version}"). The site would pin a ` +
+        `different release than the one being built.`,
+    );
+  }
 };
 
 /**

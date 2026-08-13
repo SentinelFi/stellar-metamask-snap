@@ -94,28 +94,38 @@ async function resolveOwnedAddress(requested: string): Promise<string> {
 }
 
 /**
- * `getBalances` — classic Horizon balances plus tracked Soroban token
- * balances (read via simulation) for the active network. Like `fund`, only
- * the wallet's own accounts may be queried: the wallet is not a lookup
- * proxy for arbitrary third-party accounts.
- *
- * @param origin - The requesting dapp origin.
- * @param params - Optional `{ address }`; must be a wallet account address.
- * @returns The account summary (`funded: false` when not on-ledger).
+ * How long a balance lookup's result (or in-flight promise) is shared.
+ * Balances change per ledger (~5 s), so a shorter window would add no
+ * freshness — it would only re-run the per-token simulation fan-out.
  */
-export async function getBalances(
-  origin: string,
-  params: unknown,
-): Promise<AccountSummary & { address: string }> {
-  await assertConnected(origin);
-  const request = validate(params ?? {}, OptionalAddressParams);
-  const network = await getActiveNetwork();
+const BALANCE_CACHE_TTL_MS = 5000;
 
-  const active = await getWalletAddress();
-  const address =
-    request.address === undefined || request.address === active
-      ? active
-      : await resolveOwnedAddress(request.address);
+/** Coalesced balance lookups, keyed by `network address`. */
+const balanceCache = new Map<
+  string,
+  { at: number; promise: Promise<AccountSummary & { address: string }> }
+>();
+
+/** Cache entries kept before the oldest is evicted (accounts × networks). */
+const MAX_BALANCE_CACHE_ENTRIES = 64;
+
+/** Clears the balance cache. Test hook. */
+export function resetBalanceCache(): void {
+  balanceCache.clear();
+}
+
+/**
+ * The uncached body of {@link getBalances}: one Horizon lookup plus one
+ * simulation per tracked token.
+ *
+ * @param network - The active network config.
+ * @param address - The resolved wallet account address.
+ * @returns The account summary.
+ */
+async function readBalances(
+  network: Awaited<ReturnType<typeof getActiveNetwork>>,
+  address: string,
+): Promise<AccountSummary & { address: string }> {
   const summary = await getAccountSummary(network.horizonUrl, address);
 
   // Append tracked-token balances (best-effort; failures are skipped).
@@ -141,6 +151,54 @@ export async function getBalances(
     ...summary,
     balances: [...summary.balances, ...tokenBalances],
   };
+}
+
+/**
+ * `getBalances` — classic Horizon balances plus tracked Soroban token
+ * balances (read via simulation) for the active network. Like `fund`, only
+ * the wallet's own accounts may be queried: the wallet is not a lookup
+ * proxy for arbitrary third-party accounts.
+ *
+ * Identical lookups within a short window are coalesced onto one in-flight
+ * request: each call fans out one simulation per tracked token, so
+ * concurrent or rapid-fire calls from a connected origin must share work
+ * instead of multiplying it.
+ *
+ * @param origin - The requesting dapp origin.
+ * @param params - Optional `{ address }`; must be a wallet account address.
+ * @returns The account summary (`funded: false` when not on-ledger).
+ */
+export async function getBalances(
+  origin: string,
+  params: unknown,
+): Promise<AccountSummary & { address: string }> {
+  await assertConnected(origin);
+  const request = validate(params ?? {}, OptionalAddressParams);
+  const network = await getActiveNetwork();
+
+  const active = await getWalletAddress();
+  const address =
+    request.address === undefined || request.address === active
+      ? active
+      : await resolveOwnedAddress(request.address);
+
+  const key = `${network.name} ${address}`;
+  const now = Date.now();
+  const cached = balanceCache.get(key);
+  if (cached && now - cached.at < BALANCE_CACHE_TTL_MS) {
+    return cached.promise;
+  }
+  if (balanceCache.size >= MAX_BALANCE_CACHE_ENTRIES) {
+    const oldest = balanceCache.keys().next().value;
+    if (oldest !== undefined) {
+      balanceCache.delete(oldest);
+    }
+  }
+  const promise = readBalances(network, address);
+  balanceCache.set(key, { at: now, promise });
+  // A failure must not be served from cache for the rest of the window.
+  promise.catch(() => balanceCache.delete(key));
+  return promise;
 }
 
 /**

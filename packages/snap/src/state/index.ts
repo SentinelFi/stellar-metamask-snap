@@ -15,6 +15,7 @@ import {
 import type { NetworkConfig, NetworkName } from './networks';
 import { NETWORK_NAMES, NETWORKS } from './networks';
 import { invalidRequest } from '../rpc/errors';
+import { isContractId, sanitizeTokenMetadata } from '../stellar/token';
 
 /**
  * Versioned snap state, stored encrypted via `snap_manageState`.
@@ -196,6 +197,52 @@ function normalizeAccounts(state: SnapState): SnapState {
 }
 
 /**
+ * Normalizes persisted token registries at the parse boundary. The structural
+ * schema deliberately stays permissive (a stricter schema would reset the
+ * whole store, dropping grants), so the work bound is enforced here instead:
+ * every network's array is capped at {@link MAX_TRACKED_TOKENS}, and entries
+ * with an invalid contract ID, out-of-bounds metadata, or a duplicate
+ * contract ID are dropped. `getBalances` and the home page fan out one
+ * simulation per entry, so corrupt or legacy state must never carry more
+ * entries — or stranger entries — than `addToken` could have written.
+ *
+ * @param tokens - The raw (structurally valid) tokens field.
+ * @returns The normalized tokens field.
+ */
+function normalizeTokens(
+  tokens: SnapState['tokens'],
+): Partial<Record<NetworkName, TrackedToken[]>> {
+  if (!tokens) {
+    return {};
+  }
+  const normalized: Partial<Record<NetworkName, TrackedToken[]>> = {};
+  for (const network of NETWORK_NAMES) {
+    const entries = tokens[network];
+    if (!entries) {
+      continue;
+    }
+    const seen = new Set<string>();
+    const kept: TrackedToken[] = [];
+    for (const entry of entries) {
+      if (kept.length >= MAX_TRACKED_TOKENS) {
+        break;
+      }
+      if (!isContractId(entry.contractId) || seen.has(entry.contractId)) {
+        continue;
+      }
+      const metadata = sanitizeTokenMetadata(entry.symbol, entry.decimals);
+      if (!metadata) {
+        continue;
+      }
+      seen.add(entry.contractId);
+      kept.push({ contractId: entry.contractId, ...metadata });
+    }
+    normalized[network] = kept;
+  }
+  return normalized;
+}
+
+/**
  * Validates raw stored state. The snap is the only writer, but the store can
  * still surprise: a downgrade after a future version bump, or corruption.
  * A valid version-1 object migrates in place (accounts default to `[0]`,
@@ -207,14 +254,24 @@ function normalizeAccounts(state: SnapState): SnapState {
  */
 export function parseState(stored: unknown): SnapState {
   if (is(stored, SnapStateStruct)) {
-    return normalizeAccounts(stored as SnapState);
+    const state = stored as SnapState;
+    return normalizeAccounts({
+      ...state,
+      tokens: normalizeTokens(state.tokens),
+    });
   }
   if (is(stored, SnapStateV1Struct)) {
     const legacy = stored as Omit<
       SnapState,
       'version' | 'activeAccount' | 'accounts'
     > & { version: 1 };
-    return { ...legacy, version: 2, activeAccount: 0, accounts: [0] };
+    return {
+      ...legacy,
+      version: 2,
+      activeAccount: 0,
+      accounts: [0],
+      tokens: normalizeTokens(legacy.tokens),
+    };
   }
   return defaultState();
 }
