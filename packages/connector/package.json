@@ -30,7 +30,8 @@
     "lint": "yarn lint:eslint",
     "lint:eslint": "eslint . --cache",
     "lint:fix": "yarn lint:eslint --fix",
-    "test": "jest"
+    "test": "jest",
+    "test:coverage": "jest --coverage"
   },
   "devDependencies": {
     "@jest/globals": "^29.5.0",

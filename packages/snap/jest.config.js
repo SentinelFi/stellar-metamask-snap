@@ -1,5 +1,31 @@
 module.exports = {
   preset: '@metamask/snaps-jest',
+  /*
+   * Coverage measures the source modules only, never the test files or the
+   * built bundle.
+   *
+   * Read the report with one caveat in mind: snaps-jest executes the built
+   * `dist/bundle.js` inside the snap execution environment, so tests driven
+   * through `installSnap` produce NO instrumented coverage of `src`. Every
+   * module reachable only that way reports 0% branch coverage however
+   * thoroughly it is tested -- `handlers/sign.tsx` is the clearest case, with
+   * 42 behavioural assertions across the simulator suites and 0% branches
+   * here. The statement percentages those modules do show are module-load
+   * side effects, not executed logic.
+   *
+   * So these numbers are a floor for the in-process unit tests, not a measure
+   * of how well the snap is tested. The pattern that does yield real coverage
+   * of handler code is calling the handler directly against a mocked `snap`
+   * global (see the onUserInput tests in src/multi-account.test.tsx), which is
+   * why `index.tsx` and `handlers/home.tsx` report real branch coverage.
+   */
+  collectCoverageFrom: [
+    'src/**/*.{ts,tsx}',
+    '!src/**/*.test.{ts,tsx}',
+    '!src/**/*.d.ts',
+  ],
+  coverageReporters: ['text', 'text-summary', 'lcov'],
+  coverageDirectory: 'coverage',
   transform: {
     // Jest runs on CommonJS; the project tsconfig targets the webpack bundle
     // (module: esnext, moduleResolution: bundler), so override for tests.
