@@ -26,8 +26,8 @@
     "prepublishOnly": "mm-snap manifest",
     "serve": "mm-snap serve",
     "start": "mm-snap watch",
-    "test": "jest",
-    "test:coverage": "jest --coverage"
+    "test": "yarn build && jest",
+    "test:coverage": "yarn build && jest --coverage"
   },
   "dependencies": {
     "@metamask/key-tree": "^10.1.1",

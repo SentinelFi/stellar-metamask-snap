@@ -90,6 +90,8 @@ yarn workspace stellar-soroban-snap build
 yarn workspace stellar-soroban-snap test
 ```
 
+The snap test script builds first, on purpose. `snaps-jest` runs the snap the way MetaMask does, by executing the built `dist/bundle.js` rather than the TypeScript sources, so a missing bundle makes the suite unrunnable and a stale one makes it pass against old code. The bundle is a build artifact and is deliberately not committed: the `shasum` in `snap.manifest.json` seals it, and a checked-in copy would be a second source of truth that reviewers could not diff meaningfully. Build it, do not fetch it.
+
 `yarn start` serves the snap at `localhost:8080` and the companion dapp at `localhost:8000` for installation into MetaMask Flask.
 
 ## Documentation
