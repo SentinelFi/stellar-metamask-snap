@@ -38,6 +38,38 @@ A sandboxed extension that adds new capabilities to MetaMask. Learn more at [met
 
 </details>
 
+## Usage
+
+> **Not yet published.** The snap is pending its third-party audit and MetaMask Directory allowlisting, so it is not on npm and cannot be installed in regular MetaMask yet. The install steps that follow describe the flow once the snap is live.
+
+### Installing the snap
+
+1. **Install MetaMask:** make sure you have the latest version of the MetaMask extension in your browser.
+2. **Open a dapp that supports the snap:** any Stellar dapp built on [Stellar Wallets Kit](https://stellarwalletskit.dev) or on the [connector package](packages/connector), including this repository's companion dapp.
+3. **Choose Stellar Soroban** in the dapp's wallet picker, or click its Connect button. The dapp asks MetaMask to install `npm:stellar-soroban-snap`.
+4. **Review the install prompt:** MetaMask lists the permissions the snap requests (key derivation at `m/44'/148'`, dialogs, network access, storage, home page). Confirm to install.
+5. **Approve access:** the snap then asks you to grant that dapp access to your Stellar address. Approving is what connects the two, and every later signature still needs its own confirmation.
+
+Once installed, open the snap from the MetaMask menu → **Snaps** → **Stellar Soroban** to see your address, network, and balances, add further SEP-0005 accounts, switch the active account, or disconnect a dapp.
+
+### Using it
+
+- **Signing:** a dapp calls the SEP-43 API and MetaMask shows a confirmation dialog decoded from the transaction XDR itself, including a Soroban simulation for contract calls. Nothing is signed without your approval.
+- **Networks:** TESTNET by default, with PUBLIC (mainnet) and FUTURENET available. The network passphrase is pinned into every signature.
+- **Test funds:** on TESTNET and FUTURENET, a connected dapp can ask the snap to fund the account from friendbot. Only the wallet's own accounts can be funded.
+
+### For dapp developers
+
+Add the [connector package](packages/connector) and talk to the snap through a typed SEP-43 client, a drop-in `@stellar/freighter-api` facade, or a Stellar Wallets Kit module:
+
+```ts
+import { StellarSnap } from 'stellar-soroban-snap-connector';
+
+const snap = new StellarSnap();
+const { address } = await snap.connect();
+const { signedTxXdr } = await snap.signTransaction(xdr);
+```
+
 ## Development
 
 ```bash

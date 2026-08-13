@@ -9,7 +9,8 @@ import {
 } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
-import { resolveSigningKeypair } from '../keys';
+import { assertConnected } from './account';
+import { getWalletAddress, resolveSigningKeypair } from '../keys';
 import {
   externalServiceError,
   invalidRequest,
@@ -44,6 +45,35 @@ import {
 
 /** SEP-53 signed-message prefix. */
 const SIGNED_MESSAGE_PREFIX = 'Stellar Signed Message:\n';
+
+/**
+ * Gates account selection on a standing connection grant.
+ *
+ * Signing itself stays available to unconnected origins (cold signing with
+ * the active account is deliberate, Freighter-parity behavior), but choosing
+ * which account signs is not: resolution outcomes are observable, so an
+ * ungated selection lets any origin test arbitrary addresses against the
+ * wallet and learn which ones it holds. That is precisely the address
+ * linkage `getAccounts` is connection-gated to prevent.
+ *
+ * The grant is checked before the address is resolved, so a caller without
+ * one gets the same error whether or not the wallet holds the address.
+ *
+ * @param origin - The requesting dapp origin.
+ * @param requestedAddress - The selected address, when one was named.
+ */
+async function assertAccountSelectionAllowed(
+  origin: string,
+  requestedAddress?: string,
+): Promise<void> {
+  if (requestedAddress === undefined) {
+    return;
+  }
+  if (requestedAddress === (await getWalletAddress())) {
+    return;
+  }
+  await assertConnected(origin);
+}
 
 /**
  * `signTransaction` — parse the XDR (the only source of truth), show the
@@ -86,6 +116,7 @@ export async function signTransaction(
 
   // SEP-43 `address` option: resolve to an owned, revealed account (or the
   // active account when absent); a non-owned address is rejected.
+  await assertAccountSelectionAllowed(origin, request.address);
   const { keypair, index: accountIndex } = await resolveSigningKeypair(
     request.address,
   );
@@ -331,11 +362,25 @@ export async function signAuthEntry(
   // The entry itself names the authorizing account, so it selects the
   // signing account — resolved among owned, revealed accounts only. An
   // explicit `address` option must agree with the entry.
+  //
+  // The address is asserted before it is used: `resolveSigningKeypair` reads
+  // `undefined` as "no selection" and falls back to the active account, so a
+  // decode that ever yielded address-credentials without an address would
+  // sign an entry naming someone else. Unreachable today, fail-closed here.
+  if (!decoded.address) {
+    throw invalidRequest(
+      'This authorization entry does not name an authorizing account. Signing is refused.',
+    );
+  }
   if (request.address !== undefined && request.address !== decoded.address) {
     throw invalidRequest(
       'The address option does not match the account named by the authorization entry.',
     );
   }
+  // The entry names the account, so the entry itself is the selection: an
+  // entry naming any account but the active one needs a grant, exactly like
+  // an explicit `address` option.
+  await assertAccountSelectionAllowed(origin, decoded.address);
   let signer: Awaited<ReturnType<typeof resolveSigningKeypair>>;
   try {
     signer = await resolveSigningKeypair(decoded.address);
@@ -427,6 +472,7 @@ export async function signMessage(
 ): Promise<{ signedMessage: string; signerAddress: string }> {
   const request = validate(params, SignMessageParams);
 
+  await assertAccountSelectionAllowed(origin, request.address);
   const { keypair, index: accountIndex } = await resolveSigningKeypair(
     request.address,
   );

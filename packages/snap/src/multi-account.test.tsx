@@ -24,6 +24,15 @@ const SEP5_ADDRESS_1 =
 const SEP5_ADDRESS_2 =
   'GAY5PRAHJ2HIYBYCLZXTHID6SPVELOOYH2LBPH3LD4RUMXUW3DOYTLXW';
 
+/**
+ * A well-formed address this wallet does not hold, derived here from a fixed
+ * synthetic seed rather than hardcoded: the value is self-evidently a test
+ * artifact and cannot collide with a real account someone controls.
+ */
+const FOREIGN_ADDRESS = Keypair.fromRawEd25519Seed(
+  Buffer.alloc(32, 7),
+).publicKey();
+
 const ORIGIN = 'https://dapp.example';
 
 /** A state fragment granting {@link ORIGIN} a connection. */
@@ -270,6 +279,71 @@ describe('signing with the address option', () => {
     expect(error.message).toContain('Unknown address');
   }, 45000);
 
+  it('gives an unconnected origin the same answer for held and foreign addresses', async () => {
+    // Regression: resolution used to run before any grant check, so an
+    // origin with no grant could tell a held address (dialog) from a foreign
+    // one (silent "Unknown address") and thereby test arbitrary addresses
+    // against the wallet. Selecting an account now needs a grant, and the
+    // check runs first, so both cases are indistinguishable.
+    const { request } = await install(stateV2({ accounts: [0, 1] }));
+    const hostile = 'https://evil.example';
+
+    const held = getError(
+      await request({
+        origin: hostile,
+        method: 'signMessage',
+        params: { message: 'x', address: SEP5_ADDRESS_1 },
+      }),
+    );
+    const foreign = getError(
+      await request({
+        origin: hostile,
+        method: 'signMessage',
+        params: { message: 'x', address: FOREIGN_ADDRESS },
+      }),
+    );
+
+    expect(held.message).toContain('not connected');
+    expect(held.message).toBe(foreign.message);
+    expect(held.data?.code).toBe(foreign.data?.code);
+  }, 45000);
+
+  it('still lets an unconnected origin cold-sign with the active account', async () => {
+    // The gate covers account *selection*, not signing: SEP-43 cold signing
+    // with the active account is deliberate and must keep working.
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], activeAccount: 1 }),
+    );
+
+    const pending = request({
+      origin: 'https://cold.example',
+      method: 'signMessage',
+      params: { message: 'hello' },
+    });
+    const ui = await pending.getInterface();
+    await (ui as { ok: () => Promise<void> }).ok();
+    expect(
+      getResult<{ signerAddress: string }>(await pending).signerAddress,
+    ).toBe(SEP5_ADDRESS_1);
+  }, 45000);
+
+  it('lets an unconnected origin name the active account explicitly', async () => {
+    const { request } = await install(
+      stateV2({ accounts: [0, 1], activeAccount: 1 }),
+    );
+
+    const pending = request({
+      origin: 'https://cold.example',
+      method: 'signMessage',
+      params: { message: 'hello', address: SEP5_ADDRESS_1 },
+    });
+    const ui = await pending.getInterface();
+    await (ui as { ok: () => Promise<void> }).ok();
+    expect(
+      getResult<{ signerAddress: string }>(await pending).signerAddress,
+    ).toBe(SEP5_ADDRESS_1);
+  }, 45000);
+
   it('signTransaction resolves the address option to the revealed account', async () => {
     const { request } = await install(
       stateV2({ accounts: [0, 1], origins: CONNECTED }),
@@ -448,6 +522,22 @@ describe('onUserInput add-account flow', () => {
   it('ignores a malformed account index', async () => {
     await click('use-account:oops');
     expect((stored as { activeAccount: number }).activeAccount).toBe(0);
+    expect(updates).toBe(0);
+  });
+
+  it('ignores numeric forms this page never renders', async () => {
+    // Regression: a bare `Number()` conversion reads an empty suffix as 0 and
+    // accepts hex, exponent, and padded forms. Only the plain decimal shape
+    // the page emits may select an account.
+    stored = stateV2({
+      accounts: [0, 1],
+      activeAccount: 1,
+      origins: CONNECTED,
+    });
+    for (const suffix of ['', ' ', '0x0', '1e0', ' 0 ', '+0', '0.0', '00']) {
+      await click(`use-account:${suffix}`);
+      expect((stored as { activeAccount: number }).activeAccount).toBe(1);
+    }
     expect(updates).toBe(0);
   });
 

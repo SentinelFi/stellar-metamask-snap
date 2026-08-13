@@ -3,7 +3,55 @@ import { Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { invalidRequest } from '../rpc/errors';
-import { getState } from '../state';
+import { getState, MAX_ACCOUNT_INDEX } from '../state';
+
+/**
+ * Fetches the SEP-0005 parent node `m/44'/148'` (curve ed25519), the subtree
+ * the manifest grants entropy for. Callers that derive several accounts must
+ * fetch it once and reuse it: every call crosses the sandbox boundary with
+ * the parent key material, so repeating it per index multiplies that
+ * exposure and the work an unauthenticated request can cause.
+ *
+ * @returns The SEP-0005 parent node.
+ */
+async function getAccountParentNode(): Promise<SLIP10Node> {
+  const entropy = await snap.request({
+    method: 'snap_getBip32Entropy',
+    params: {
+      path: ['m', "44'", "148'"],
+      curve: 'ed25519',
+    },
+  });
+  return SLIP10Node.fromJSON(entropy);
+}
+
+/**
+ * Derives one account keypair from an already-fetched parent node.
+ *
+ * The index bound is re-asserted here, at the primitive itself, rather than
+ * trusting every caller: this is the only place an index becomes a signing
+ * key, so an index that escaped state validation must not derive.
+ *
+ * @param node - The SEP-0005 parent node.
+ * @param index - The SEP-0005 account index (`x` in `m/44'/148'/x'`).
+ * @returns The Stellar keypair for the account.
+ */
+async function deriveFromNode(
+  node: SLIP10Node,
+  index: number,
+): Promise<Keypair> {
+  if (!Number.isInteger(index) || index < 0 || index >= MAX_ACCOUNT_INDEX) {
+    throw invalidRequest('Invalid account index.');
+  }
+
+  const child = await node.derive([`slip10:${index}'`]);
+
+  if (!child.privateKeyBytes) {
+    throw new Error('Failed to derive a private key.');
+  }
+
+  return Keypair.fromRawEd25519Seed(Buffer.from(child.privateKeyBytes));
+}
 
 /**
  * Derive the SEP-0005 keypair `m/44'/148'/{index}'` from the MetaMask secret
@@ -17,22 +65,7 @@ import { getState } from '../state';
  * @returns The Stellar keypair for the account.
  */
 export async function deriveKeypair(index = 0): Promise<Keypair> {
-  const entropy = await snap.request({
-    method: 'snap_getBip32Entropy',
-    params: {
-      path: ['m', "44'", "148'"],
-      curve: 'ed25519',
-    },
-  });
-
-  const node = await SLIP10Node.fromJSON(entropy);
-  const child = await node.derive([`slip10:${index}'`]);
-
-  if (!child.privateKeyBytes) {
-    throw new Error('Failed to derive a private key.');
-  }
-
-  return Keypair.fromRawEd25519Seed(Buffer.from(child.privateKeyBytes));
+  return deriveFromNode(await getAccountParentNode(), index);
 }
 
 /**
@@ -65,10 +98,11 @@ export async function getOwnedAccounts(): Promise<
   { index: number; address: string }[]
 > {
   const state = await getState();
+  const node = await getAccountParentNode();
   return Promise.all(
     state.accounts.map(async (index) => ({
       index,
-      address: await getAddressForIndex(index),
+      address: (await deriveFromNode(node, index)).publicKey(),
     })),
   );
 }
@@ -88,17 +122,27 @@ export async function resolveSigningKeypair(
   requestedAddress?: string,
 ): Promise<{ keypair: Keypair; index: number }> {
   const state = await getState();
+  const node = await getAccountParentNode();
   if (requestedAddress === undefined) {
     return {
-      keypair: await deriveKeypair(state.activeAccount),
+      keypair: await deriveFromNode(node, state.activeAccount),
       index: state.activeAccount,
     };
   }
-  for (const index of state.accounts) {
-    const keypair = await deriveKeypair(index);
-    if (keypair.publicKey() === requestedAddress) {
-      return { keypair, index };
-    }
+  // Every revealed account is derived before comparing, so the work done —
+  // and thus the time taken — does not depend on where (or whether) the
+  // requested address sits in the set.
+  const candidates = await Promise.all(
+    state.accounts.map(async (index) => ({
+      index,
+      keypair: await deriveFromNode(node, index),
+    })),
+  );
+  const match = candidates.find(
+    (candidate) => candidate.keypair.publicKey() === requestedAddress,
+  );
+  if (!match) {
+    throw invalidRequest('Unknown address: this wallet does not hold it.');
   }
-  throw invalidRequest('Unknown address: this wallet does not hold it.');
+  return match;
 }

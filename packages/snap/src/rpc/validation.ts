@@ -68,27 +68,39 @@ export function validate<Type, Schema>(
   }
 }
 
+/**
+ * The SEP-43 `address` option: which of the wallet's accounts should sign.
+ *
+ * Shape-validated at the boundary like every other address the snap accepts
+ * (`OptionalAddressParams`), rather than being passed through as a free
+ * string and left to fail later on an exact match against derived keys. One
+ * validation standard for one concept: a value that is not an address cannot
+ * name an account, so it is rejected before it reaches resolution, and the
+ * field carries an implicit length bound instead of none.
+ */
+const AddressOption = optional(StellarAddress);
+
 export const SignTransactionParams = object({
   /** Base64-encoded TransactionEnvelope XDR. */
   xdr: boundedString(MAX_XDR_LENGTH),
   /** Must match the active network's passphrase when provided. */
   networkPassphrase: optional(string()),
-  /** Must match the wallet's address when provided (SEP-43 option bag). */
-  address: optional(string()),
+  /** Selects the signing account; must be one the wallet holds. */
+  address: AddressOption,
   /** When true, submit the signed transaction to Horizon after signing. */
   submit: optional(boolean()),
 });
 
 export const SignMessageParams = object({
   message: boundedString(MAX_MESSAGE_LENGTH),
-  address: optional(string()),
+  address: AddressOption,
 });
 
 export const SignAuthEntryParams = object({
   /** Base64-encoded SorobanAuthorizationEntry XDR. */
   authEntry: boundedString(MAX_AUTH_ENTRY_LENGTH),
   networkPassphrase: optional(string()),
-  address: optional(string()),
+  address: AddressOption,
 });
 
 export const SetNetworkParams = object({

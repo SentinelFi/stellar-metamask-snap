@@ -25,13 +25,29 @@ const ORIGIN = 'https://soroban-dapp.example';
 /** The XLM Stellar Asset Contract address on testnet (deterministic). */
 const XLM_SAC_TESTNET = Asset.native().contractId(Networks.TESTNET);
 
+/** Version-2 state granting {@link ORIGIN} a standing connection. */
+const CONNECTED_STATE = {
+  version: 2,
+  network: 'TESTNET',
+  activeAccount: 0,
+  accounts: [0],
+  origins: { [ORIGIN]: { connectedAt: '2026-08-12T00:00:00Z' } },
+  tokens: {},
+};
+
 /**
  * Installs the snap with the SEP-5 test mnemonic.
  *
+ * @param state - Optional initial snap state.
  * @returns The snaps-jest request helper.
  */
-async function install() {
-  return installSnap({ options: { secretRecoveryPhrase: SEP5_MNEMONIC } });
+async function install(state?: Record<string, unknown>) {
+  return installSnap({
+    options: {
+      secretRecoveryPhrase: SEP5_MNEMONIC,
+      ...(state ? { state: state as never } : {}),
+    },
+  });
 }
 
 /**
@@ -333,7 +349,9 @@ describe('signAuthEntry', () => {
   });
 
   it('rejects entries naming a different account with SEP-43 code -3', async () => {
-    const { request } = await install();
+    // Connected: an entry naming a non-active account is a selection and
+    // needs a grant, so this exercises resolution, not the selection gate.
+    const { request } = await install(CONNECTED_STATE);
     const entry = buildAuthEntry({ address: SEP5_ADDRESS_1 });
 
     const error = getError(
@@ -345,6 +363,26 @@ describe('signAuthEntry', () => {
     );
     expect(error.data?.code).toBe(-3);
     expect(error.message).toContain('different account');
+  });
+
+  it('refuses an entry naming a non-active account without a grant', async () => {
+    // The entry is the account selection, so it is gated like an explicit
+    // `address` option: an ungated origin must not learn from the answer
+    // whether the wallet holds the named account.
+    const { request } = await install();
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signAuthEntry',
+        params: {
+          authEntry: buildAuthEntry({ address: SEP5_ADDRESS_1 }).toXDR(
+            'base64',
+          ),
+        },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('not connected');
   });
 
   it('rejects malformed entry XDR with SEP-43 code -3', async () => {

@@ -129,6 +129,111 @@ describe('parseState', () => {
   });
 });
 
+describe('parseState (hostile version-1 fixtures)', () => {
+  /*
+   * The version-1 migration is the one path that carries attacker-relevant
+   * data (connection grants) from an unversioned past into the multi-account
+   * schema. A malformed v1 object must never migrate partially: it either
+   * matches the v1 schema exactly, or it resets.
+   */
+
+  it('resets a version-1 object carrying version-2 account fields', () => {
+    // A v1 record that also claims accounts is not a shape this snap ever
+    // wrote. Migrating it would let a crafted store choose which indices the
+    // wallet treats as revealed, which is the whole point of the registry.
+    expect(
+      parseState({ ...V1_STATE, accounts: [0, 5], activeAccount: 5 }),
+    ).toStrictEqual(DEFAULT_STATE);
+    expect(parseState({ ...V1_STATE, accounts: [0] })).toStrictEqual(
+      DEFAULT_STATE,
+    );
+    expect(parseState({ ...V1_STATE, activeAccount: 3 })).toStrictEqual(
+      DEFAULT_STATE,
+    );
+  });
+
+  it('resets a version-1 object with a corrupt grant or network', () => {
+    expect(parseState({ ...V1_STATE, network: 'MAINNET' })).toStrictEqual(
+      DEFAULT_STATE,
+    );
+    expect(
+      parseState({ ...V1_STATE, origins: { 'https://x.example': {} } }),
+    ).toStrictEqual(DEFAULT_STATE);
+    expect(
+      parseState({
+        ...V1_STATE,
+        origins: { 'https://x.example': { connectedAt: 5 } },
+      }),
+    ).toStrictEqual(DEFAULT_STATE);
+    expect(parseState({ version: 1 })).toStrictEqual(DEFAULT_STATE);
+    expect(parseState({ ...V1_STATE, version: '1' })).toStrictEqual(
+      DEFAULT_STATE,
+    );
+  });
+
+  it('does not pollute the prototype through a migrated origin key', () => {
+    // JSON.parse (not an object literal) is what the state store returns, and
+    // it is the only way `__proto__` arrives as a real own key rather than
+    // setting the prototype.
+    const hostile = JSON.parse(
+      '{"version":1,"network":"TESTNET","origins":' +
+        '{"__proto__":{"connectedAt":"2026-08-12T00:00:00Z"},' +
+        '"constructor":{"connectedAt":"2026-08-12T00:00:00Z"}},"tokens":{}}',
+    );
+    const state = parseState(hostile);
+
+    expect(state.version).toBe(2);
+    expect(state.accounts).toStrictEqual([0]);
+    // The keys survive as inert own properties...
+    expect(Object.keys(state.origins).sort()).toStrictEqual([
+      '__proto__',
+      'constructor',
+    ]);
+    // ...but neither confers a grant, and nothing reaches Object.prototype.
+    expect(originHasGrant(state.origins, '__proto__')).toBe(false);
+    expect(originHasGrant(state.origins, 'constructor')).toBe(false);
+    expect(({} as Record<string, unknown>).connectedAt).toBeUndefined();
+    expect(Object.prototype).toStrictEqual(Object.prototype);
+  });
+
+  it('does not let a hostile account registry reach key derivation', () => {
+    // Every value that could steer `deriveKeypair` into an index the user
+    // never revealed must fail the schema outright, not be coerced.
+    for (const accounts of [
+      [0, '1'],
+      [0, null],
+      [0, Number.NaN],
+      [0, Number.POSITIVE_INFINITY],
+      [0, 1e21],
+      [0, MAX_ACCOUNT_INDEX + 1],
+      [0, -0.0001],
+      'oops',
+      { 0: 0 },
+    ]) {
+      expect(parseState({ ...VALID_STATE, accounts })).toStrictEqual(
+        DEFAULT_STATE,
+      );
+    }
+    // Negative zero is an integer and equals 0, so it normalizes rather than
+    // resetting: the derived index is still 0.
+    expect(
+      parseState({ ...VALID_STATE, accounts: [-0] }).accounts,
+    ).toStrictEqual([0]);
+  });
+
+  it('caps the account registry at the derivation bound', () => {
+    const full = Array.from({ length: MAX_ACCOUNT_INDEX }, (_, i) => i);
+    expect(
+      parseState({ ...VALID_STATE, accounts: full }).accounts,
+    ).toHaveLength(MAX_ACCOUNT_INDEX);
+    // One entry past the bound cannot be a valid index set (indices are
+    // 0..MAX-1 and deduplicated), so it resets.
+    expect(
+      parseState({ ...VALID_STATE, accounts: [...full, 0] }),
+    ).toStrictEqual(DEFAULT_STATE);
+  });
+});
+
 describe('origin grant key safety', () => {
   it('rejects prototype-chain keys', () => {
     expect(isSafeStateKey('https://dapp.example')).toBe(true);

@@ -132,7 +132,11 @@ export const onUserInput: OnUserInputHandler = async ({ id, event }) => {
     // The click is the user's own switch action. Only a revealed index may
     // be activated, so a button name from a stale page (or a malformed one)
     // is a no-op; the state helper re-checks membership under the lock.
-    const index = Number(event.name.slice(USE_ACCOUNT_PREFIX.length));
+    // `Number` is not enough on its own: it reads an empty suffix as 0 and
+    // accepts hex, exponent, and whitespace-padded forms, none of which this
+    // page ever renders.
+    const suffix = event.name.slice(USE_ACCOUNT_PREFIX.length);
+    const index = /^(?:0|[1-9][0-9]*)$/u.test(suffix) ? Number(suffix) : -1;
     const { accounts } = await getState();
     if (accounts.includes(index)) {
       await setActiveAccount(index);

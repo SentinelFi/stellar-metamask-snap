@@ -19,6 +19,21 @@ import { invalidRequest } from '../rpc/errors';
 /**
  * Versioned snap state, stored encrypted via `snap_manageState`.
  * Never contains key material — keys are derived on demand and discarded.
+ *
+ * Schema history:
+ *
+ * | Version | Shape                                            | Status                   |
+ * | ------- | ------------------------------------------------ | ------------------------ |
+ * | 1       | `network`, `origins`, `tokens`                    | pre-release only         |
+ * | 2       | adds `activeAccount`, `accounts` (multi-account)  | current                  |
+ *
+ * Version 1 was never published: the snap had no npm release before
+ * multi-account landed, so the only stores holding it are development and
+ * local-test installs. The migration therefore protects developer wallets,
+ * not users, and may be dropped once the first audited release has shipped
+ * and no pre-release install is worth preserving. It is kept for now because
+ * removing it would silently reset those wallets' grants and tracked tokens.
+ * Design rationale: docs/MULTI-ACCOUNT.md section 5.6.
  */
 /** A tracked Soroban token (contract), scoped to a network. */
 export type TrackedToken = {
@@ -90,9 +105,11 @@ const SnapStateStruct = object({
 });
 
 /**
- * Structural schema for legacy version-1 state, kept so a pre-multi-account
- * wallet migrates in place instead of resetting (which would drop its
- * connection grants and tracked tokens).
+ * Structural schema for legacy version-1 state (pre-release; see the schema
+ * history above), kept so a pre-multi-account wallet migrates in place
+ * instead of resetting (which would drop its connection grants and tracked
+ * tokens). Exact-match by design: a version-1 object carrying any other key,
+ * including version-2 account fields, matches neither schema and resets.
  */
 const SnapStateV1Struct = object({
   version: literal(1),

@@ -23,13 +23,29 @@ const SEP5_ADDRESS_0 =
 
 const ORIGIN = 'https://dapp.example';
 
+/** Version-2 state granting {@link ORIGIN} a standing connection. */
+const CONNECTED_STATE = {
+  version: 2,
+  network: 'TESTNET',
+  activeAccount: 0,
+  accounts: [0],
+  origins: { [ORIGIN]: { connectedAt: '2026-08-12T00:00:00Z' } },
+  tokens: {},
+};
+
 /**
  * Installs the snap with the SEP-5 test mnemonic.
  *
+ * @param state - Optional initial snap state.
  * @returns The snaps-jest request helper.
  */
-async function install() {
-  return installSnap({ options: { secretRecoveryPhrase: SEP5_MNEMONIC } });
+async function install(state?: Record<string, unknown>) {
+  return installSnap({
+    options: {
+      secretRecoveryPhrase: SEP5_MNEMONIC,
+      ...(state ? { state: state as never } : {}),
+    },
+  });
 }
 
 /**
@@ -298,7 +314,9 @@ describe('signTransaction', () => {
   });
 
   it('rejects signing for an unknown address with SEP-43 code -3', async () => {
-    const { request } = await install();
+    // Connected: selecting a non-active account needs a grant, so this
+    // exercises address resolution rather than the selection gate.
+    const { request } = await install(CONNECTED_STATE);
     const error = getError(
       await request({
         origin: ORIGIN,
@@ -311,6 +329,22 @@ describe('signTransaction', () => {
     );
     expect(error.data?.code).toBe(-3);
     expect(error.message).toContain('Unknown address');
+  });
+
+  it('refuses account selection from an origin without a grant', async () => {
+    const { request } = await install();
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signTransaction',
+        params: {
+          xdr: buildPaymentXdr(),
+          address: 'GBAW5XGWORWVFE2XTJYDTLDHXTY2Q2MO73HYCGB3XMFMQ562Q2W2GJQX',
+        },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('not connected');
   });
 
   it('frames sequence-0 transactions as unverified signature requests', async () => {
