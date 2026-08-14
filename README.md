@@ -50,7 +50,17 @@ A sandboxed extension that adds new capabilities to MetaMask. Learn more at [met
 4. **Review the install prompt:** MetaMask lists the permissions the snap requests (key derivation at `m/44'/148'`, dialogs, network access, storage, home page). Confirm to install.
 5. **Approve access:** the snap then asks you to grant that dapp access to your Stellar address. Approving is what connects the two, and every later signature still needs its own confirmation.
 
-Once installed, open the snap from the MetaMask menu → **Snaps** → **Stellar Soroban** to see your address, network, and balances, add further SEP-0005 accounts, switch the active account, or disconnect a dapp.
+Once installed, open the snap from the MetaMask menu → **Snaps** → **Stellar Soroban** to see your address, network, and balances, add further SEP-0005 accounts (or [find one you already hold](#bringing-an-existing-stellar-wallet)), switch the active account, or disconnect a dapp.
+
+### Bringing an existing Stellar wallet
+
+Your Stellar accounts here are derived from your MetaMask Secret Recovery Phrase along the standard SEP-0005 path `m/44'/148'/x'`: the same path Freighter, Lobstr, Ledger, and other Stellar wallets use. Whether an account you already hold shows up depends on which phrase it came from.
+
+- **Created from the phrase MetaMask already holds.** It is already yours here, just not revealed yet. Open the snap home page and use **Find an account by address or index**: paste the `G…` address and the snap locates which account index it is and adds it. Accounts are kept gap-free (matching how other SEP-0005 wallets enumerate them), so reaching account 5 also reveals accounts 0 to 4; the confirmation says exactly how many it is adding.
+- **Created from a different recovery phrase.** Import that phrase into MetaMask itself and the accounts follow automatically, with no import step in the snap. One caveat: the snap derives from MetaMask's **primary** recovery phrase, so adding your Stellar phrase as an additional phrase in MetaMask will not surface those accounts.
+- **You only have the secret key (`S…`), not a recovery phrase.** This cannot be added. The snap has no way to accept an existing private key, deliberately: it derives keys on demand and never stores key material, which is what keeps its encrypted storage free of anything that could move your funds. Use a wallet that supports secret-key import, or transfer the balance to an account this wallet derives.
+
+Only the address is ever searched for, entirely on your own device: no lookup leaves MetaMask, and nothing is added without your confirmation.
 
 ### Using it
 

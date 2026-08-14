@@ -23,6 +23,7 @@ Nothing has been published to npm yet, so every change below is still unreleased
 - Companion packages: `stellar-soroban-snap-connector` (typed SEP-0043 client, drop-in `@stellar/freighter-api` facade, Stellar Wallets Kit module) and a Gatsby test-bench dapp.
 - Property tests over the decoders and the transaction dialog, asserting that no input throws unhandled, that rendered inline text carries no hidden characters, and that every rendering limit sets the flag the signing paths fail closed on.
 - Version-consistency check (`yarn check:versions`) run in CI, covering the four files that carry the release version.
+- Account lookup on the snap home page: enter a `G...` address or an index to reach an account you already hold in another SEP-0005 wallet. Previously the only way to reach account N was to click "Add account" N times, one confirmation each, which made the 256-account range unusable in practice. The address search derives locally over the bounded index range with no network lookup, is reachable only from the home page (never from a dapp), and the single confirmation discloses how many accounts the run reveals, since the set is kept gap-free for portability with other SEP-0005 wallets.
 
 ### Security
 

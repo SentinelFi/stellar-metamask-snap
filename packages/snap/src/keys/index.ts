@@ -126,6 +126,40 @@ async function cacheAddresses(
 }
 
 /**
+ * Finds which SEP-0005 index derives a given address, or null when none of
+ * the derivable indices does.
+ *
+ * This is what lets a user reach an account they already hold in another
+ * SEP-0005 wallet: they know its address, not the index it sits at. The
+ * search is purely local derivation over the bounded index range, with no
+ * network lookup, so it discloses nothing and cannot be driven by a dapp:
+ * only the home page calls it, in response to the user's own input.
+ *
+ * Derivation stops at the first match, and results fill the shared address
+ * cache, so a repeated search costs nothing beyond the first.
+ *
+ * @param address - The `G...` address to locate.
+ * @returns The account index, or null when the address is not derivable
+ * from this wallet's secret recovery phrase.
+ */
+export async function findAccountIndexByAddress(
+  address: string,
+): Promise<number | null> {
+  const getNode = lazyAccountParentNode();
+  for (let index = 0; index < MAX_ACCOUNT_INDEX; index += 1) {
+    let candidate = addressCache.get(index);
+    if (candidate === undefined) {
+      candidate = (await deriveFromNode(await getNode(), index)).publicKey();
+      addressCache.set(index, candidate);
+    }
+    if (candidate === address) {
+      return index;
+    }
+  }
+  return null;
+}
+
+/**
  * The public address for a SEP-0005 account index.
  *
  * @param index - The account index.

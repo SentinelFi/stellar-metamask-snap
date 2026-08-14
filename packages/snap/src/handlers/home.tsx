@@ -4,7 +4,10 @@ import {
   Box,
   Button,
   Copyable,
+  Field,
+  Form,
   Heading,
+  Input,
   Row,
   Section,
   Text,
@@ -43,6 +46,12 @@ export const USE_ACCOUNT_PREFIX = 'use-account:';
 
 /** Button name for revealing the next account (`onUserInput`). */
 export const ADD_ACCOUNT_BUTTON = 'add-account';
+
+/** Form name for the account lookup (`onUserInput` form submission). */
+export const FIND_ACCOUNT_FORM = 'find-account';
+
+/** Input name inside {@link FIND_ACCOUNT_FORM}. */
+export const FIND_ACCOUNT_INPUT = 'find-account-query';
 
 /** A revealed account, ready for display. */
 export type AccountRow = { index: number; address: string };
@@ -132,6 +141,19 @@ const HomePage: SnapComponent<HomePageProps> = ({
         </Box>
       ))}
       <Button name={ADD_ACCOUNT_BUTTON}>Add account</Button>
+      {/* Reaching an account you already hold in another SEP-0005 wallet
+          used to mean clicking "Add account" once per index. Looking it up
+          by address (or by index, when you know it) gets there in one
+          step. */}
+      <Form name={FIND_ACCOUNT_FORM}>
+        <Field label="Find an account by address or index">
+          <Input
+            name={FIND_ACCOUNT_INPUT}
+            placeholder="G… address, or an index such as 3"
+          />
+        </Field>
+        <Button type="submit">Find</Button>
+      </Form>
     </Section>
     <Section>
       <Text>

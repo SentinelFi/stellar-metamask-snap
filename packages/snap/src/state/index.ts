@@ -405,6 +405,56 @@ export async function revealAccount(index: number): Promise<void> {
 }
 
 /**
+ * Reveals every index up to and including `target` in one locked commit.
+ *
+ * Reaching an account the user already holds elsewhere previously meant
+ * revealing one index per confirmation, so an account at index 40 cost 40
+ * dialogs. This reveals the whole run at once while preserving the same
+ * gap-free invariant {@link revealAccount} maintains: the set still grows
+ * contiguously from 0, so it stays portable with other SEP-0005 wallets.
+ *
+ * @param target - The highest index to reveal.
+ * @param expectedFrom - The next revealable index the caller showed in its
+ * confirmation dialog. Re-checked here so a stale approval cannot commit a
+ * different run of accounts than the one the user saw.
+ * @returns The indices actually added, in ascending order.
+ */
+export async function revealAccountsThrough(
+  target: number,
+  expectedFrom: number,
+): Promise<number[]> {
+  return withStateLock(async () => {
+    const state = await getState();
+    if (!Number.isInteger(target) || target < 0) {
+      throw invalidRequest('Invalid account index.');
+    }
+    if (target >= MAX_ACCOUNT_INDEX) {
+      throw invalidRequest(
+        `Account limit reached: at most ${MAX_ACCOUNT_INDEX} accounts.`,
+      );
+    }
+    const next = nextAccountIndex(state);
+    if (target < next) {
+      // Already revealed, by this call or by a concurrent one. The user's
+      // goal is satisfied either way, so this is a no-op rather than an
+      // error.
+      return [];
+    }
+    if (next !== expectedFrom) {
+      throw invalidRequest(
+        'The account list changed while the dialog was open. Try again.',
+      );
+    }
+    const added: number[] = [];
+    for (let index = next; index <= target; index += 1) {
+      added.push(index);
+    }
+    await saveState({ ...state, accounts: [...state.accounts, ...added] });
+    return added;
+  });
+}
+
+/**
  * Switches the active account via a locked read-modify-write, mirroring
  * {@link setActiveNetwork}. Membership is re-checked inside the lock: a
  * stale pre-dialog snapshot can never activate an index that is no longer

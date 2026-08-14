@@ -508,6 +508,23 @@ describe('onUserInput add-account flow', () => {
     } as never);
   }
 
+  /**
+   * Submits the home-page account-lookup form.
+   *
+   * @param query - The lookup input (an address or an index).
+   */
+  async function submitLookup(query: string) {
+    await onUserInput({
+      id: 'test-interface',
+      event: {
+        type: UserInputEventType.FormSubmitEvent,
+        name: 'find-account',
+        value: { 'find-account-query': query },
+      },
+      context: null,
+    } as never);
+  }
+
   it('reveals the next account after confirmation', async () => {
     await click('add-account');
 
@@ -584,6 +601,105 @@ describe('onUserInput add-account flow', () => {
     expect((stored as { accounts: number[] }).accounts).toHaveLength(
       MAX_ACCOUNT_INDEX,
     );
+    expect(updates).toBe(0);
+  });
+
+  it('locates an account by address and reveals through it in one step', async () => {
+    // The point of the lookup: someone holding this address in another
+    // SEP-0005 wallet reaches it with one confirmation, not one per index.
+    await submitLookup(SEP5_ADDRESS_2);
+
+    expect(dialogs).toHaveLength(1);
+    const content = JSON.stringify(dialogs[0]);
+    expect(content).toContain(SEP5_ADDRESS_2);
+    // The run of accounts it also reveals is disclosed, not silent.
+    expect(content).toContain('gap-free');
+
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([
+      0, 1, 2,
+    ]);
+    expect(updates).toBe(1);
+  });
+
+  it('locates an account by index', async () => {
+    await submitLookup('2');
+
+    expect(JSON.stringify(dialogs[0])).toContain(SEP5_ADDRESS_2);
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([
+      0, 1, 2,
+    ]);
+  });
+
+  it('tolerates surrounding whitespace in the query', async () => {
+    await submitLookup(`  ${SEP5_ADDRESS_1}  `);
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0, 1]);
+  });
+
+  it('adds nothing when the confirmation is rejected', async () => {
+    dialogResponse = false;
+    await submitLookup(SEP5_ADDRESS_2);
+
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0]);
+    expect(updates).toBe(0);
+  });
+
+  it('reports an address this recovery phrase does not derive', async () => {
+    // A Stellar account from a different phrase cannot be added: the snap
+    // holds no key for it and has no import path, so say so plainly.
+    await submitLookup(FOREIGN_ADDRESS);
+
+    expect(JSON.stringify(dialogs)).toContain('not derived from this wallet');
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0]);
+    expect(updates).toBe(0);
+  });
+
+  it('reports an already-revealed account instead of re-adding it', async () => {
+    stored = stateV2({ accounts: [0, 1], origins: CONNECTED });
+    await submitLookup(SEP5_ADDRESS_1);
+
+    expect(JSON.stringify(dialogs)).toContain('already in your account list');
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0, 1]);
+    expect(updates).toBe(0);
+  });
+
+  it('rejects queries that are neither an address nor an index', async () => {
+    for (const query of [
+      '',
+      '   ',
+      'oops',
+      '0x2',
+      '1e0',
+      '-1',
+      '2.5',
+      'G123',
+    ]) {
+      await submitLookup(query);
+      expect((stored as { accounts: number[] }).accounts).toStrictEqual([0]);
+    }
+    expect(updates).toBe(0);
+  });
+
+  it('refuses an index beyond the account cap', async () => {
+    await submitLookup(String(MAX_ACCOUNT_INDEX));
+
+    expect(JSON.stringify(dialogs)).toContain('out of range');
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0]);
+    expect(updates).toBe(0);
+  });
+
+  it('ignores form submissions from a form this page does not render', async () => {
+    await onUserInput({
+      id: 'test-interface',
+      event: {
+        type: UserInputEventType.FormSubmitEvent,
+        name: 'not-our-form',
+        value: { 'find-account-query': SEP5_ADDRESS_2 },
+      },
+      context: null,
+    } as never);
+
+    expect(dialogs).toHaveLength(0);
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0]);
     expect(updates).toBe(0);
   });
 });

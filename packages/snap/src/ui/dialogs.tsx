@@ -446,6 +446,64 @@ export const AddAccountDialog: SnapComponent<AddAccountDialogProps> = ({
   </Box>
 );
 
+export type FindAccountDialogProps = {
+  index: number;
+  address: string;
+  /** How many accounts this reveals, including the target. */
+  count: number;
+  /** The lowest index being revealed. */
+  from: number;
+};
+
+/**
+ * Confirmation for revealing a run of SEP-0005 accounts up to a located one
+ * (home-page account lookup).
+ *
+ * The account set is kept gap-free so it matches how other SEP-0005 wallets
+ * enumerate accounts, which means reaching account N also reveals everything
+ * below it. That is stated plainly here rather than left as a surprise,
+ * because every revealed address becomes visible to connected sites.
+ *
+ * @param props - The dialog props.
+ * @param props.index - The located SEP-0005 index.
+ * @param props.address - The address derived for that index.
+ * @param props.count - How many accounts are revealed in total.
+ * @param props.from - The lowest index being revealed.
+ * @returns The dialog content.
+ */
+export const FindAccountDialog: SnapComponent<FindAccountDialogProps> = ({
+  index,
+  address,
+  count,
+  from,
+}) => (
+  <Box>
+    <Heading>Add account</Heading>
+    <Text>
+      {`This adds account ${index} (SEP-0005 path m/44'/148'/${index}') to this wallet. The same account appears in any SEP-0005 wallet restored from this secret recovery phrase.`}
+    </Text>
+    <Section>
+      <Row label="Account">
+        <Text>{`Account ${index}`}</Text>
+      </Row>
+      <Text>Address</Text>
+      <Copyable value={address} />
+    </Section>
+    {count > 1 ? (
+      <Text>
+        {`Accounts are kept gap-free, so this also adds accounts ${from} to ${
+          index - 1
+        }: ${count} accounts in total.`}
+      </Text>
+    ) : null}
+    <Text>
+      Connected sites that enumerate your accounts will see these addresses. If
+      you keep separate accounts to avoid linking activity, be aware they are
+      disclosed together.
+    </Text>
+  </Box>
+);
+
 export type SwitchAccountDialogProps = {
   origin: string;
   fromIndex: number;
