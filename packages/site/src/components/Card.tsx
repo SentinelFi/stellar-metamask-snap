@@ -26,6 +26,10 @@ const CardWrapper = styled.div<{
   border-radius: ${({ theme }) => theme.radii.default};
   box-shadow: ${({ theme }) => theme.shadows.default};
   filter: opacity(${({ disabled }) => (disabled ? '.4' : '1')});
+  /* A disabled card must actually block interaction, not just look dim:
+     its content can include inputs and links that carry no disabled
+     attribute of their own and would otherwise remain clickable. */
+  pointer-events: ${({ disabled }) => (disabled ? 'none' : 'auto')};
   align-self: stretch;
   ${({ theme }) => theme.mediaQueries.small} {
     width: 100%;

@@ -1,9 +1,9 @@
-import styled from 'styled-components';
+import styled, { useTheme } from 'styled-components';
 
 import { HeaderButtons } from './Buttons';
 import { SnapLogo } from './SnapLogo';
 import { Toggle } from './Toggle';
-import { getThemePreference } from '../utils';
+import { dark } from '../config/theme';
 
 const HeaderWrapper = styled.header`
   display: flex;
@@ -41,6 +41,13 @@ export const Header = ({
 }: {
   handleToggleClick: () => void;
 }) => {
+  // The active theme object identifies the state Root already owns: re-reading
+  // the stored preference here (as this used to do) touches storage on every
+  // render and can disagree with the theme actually applied once the user has
+  // toggled. The provider hands out the exact `dark`/`light` object, so an
+  // identity check is reliable.
+  const theme = useTheme();
+
   return (
     <HeaderWrapper>
       <LogoWrapper>
@@ -48,10 +55,7 @@ export const Header = ({
         <Title>Stellar Soroban Snap</Title>
       </LogoWrapper>
       <RightContainer>
-        <Toggle
-          onToggle={handleToggleClick}
-          defaultChecked={getThemePreference()}
-        />
+        <Toggle onToggle={handleToggleClick} checked={theme === dark} />
         <HeaderButtons />
       </RightContainer>
     </HeaderWrapper>

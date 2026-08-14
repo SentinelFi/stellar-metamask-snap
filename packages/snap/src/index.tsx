@@ -120,11 +120,17 @@ export const onUserInput: OnUserInputHandler = async ({ id, event }) => {
     await disconnectOrigin(event.name.slice(DISCONNECT_PREFIX.length));
     changed = true;
   } else if (event.name.startsWith(REMOVE_TOKEN_PREFIX)) {
-    // Name shape: `remove-token:<network>:<contractId>`.
+    // Name shape: `remove-token:<network>:<contractId>`. Only this snap's
+    // own page emits these names, so a missing separator cannot occur in
+    // practice; it is still checked so a malformed name is a clean no-op
+    // instead of slicing into a nonsense network string.
     const target = event.name.slice(REMOVE_TOKEN_PREFIX.length);
     const separator = target.indexOf(':');
-    const network = target.slice(0, separator);
-    if ((NETWORK_NAMES as readonly string[]).includes(network)) {
+    const network = separator === -1 ? null : target.slice(0, separator);
+    if (
+      network !== null &&
+      (NETWORK_NAMES as readonly string[]).includes(network)
+    ) {
       await removeToken(network as NetworkName, target.slice(separator + 1));
       changed = true;
     }

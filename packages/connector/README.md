@@ -29,9 +29,9 @@ if (await snap.isAvailable()) {
 }
 ```
 
-Errors throw `StellarSnapError { message, code }` with SEP-0043 codes (`-1` internal, `-2` external service, `-3` invalid request, `-4` user rejected).
+Errors throw `StellarSnapError { message, code }` with SEP-0043 codes (`-1` internal, `-2` external service, `-3` invalid request, `-4` user rejected). Every typed method validates the response shape at runtime before returning it, and `connect()`/`isInstalled()` verify that the snap version MetaMask actually installed matches the pinned release.
 
-During snap development pass `{ snapId: 'local:http://localhost:8080' }`.
+During snap development pass `{ snapId: 'local:http://localhost:8080' }`. The `version` option must be an exact `x.y.z` semver and `snapId` an `npm:`/`local:` ID; anything else is rejected at construction, because a range or arbitrary ID would silently defeat the audited-release pin.
 
 ### Multiple accounts
 
@@ -62,6 +62,8 @@ const { signedTxXdr } = await freighter.signTransaction(xdr);
 ```
 
 Includes a polling `WatchWalletChanges` helper.
+
+On failure the result fields stay empty, exactly like `@stellar/freighter-api`. When a post-approval submission fails after the user already signed, the signed envelope and status are preserved under `error.recovery` (`{ signedTxXdr, signerAddress, hash, status }`) — an explicit opt-in, so code that checks `if (signedTxXdr)` never submits an envelope from a call that reported an error.
 
 ## 3. Stellar Wallets Kit module
 

@@ -63,11 +63,14 @@ jobs:
           echo "Math.random references:      $(grep -o 'Math\.random' "$BUNDLE" | wc -l)"
           echo "crypto.getRandomValues uses: $(grep -o 'getRandomValues' "$BUNDLE" | wc -l)"
 
-      # Direct runtime dependencies must stay advisory-free. The transitive
-      # graph is analyzed separately (docs/THREAT-MODEL.md §5): advisories
-      # there are checked against the built bundle, not gated here.
-      - name: Audit snap runtime dependencies
-        run: yarn workspace stellar-soroban-snap npm audit --environment production
+      # Direct runtime dependencies must stay advisory-free, in every
+      # workspace: the snap is the signing surface, but the connector is the
+      # dapp-facing trust boundary and the site is deployed, so none of them
+      # gets to ship a known advisory. The transitive graph is analyzed
+      # separately (docs/THREAT-MODEL.md §5): advisories there are checked
+      # against the built bundle, not gated here.
+      - name: Audit runtime dependencies (all workspaces)
+        run: yarn npm audit --all --environment production
 
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
@@ -79,8 +82,23 @@ jobs:
       - name: Snap tests (with coverage thresholds)
         run: yarn workspace stellar-soroban-snap test:coverage
 
-      - name: Connector tests
-        run: yarn workspace stellar-soroban-snap-connector test
+      # Coverage-gated for the same reason as the snap: the connector is the
+      # audited trust boundary between dapps and the snap, and its thresholds
+      # live in packages/connector/jest.config.cjs.
+      - name: Connector tests (with coverage thresholds)
+        run: yarn workspace stellar-soroban-snap-connector test:coverage
+
+      # SBOM for the release attestation trail (docs/RELEASE.md retains it
+      # with the tag). Generated on every run so the artifact of a release
+      # build is always present, reproducibly.
+      - name: Generate SBOM (CycloneDX)
+        run: yarn dlx -q @cyclonedx/yarn-plugin-cyclonedx --output-reproducible --output-file sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom
+          path: sbom.cdx.json
 
   site:
     name: Build companion dapp

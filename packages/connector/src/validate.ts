@@ -1,0 +1,217 @@
+import type {
+  AddTokenResult,
+  BalancesResult,
+  FundResult,
+  GetAccountsResult,
+  GetAddressResult,
+  NetworkDetailsResult,
+  NetworkResult,
+  SetActiveAccountResult,
+  SignAuthEntryResult,
+  SignMessageResult,
+  SignTransactionResultWithWarnings,
+} from './types.js';
+
+/**
+ * Structural validators for snap RPC responses.
+ *
+ * The snap is trusted code, but its responses reach the dapp through the
+ * wallet provider, and the provider object itself is discovered from the
+ * page environment. The whole point of this typed client is that the types
+ * it hands to dapp code are checked, not asserted: a blind `as Type` cast
+ * would let any upstream party shape a value that the dapp then treats as a
+ * validated address, envelope, or balance. Each validator below admits
+ * exactly the fields the public API documents.
+ *
+ * Hand-rolled predicates (no schema library) keep the package's
+ * zero-runtime-dependency property.
+ */
+
+/**
+ * Whether a value is a plain object (arrays excluded).
+ *
+ * @param value - The value to test.
+ * @returns True for non-null, non-array objects.
+ */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Whether a value is a string.
+ *
+ * @param value - The value to test.
+ * @returns True for strings.
+ */
+const isString = (value: unknown): value is string => typeof value === 'string';
+
+/**
+ * Whether a value is a string or absent.
+ *
+ * @param value - The value to test.
+ * @returns True for strings and undefined.
+ */
+const isOptionalString = (value: unknown): value is string | undefined =>
+  value === undefined || typeof value === 'string';
+
+/**
+ * Whether a value names one of the snap's networks.
+ *
+ * @param value - The value to test.
+ * @returns True for known network names.
+ */
+const isNetworkName = (value: unknown): boolean =>
+  value === 'PUBLIC' || value === 'TESTNET' || value === 'FUTURENET';
+
+/**
+ * Validates a `{ address }` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isAddressResult = (value: unknown): value is GetAddressResult =>
+  isRecord(value) && isString(value.address);
+
+/**
+ * Validates a `getNetwork` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isNetworkResult = (value: unknown): value is NetworkResult =>
+  isRecord(value) &&
+  isNetworkName(value.network) &&
+  isString(value.networkPassphrase);
+
+/**
+ * Validates a `getNetworkDetails`/`setNetwork` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isNetworkDetailsResult = (
+  value: unknown,
+): value is NetworkDetailsResult =>
+  isRecord(value) &&
+  isString(value.networkUrl) &&
+  isString(value.sorobanRpcUrl) &&
+  isNetworkResult(value);
+
+/**
+ * Validates a `signTransaction` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isSignTransactionResult = (
+  value: unknown,
+): value is SignTransactionResultWithWarnings =>
+  isRecord(value) &&
+  isString(value.signedTxXdr) &&
+  isString(value.signerAddress) &&
+  isOptionalString(value.hash) &&
+  isOptionalString(value.status) &&
+  (value.warnings === undefined ||
+    (Array.isArray(value.warnings) && value.warnings.every(isString)));
+
+/**
+ * Validates a `signAuthEntry` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isSignAuthEntryResult = (
+  value: unknown,
+): value is SignAuthEntryResult =>
+  isRecord(value) &&
+  isString(value.signedAuthEntry) &&
+  isString(value.signerAddress);
+
+/**
+ * Validates a `signMessage` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isSignMessageResult = (
+  value: unknown,
+): value is SignMessageResult =>
+  isRecord(value) &&
+  isString(value.signedMessage) &&
+  isString(value.signerAddress);
+
+/**
+ * Validates one revealed-account entry.
+ *
+ * @param value - The raw entry.
+ * @returns True when the shape matches.
+ */
+const isAccountInfo = (value: unknown): boolean =>
+  isRecord(value) &&
+  typeof value.index === 'number' &&
+  Number.isInteger(value.index) &&
+  value.index >= 0 &&
+  isString(value.address);
+
+/**
+ * Validates a `getAccounts` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isGetAccountsResult = (
+  value: unknown,
+): value is GetAccountsResult =>
+  isRecord(value) &&
+  Array.isArray(value.accounts) &&
+  value.accounts.every(isAccountInfo) &&
+  typeof value.activeIndex === 'number' &&
+  Number.isInteger(value.activeIndex);
+
+/**
+ * Validates a `setActiveAccount` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isSetActiveAccountResult = (
+  value: unknown,
+): value is SetActiveAccountResult => isAccountInfo(value);
+
+/**
+ * Validates a `fund` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isFundResult = (value: unknown): value is FundResult =>
+  isRecord(value) && value.funded === true && isString(value.address);
+
+/**
+ * Validates a `getBalances` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isBalancesResult = (value: unknown): value is BalancesResult =>
+  isRecord(value) &&
+  isString(value.address) &&
+  typeof value.funded === 'boolean' &&
+  (value.sequence === null || isString(value.sequence)) &&
+  Array.isArray(value.balances) &&
+  value.balances.every(
+    (entry) =>
+      isRecord(entry) && isString(entry.asset) && isString(entry.balance),
+  );
+
+/**
+ * Validates an `addToken` result.
+ *
+ * @param value - The raw response.
+ * @returns True when the shape matches.
+ */
+export const isAddTokenResult = (value: unknown): value is AddTokenResult =>
+  isRecord(value) &&
+  isString(value.contractId) &&
+  isString(value.symbol) &&
+  typeof value.decimals === 'number' &&
+  Number.isInteger(value.decimals);

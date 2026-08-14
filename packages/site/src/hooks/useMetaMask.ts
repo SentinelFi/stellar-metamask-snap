@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useMetaMaskContext } from './MetamaskContext';
 import { useRequest } from './useRequest';
@@ -21,26 +21,32 @@ export const useMetaMask = () => {
   /**
    * Detect if the version of MetaMask is Flask.
    */
-  const detectFlask = async () => {
+  const detectFlask = useCallback(async () => {
     const clientVersion = await request({
       method: 'web3_clientVersion',
     });
 
-    const isFlaskDetected = (clientVersion as string[])?.includes('flask');
+    // `web3_clientVersion` returns a single user-agent style string such as
+    // "MetaMask/v13.5.0-flask.0", so this is deliberately a substring check
+    // on that string. (Null, from a failed request, simply means no Flask.)
+    const isFlaskDetected =
+      typeof clientVersion === 'string' && clientVersion.includes('flask');
 
     setIsFlask(isFlaskDetected);
-  };
+  }, [request]);
 
   /**
    * Get the Snap informations from MetaMask.
    */
-  const getSnap = async () => {
+  const getSnap = useCallback(async () => {
+    // `useRequest` resolves to null on error, so the result must be indexed
+    // defensively rather than assumed to be a snaps map.
     const snaps = (await request({
       method: 'wallet_getSnaps',
-    })) as GetSnapsResponse;
+    })) as GetSnapsResponse | null;
 
-    setInstalledSnap(snaps[defaultSnapOrigin] ?? null);
-  };
+    setInstalledSnap(snaps?.[defaultSnapOrigin] ?? null);
+  }, [request, setInstalledSnap]);
 
   useEffect(() => {
     const detect = async () => {
@@ -52,7 +58,7 @@ export const useMetaMask = () => {
 
     // Detection failures leave the "install Flask" state in place.
     detect().catch(() => undefined);
-  }, [provider]);
+  }, [provider, detectFlask, getSnap]);
 
   return { isFlask, snapsDetected, installedSnap, getSnap };
 };

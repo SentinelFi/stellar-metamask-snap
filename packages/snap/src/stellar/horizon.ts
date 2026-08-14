@@ -1,7 +1,9 @@
 import { SnapError } from '@metamask/snaps-sdk';
 import {
   array,
+  integer,
   is,
+  min,
   number,
   optional,
   pattern,
@@ -12,6 +14,7 @@ import {
 
 import { discardBody, readJsonBounded } from './http';
 import { externalServiceError } from '../rpc/errors';
+import { sanitizeInlineText } from '../ui/format';
 
 export type HorizonBalance = {
   /** `'XLM'` for the native asset, otherwise `CODE:ISSUER`. */
@@ -186,9 +189,14 @@ export async function submitTransaction(
       : null;
   if (!ok || !hash) {
     // The result codes are endpoint-controlled: bound what gets echoed into
-    // the error message.
+    // the error message, and strip hidden/direction-altering characters.
+    // `JSON.stringify` escapes controls but leaves format characters (bidi
+    // overrides, zero-width marks) raw, and this string reaches whatever
+    // surface the dapp renders its errors on.
     const codes = parsed?.extras?.result_codes
-      ? ` Result codes: ${JSON.stringify(parsed.extras.result_codes).slice(0, 200)}.`
+      ? ` Result codes: ${sanitizeInlineText(
+          JSON.stringify(parsed.extras.result_codes),
+        ).slice(0, 200)}.`
       : '';
     throw externalServiceError(
       `Transaction submission failed (${status}).${codes}`,
@@ -273,6 +281,46 @@ export async function getAccountChecks(
     return null;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** The Horizon root fields consumed by {@link getHorizonLatestLedger}. */
+const HorizonRootStruct = type({
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  core_latest_ledger: min(integer(), 1),
+});
+
+/**
+ * Fetches the network's latest ledger sequence from Horizon's root endpoint.
+ *
+ * Exists as an independent second source for ledger height: the Soroban RPC
+ * also reports it, but on PUBLIC that RPC is a third-party gateway, and the
+ * ledger height bounds how long an authorization signature stays valid. A
+ * single source that inflates the height could stretch a "five minute"
+ * default authorization far beyond what the dialog discloses; callers
+ * cross-check by taking the minimum of the sources they can reach.
+ *
+ * Best-effort: returns null when Horizon cannot be reached or answers with
+ * an unexpected shape, so callers decide how to degrade.
+ *
+ * @param horizonUrl - The Horizon base URL for the active network.
+ * @returns The latest ledger sequence, or null when unavailable.
+ */
+export async function getHorizonLatestLedger(
+  horizonUrl: string,
+): Promise<number | null> {
+  try {
+    const { ok, body } = await safeFetchJson(
+      `${horizonUrl}/`,
+      { headers: { accept: 'application/json' } },
+      'Horizon',
+    );
+    if (!ok || !is(body, HorizonRootStruct)) {
+      return null;
+    }
+    return body.core_latest_ledger;
+  } catch {
+    return null;
   }
 }
 

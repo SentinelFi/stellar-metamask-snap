@@ -142,6 +142,52 @@ module.exports.onPreBuild = ({ reporter }) => {
 };
 
 /**
+ * Recursively collects every `.js` file under a directory.
+ *
+ * Gatsby does not emit all JavaScript at the top level of `public/`: webpack
+ * chunks, page-data component chunks, and framework bundles land in
+ * subdirectories, and which of them carries the substituted env values is an
+ * implementation detail that moves between Gatsby versions. A non-recursive
+ * scan could miss the one file that matters and either panic on a good build
+ * or, worse, be satisfied by an unrelated top-level file.
+ *
+ * @param {string} dir - The directory to walk.
+ * @returns {string[]} Absolute paths of every `.js` file found.
+ */
+function collectScripts(dir) {
+  // eslint-disable-next-line n/no-sync
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return collectScripts(fullPath);
+    }
+    return entry.isFile() && entry.name.endsWith('.js') ? [fullPath] : [];
+  });
+}
+
+/**
+ * Whether any emitted script contains `value` as a complete string literal
+ * (in either quote style the minifier may choose).
+ *
+ * A bare substring test is near-vacuous for values like a version number:
+ * "1.2.3" appears in dependency banners, source URLs, and unrelated
+ * constants all over a production bundle. Requiring the quoted form means
+ * the value is present as the actual string literal the client code will
+ * read at runtime, not as an accidental fragment of something else.
+ *
+ * @param {string[]} emitted - The emitted script contents.
+ * @param {string} value - The exact string the bundle must carry.
+ * @returns {boolean} True when some script contains the quoted literal.
+ */
+function hasQuotedLiteral(emitted, value) {
+  const doubleQuoted = JSON.stringify(value);
+  const singleQuoted = `'${value}'`;
+  return emitted.some(
+    (code) => code.includes(doubleQuoted) || code.includes(singleQuoted),
+  );
+}
+
+/**
  * Post-build verification: confirm the values actually reached the emitted
  * JavaScript.
  *
@@ -159,27 +205,38 @@ module.exports.onPostBuild = ({ reporter }) => {
   const { snapOrigin, snapVersion, allowLocal } = readReleaseConfig();
 
   if (allowLocal) {
+    // The bypass exists for local development builds only. Make it loud:
+    // an artifact built this way carries no verified snap identity and may
+    // request the localhost development snap from every visitor.
+    reporter.warn(
+      `ALLOW_LOCAL_SNAP=true: release verification was SKIPPED. ` +
+        `This artifact is a development build bound to an unverified ` +
+        `(possibly localhost) snap and MUST NOT be deployed.`,
+    );
     return;
   }
 
   /* eslint-disable n/no-sync */
   const publicDir = join(__dirname, 'public');
-  const scripts = readdirSync(publicDir).filter((name) => name.endsWith('.js'));
-  const emitted = scripts.map((name) =>
-    readFileSync(join(publicDir, name), 'utf8'),
+  const emitted = collectScripts(publicDir).map((path) =>
+    readFileSync(path, 'utf8'),
   );
   /* eslint-enable n/no-sync */
 
-  const hasOrigin = emitted.some((code) => code.includes(snapOrigin));
-  const hasVersion = emitted.some((code) => code.includes(snapVersion));
+  // The origin must appear as the quoted `npm:<name>` literal and the
+  // version as the quoted version literal: the strings client code actually
+  // receives from the env substitution.
+  const hasOrigin = hasQuotedLiteral(emitted, snapOrigin);
+  const hasVersion = hasQuotedLiteral(emitted, snapVersion);
 
   if (!hasOrigin || !hasVersion) {
     reporter.panic(
       `The built site does not carry the audited snap identity. Expected ` +
-        `"${snapOrigin}" (found: ${hasOrigin}) and version "${snapVersion}" ` +
-        `(found: ${hasVersion}) in the emitted JavaScript. The browser ` +
-        `bundle would fall back to the development snap. Check how the ` +
-        `Gatsby version in use exposes environment variables to client code.`,
+        `the quoted literal "${snapOrigin}" (found: ${hasOrigin}) and the ` +
+        `quoted version "${snapVersion}" (found: ${hasVersion}) in the ` +
+        `emitted JavaScript. The browser bundle would fall back to the ` +
+        `development snap. Check how the Gatsby version in use exposes ` +
+        `environment variables to client code.`,
     );
   }
 

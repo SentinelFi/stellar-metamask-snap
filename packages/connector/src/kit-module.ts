@@ -1,5 +1,5 @@
-import type { StellarSnapOptions } from './snap';
-import { StellarSnap } from './snap';
+import type { StellarSnapOptions } from './snap.js';
+import { StellarSnap } from './snap.js';
 
 /**
  * The snap's mark as a data URI (Stellar slashed-circle in the snap's

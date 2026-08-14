@@ -41,10 +41,17 @@ module.exports = {
   coverageThreshold: {
     'src/handlers/sign.tsx': { branches: 55, lines: 78 },
     'src/rpc/limiter.ts': { branches: 88, lines: 95 },
+    // Lines sit lower than branches here: the uncovered lines are the
+    // handler-lambda table entries, which the router suite deliberately
+    // mocks; the dispatch/laundering/throttle logic itself is what the
+    // branch number protects.
+    'src/rpc/router.ts': { branches: 95, lines: 70 },
     'src/rpc/throttle.ts': { branches: 70, lines: 88 },
     'src/rpc/validation.ts': { branches: 80, lines: 95 },
     'src/state/index.ts': { branches: 60, lines: 78 },
+    'src/stellar/horizon.ts': { branches: 80, lines: 95 },
     'src/stellar/http.ts': { branches: 95, lines: 95 },
+    'src/stellar/rpc.ts': { branches: 88, lines: 95 },
     'src/stellar/safety.ts': { branches: 75, lines: 92 },
     'src/stellar/soroban.ts': { branches: 60, lines: 78 },
     'src/ui/format.ts': { branches: 80, lines: 92 },

@@ -3,7 +3,7 @@ import styled from 'styled-components';
 
 import { ReactComponent as FlaskFox } from '../assets/flask_fox.svg';
 import { useMetaMask, useRequestSnap } from '../hooks';
-import { shouldDisplayReconnectButton } from '../utils';
+import { isExpectedSnapVersion, shouldDisplayReconnectButton } from '../utils';
 
 const Link = styled.a`
   display: flex;
@@ -99,6 +99,15 @@ export const ReconnectButton = (props: ComponentProps<typeof Button>) => {
   );
 };
 
+export const UpdateButton = (props: ComponentProps<typeof Button>) => {
+  return (
+    <Button {...props}>
+      <FlaskFox />
+      <ButtonText>Update required</ButtonText>
+    </Button>
+  );
+};
+
 export const ActionButton = (props: ComponentProps<typeof Button>) => {
   return <Button {...props} />;
 };
@@ -117,6 +126,15 @@ export const HeaderButtons = () => {
 
   if (shouldDisplayReconnectButton(installedSnap)) {
     return <ReconnectButton onClick={requestSnap} />;
+  }
+
+  // A wrong-version snap must not present as connected: the page disables
+  // every control until the user updates, and the header has to tell the
+  // same story, or the green indicator would vouch for a release this site
+  // was not built (or audited) for. The button re-runs wallet_requestSnaps,
+  // which pins the expected version and so performs the update.
+  if (!isExpectedSnapVersion(installedSnap)) {
+    return <UpdateButton onClick={requestSnap} />;
   }
 
   return (

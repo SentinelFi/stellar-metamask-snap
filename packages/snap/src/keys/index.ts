@@ -86,17 +86,38 @@ export function resetAddressCache(): void {
 }
 
 /**
+ * A memoizing getter for the SEP-0005 parent node: fetches on first use,
+ * then reuses the same promise. Handed to the helpers below so one request's
+ * whole resolution flow (cache fill plus final derivation) crosses the
+ * sandbox boundary with the parent key material at most once.
+ *
+ * @returns A getter resolving the parent node.
+ */
+function lazyAccountParentNode(): () => Promise<SLIP10Node> {
+  let cached: Promise<SLIP10Node> | null = null;
+  return async () => {
+    cached ??= getAccountParentNode();
+    return cached;
+  };
+}
+
+/**
  * Fills the address cache for any of the given indices not already known,
  * deriving the parent node at most once.
  *
  * @param indices - The account indices to cache.
+ * @param getNode - The parent-node getter; callers that also derive a key
+ * afterwards pass their own so the fetch is shared across both steps.
  */
-async function cacheAddresses(indices: number[]): Promise<void> {
+async function cacheAddresses(
+  indices: number[],
+  getNode: () => Promise<SLIP10Node> = lazyAccountParentNode(),
+): Promise<void> {
   const missing = indices.filter((index) => !addressCache.has(index));
   if (missing.length === 0) {
     return;
   }
-  const node = await getAccountParentNode();
+  const node = await getNode();
   await Promise.all(
     missing.map(async (index) => {
       addressCache.set(index, (await deriveFromNode(node, index)).publicKey());
@@ -176,7 +197,11 @@ export async function resolveSigningKeypair(
   // Resolve through the address index, so an address the wallet does not hold
   // is rejected without deriving anything. Repeating an unowned address is
   // then a map lookup rather than a full sweep of every revealed account.
-  await cacheAddresses(state.accounts);
+  // One shared parent-node getter covers both the cache fill and the final
+  // derivation, so the parent key material crosses the sandbox boundary at
+  // most once per request.
+  const getNode = lazyAccountParentNode();
+  await cacheAddresses(state.accounts, getNode);
   const index = state.accounts.find(
     (candidate) => addressCache.get(candidate) === requestedAddress,
   );
@@ -184,7 +209,7 @@ export async function resolveSigningKeypair(
     throw invalidRequest('Unknown address: this wallet does not hold it.');
   }
 
-  const keypair = await deriveKeypair(index);
+  const keypair = await deriveFromNode(await getNode(), index);
   // The cache is derived state; never sign on it without confirming the key
   // it pointed at really is the address that was asked for.
   if (keypair.publicKey() !== requestedAddress) {

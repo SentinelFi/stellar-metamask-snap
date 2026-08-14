@@ -169,6 +169,120 @@ describe('StellarSnap', () => {
     const snap = new StellarSnap({ provider });
     expect(await snap.isInstalled()).toBe(true);
   });
+
+  it('rejects semver ranges and malformed snap IDs at construction', () => {
+    // A range would silently defeat the audited-release pin; an arbitrary
+    // snap ID would request something this connector was never meant to
+    // install. Both come from dapp config/env in practice.
+    expect(() => new StellarSnap({ version: '^0.1.0' })).toThrow(TypeError);
+    expect(() => new StellarSnap({ version: '*' })).toThrow(TypeError);
+    expect(() => new StellarSnap({ snapId: 'https://evil.example' })).toThrow(
+      TypeError,
+    );
+    expect(
+      () => new StellarSnap({ snapId: 'local:http://localhost:8080' }),
+    ).not.toThrow();
+  });
+
+  it('connect fails when MetaMask reports a different installed version', async () => {
+    // Answers every wallet_* call with a snaps map naming an older version,
+    // so the requested pin and the reported install disagree.
+    const provider: Eip1193Provider = {
+      request: jest.fn(async () => ({
+        [SNAP_ID]: { version: '0.0.9' },
+      })) as Eip1193Provider['request'],
+    };
+    const snap = new StellarSnap({ provider });
+
+    await expect(snap.connect()).rejects.toMatchObject({
+      code: -3,
+      message: expect.stringContaining('0.0.9'),
+    });
+  });
+
+  it('isInstalled reports false for a wrong-version npm snap', async () => {
+    const provider: Eip1193Provider = {
+      request: jest.fn(async () => ({
+        [SNAP_ID]: { version: '0.0.9' },
+      })) as Eip1193Provider['request'],
+    };
+    const snap = new StellarSnap({ provider });
+    expect(await snap.isInstalled()).toBe(false);
+  });
+
+  it('rejects responses that do not match the documented shape', async () => {
+    // The provider is discovered from the page environment; a typed method
+    // must not hand a malformed value to dapp code as a validated result.
+    const { provider } = mockProvider({
+      getAddress: { address: 42 },
+      getBalances: { address: ADDRESS, funded: 'yes', balances: [] },
+    });
+    const snap = new StellarSnap({ provider });
+
+    await expect(snap.getAddress()).rejects.toMatchObject({ code: -1 });
+    await expect(snap.getBalances()).rejects.toMatchObject({ code: -1 });
+  });
+
+  it('validates and returns the account, funding, and token methods', async () => {
+    const account = { index: 1, address: ADDRESS };
+    const { provider } = mockProvider({
+      getAccounts: { accounts: [account], activeIndex: 1 },
+      setActiveAccount: account,
+      fund: { funded: true, address: ADDRESS },
+      getBalances: {
+        address: ADDRESS,
+        funded: true,
+        sequence: '1',
+        balances: [{ asset: 'XLM', balance: '10.0000000' }],
+      },
+      addToken: { contractId: 'CABC', symbol: 'USDC', decimals: 7 },
+      signAuthEntry: { signedAuthEntry: 'AAAA', signerAddress: ADDRESS },
+    });
+    const snap = new StellarSnap({ provider });
+
+    expect(await snap.getAccounts()).toStrictEqual({
+      accounts: [account],
+      activeIndex: 1,
+    });
+    expect(await snap.setActiveAccount(1)).toStrictEqual(account);
+    expect(await snap.fund(ADDRESS)).toStrictEqual({
+      funded: true,
+      address: ADDRESS,
+    });
+    expect((await snap.getBalances()).funded).toBe(true);
+    expect((await snap.addToken('CABC', 'Test SDF')).symbol).toBe('USDC');
+    expect((await snap.signAuthEntry('AAAA')).signedAuthEntry).toBe('AAAA');
+  });
+
+  it('treats a present local snap as installed without a version check', async () => {
+    const localId = 'local:http://localhost:8080';
+    const provider: Eip1193Provider = {
+      request: jest.fn(async () => ({
+        [localId]: { version: '0.1.0-local' },
+      })) as Eip1193Provider['request'],
+    };
+    const snap = new StellarSnap({ provider, snapId: localId });
+    expect(await snap.isInstalled()).toBe(true);
+  });
+
+  it('fails with externalService when MetaMask is absent', async () => {
+    // No provider supplied and no window: discovery yields null.
+    const snap = new StellarSnap();
+    await expect(snap.getAddress()).rejects.toMatchObject({ code: -2 });
+    expect(await snap.isAvailable()).toBe(false);
+    expect(await snap.isInstalled()).toBe(false);
+  });
+
+  it('maps unknown error codes to internal instead of passing them through', async () => {
+    // Dapps branch on the four SEP-43 codes; an arbitrary upstream number
+    // must not be able to impersonate one.
+    const { provider } = mockProvider({
+      signMessage: snapError('spoofed', -4000),
+    });
+    const snap = new StellarSnap({ provider });
+
+    await expect(snap.signMessage('hi')).rejects.toMatchObject({ code: -1 });
+  });
 });
 
 describe('createFreighterApi', () => {
@@ -189,9 +303,12 @@ describe('createFreighterApi', () => {
     expect(await freighter.isAllowed()).toStrictEqual({ isAllowed: true });
   });
 
-  it('preserves post-submission recovery data alongside the error', async () => {
+  it('keeps recovery data off the result shape, under error.recovery', async () => {
     // A submit-after-sign failure carries the signed envelope; the facade
-    // must surface it so callers can poll or retry, not just the error.
+    // surfaces it under `error.recovery` so callers can poll or retry — but
+    // never on the success-shaped fields, where the common
+    // `if (signedTxXdr) submit(...)` pattern would submit an envelope from a
+    // call the dapp believes failed.
     const error = new Error('Transaction submission failed.') as Error & {
       data: Record<string, unknown>;
     };
@@ -206,8 +323,13 @@ describe('createFreighterApi', () => {
 
     const result = await freighter.signTransaction('AAAA', { submit: true });
     expect(result.error?.code).toBe(-2);
-    expect(result.signedTxXdr).toBe('AAAAsigned');
-    expect(result.signerAddress).toBe(ADDRESS);
+    expect(result.signedTxXdr).toBeUndefined();
+    expect(result.signerAddress).toBeUndefined();
+    expect(result.error?.recovery).toStrictEqual({
+      signedTxXdr: 'AAAAsigned',
+      signerAddress: ADDRESS,
+      status: 'ERROR',
+    });
   });
 });
 

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import styled from 'styled-components';
 
 type CheckedProps = {
@@ -90,22 +89,26 @@ const ToggleCircle = styled.div<CheckedProps>`
   transition: all 0.25s ease;
 `;
 
+/**
+ * Theme toggle. Fully controlled: Root owns the theme state, and a second
+ * local copy (previously seeded from a `defaultChecked` prop) could drift
+ * out of sync with the theme actually applied, showing the sun while the
+ * page renders dark.
+ *
+ * @param props - The props.
+ * @param props.onToggle - Called when the user clicks the toggle.
+ * @param props.checked - Whether the dark theme is active.
+ * @returns The toggle component.
+ */
 export const Toggle = ({
   onToggle,
-  defaultChecked = false,
+  checked,
 }: {
   onToggle: () => void;
-  defaultChecked?: boolean;
+  checked: boolean;
 }) => {
-  const [checked, setChecked] = useState(defaultChecked);
-
-  const handleChange = () => {
-    onToggle();
-    setChecked(!checked);
-  };
-
   return (
-    <ToggleWrapper onClick={handleChange}>
+    <ToggleWrapper onClick={onToggle}>
       <ToggleContainer>
         <CheckedContainer checked={checked}>
           <span>🌞</span>
@@ -115,7 +118,12 @@ export const Toggle = ({
         </UncheckedContainer>
       </ToggleContainer>
       <ToggleCircle checked={checked} />
-      <ToggleInput type="checkbox" aria-label="Toggle Button" />
+      <ToggleInput
+        type="checkbox"
+        checked={checked}
+        readOnly
+        aria-label="Toggle Button"
+      />
     </ToggleWrapper>
   );
 };

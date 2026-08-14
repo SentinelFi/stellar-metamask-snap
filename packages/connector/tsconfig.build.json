@@ -5,7 +5,15 @@
     "noEmit": false,
     "outDir": "dist",
     "target": "es2020",
-    "lib": ["ES2020", "DOM"]
+    "lib": ["ES2020", "DOM"],
+    // The package ships `"type": "module"` with no bundler in between:
+    // Node's own ESM resolver loads the emitted files, and it requires
+    // explicit file extensions on relative imports. NodeNext makes tsc
+    // enforce (and preserve) them; the bundler-oriented settings inherited
+    // from the root config would emit extensionless imports that only
+    // bundlers can resolve.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]

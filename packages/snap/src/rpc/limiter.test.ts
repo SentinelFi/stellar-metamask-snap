@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from '@jest/globals';
 
 import {
   assertRateAllowed,
+  MAX_INFLIGHT_GLOBAL,
   MAX_INFLIGHT_PER_ORIGIN,
   MAX_PREDIALOG_LOOKUPS,
   MAX_PREDIALOG_UNCONNECTED,
@@ -235,5 +236,56 @@ describe('withInflightBudget', () => {
       ).rejects.toThrow('boom');
     }
     expect(await withInflightBudget(ORIGIN, async () => 'ok')).toBe('ok');
+  });
+
+  it('refuses requests beyond the global concurrency ceiling', async () => {
+    // Origin rotation must not multiply concurrency: fill the global ceiling
+    // from many distinct origins, staying under every per-origin cap.
+    const resolvers: (() => void)[] = [];
+    const hold = async () =>
+      new Promise<void>((resolve) => resolvers.push(resolve));
+
+    const held = Array.from({ length: MAX_INFLIGHT_GLOBAL }, async (_, index) =>
+      withInflightBudget(`https://rotate-${index}.example`, hold),
+    );
+    await expect(
+      withInflightBudget('https://one-more.example', async () => 'never'),
+    ).rejects.toThrow('too many concurrent requests');
+
+    for (const resolve of resolvers) {
+      resolve();
+    }
+    await Promise.all(held);
+
+    // Slots free up once the held requests settle.
+    expect(
+      await withInflightBudget('https://one-more.example', async () => 'ok'),
+    ).toBe('ok');
+  });
+
+  it('keeps live in-flight counters intact under origin rotation', async () => {
+    // The in-flight map must never evict a live counter: an origin holding
+    // slots while many other origins come and go still has its count when it
+    // asks for one slot too many.
+    const resolvers: (() => void)[] = [];
+    const hold = async () =>
+      new Promise<void>((resolve) => resolvers.push(resolve));
+
+    const held = Array.from({ length: MAX_INFLIGHT_PER_ORIGIN }, async () =>
+      withInflightBudget(ORIGIN, hold),
+    );
+    for (let index = 0; index < 200; index += 1) {
+      await withInflightBudget(`https://rotate-${index}.example`, async () => {
+        return 'ok';
+      });
+    }
+    await expect(
+      withInflightBudget(ORIGIN, async () => 'never'),
+    ).rejects.toThrow('Too many concurrent requests');
+
+    for (const resolve of resolvers) {
+      resolve();
+    }
+    await Promise.all(held);
   });
 });

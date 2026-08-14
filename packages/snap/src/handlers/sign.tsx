@@ -24,7 +24,7 @@ import {
   validate,
 } from '../rpc/validation';
 import { connectOrigin, getActiveNetwork, isOriginConnected } from '../state';
-import { submitTransaction } from '../stellar/horizon';
+import { getHorizonLatestLedger, submitTransaction } from '../stellar/horizon';
 import { getLatestLedger, sendTransaction } from '../stellar/rpc';
 import {
   collectFeeSourceWarnings,
@@ -483,12 +483,24 @@ export async function signAuthEntry(
   // the user cannot unknowingly grant a very long-lived authorization. When
   // the ledger cannot be fetched, no expiry can be checked against that cap,
   // so the request fails closed rather than passing through unverified.
-  let latestLedger: number | null = null;
-  try {
-    latestLedger = await getLatestLedger(network.sorobanRpcUrl);
-  } catch {
-    latestLedger = null;
-  }
+  //
+  // The height is read from two independent sources and the minimum wins.
+  // The default expiry is `latest + N`, and the lifetime cap compares
+  // `requested - latest`, so a single source that inflates the height could
+  // stretch a "five minute" default authorization arbitrarily while the
+  // dialog still says five minutes. On PUBLIC the Soroban RPC is a
+  // third-party gateway, so it must not be the only voice; taking the
+  // minimum means a lying source can only shorten a lifetime (at worst a
+  // spurious "expired" rejection), never extend one.
+  const [rpcLedger, horizonLedger] = await Promise.all([
+    getLatestLedger(network.sorobanRpcUrl).catch(() => null),
+    getHorizonLatestLedger(network.horizonUrl),
+  ]);
+  const ledgerSources = [rpcLedger, horizonLedger].filter(
+    (sequence): sequence is number => sequence !== null,
+  );
+  const latestLedger =
+    ledgerSources.length > 0 ? Math.min(...ledgerSources) : null;
 
   const bounded = boundAuthExpiration(
     decoded.signatureExpirationLedger ?? 0,

@@ -1,0 +1,17 @@
+# Security headers for every route, in the Netlify/Cloudflare Pages format.
+# Gatsby copies this file verbatim from static/ into the publish directory.
+# Any host that does not read a _headers file must replicate these headers in
+# its own configuration; the list is documented in docs/RELEASE.md.
+#
+# Notes on the CSP: 'unsafe-inline' for scripts and styles is required by
+# Gatsby's inline runtime and styled-components' injected styles. Everything
+# else is locked to 'self': the site talks to MetaMask through the injected
+# provider, not the network, so no remote connect-src is needed.
+# frame-ancestors 'none' (with the X-Frame-Options fallback) prevents the
+# dapp from being framed for clickjacking a user's snap interactions.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=31536000; includeSubDomains

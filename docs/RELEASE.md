@@ -116,7 +116,31 @@ every step below is mandatory for a production release:
    [PHASE-5.md](PHASE-5.md)). Archive the tarball hash with the release.
 4. **Retain an attestation.** Keep the CI run URL of the release build, the
    dependency audit, SBOM, and scan outputs together with the tag, so the
-   published artifact can later be traced to the audited inputs.
+   published artifact can later be traced to the audited inputs. CI generates
+   the SBOM on every run (CycloneDX, uploaded as the `sbom` artifact of the
+   verify job); to regenerate it locally from the tagged commit:
+
+   ```bash
+   yarn dlx -q @cyclonedx/yarn-plugin-cyclonedx --output-reproducible --output-file sbom.cdx.json
+   ```
+
+   Both packages publish with npm provenance (`publishConfig.provenance`),
+   which requires publishing from a supported CI environment or passing
+   `--provenance-file`; a plain local `npm publish` of a
+   provenance-configured package will fail rather than silently skip the
+   attestation.
+
+## Companion dapp security headers
+
+The site ships HTTP security headers in `packages/site/static/_headers`, which Gatsby copies verbatim into the publish directory. Netlify and Cloudflare Pages read that file automatically; **any other host must replicate the same headers in its own configuration** (nginx, Vercel `vercel.json`, S3/CloudFront, and so on), because a host that ignores `_headers` silently ships the site with none of them. The headers are:
+
+- `Content-Security-Policy`: `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'` (the `'unsafe-inline'` allowances are required by Gatsby's inline runtime and styled-components)
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `X-Content-Type-Options: nosniff`
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+
+When deploying to a new host, verify the headers are actually served (for example `curl -sI https://<host>/ | grep -i content-security-policy`) before announcing the deployment.
 
 ## First release
 

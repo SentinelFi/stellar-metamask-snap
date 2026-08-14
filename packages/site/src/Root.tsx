@@ -17,7 +17,10 @@ export const ToggleThemeContext = createContext<ToggleTheme>(
 );
 
 export const Root: FunctionComponent<RootProps> = ({ children }) => {
-  const [darkTheme, setDarkTheme] = useState(getThemePreference());
+  // Lazy initializer: the storage read runs once on mount, not on every
+  // render. Persisting the preference happens here in the toggle handler,
+  // the one place the user actually changes it; the read path stays pure.
+  const [darkTheme, setDarkTheme] = useState(getThemePreference);
 
   const toggleTheme: ToggleTheme = () => {
     setLocalStorage('theme', darkTheme ? 'light' : 'dark');

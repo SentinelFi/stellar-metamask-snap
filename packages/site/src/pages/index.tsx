@@ -8,7 +8,14 @@ import {
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk/base';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { StellarSnap } from 'stellar-soroban-snap-connector';
 import styled from 'styled-components';
 
@@ -191,7 +198,18 @@ const ReferenceList = styled.dl`
   }
 `;
 
-/** Known Stellar Asset Contract addresses, handy for the Add token demo. */
+/**
+ * Known Stellar Asset Contract addresses, handy for the Add token demo.
+ *
+ * Provenance: these are the well-known SAC contract IDs, each deterministic
+ * for its asset and network and derivable as
+ * `Asset.contractId(networkPassphrase)` (for XLM via `Asset.native()`, for
+ * USDC from Circle's issuer account). They are display-only here, but users
+ * are invited to paste them into Add token, so a wrong ID would steer users
+ * into tracking an attacker's token contract. Anyone editing this list must
+ * re-derive the IDs with the SDK or verify them against the Stellar asset
+ * lists or stellar.expert before shipping the change.
+ */
 const REFERENCE_ASSETS: { label: string; contractId: string }[] = [
   {
     label: 'Testnet USDC',
@@ -229,6 +247,14 @@ const ErrorMessage = styled.div`
   }
 `;
 
+type WalletStatus = {
+  network: string;
+  address: string;
+  /** XLM balance; null when unknown (no grant / unfunded lookup failed). */
+  xlm: string | null;
+  funded: boolean | null;
+};
+
 const Index = () => {
   const { provider, error, setError } = useMetaMaskContext();
   const { isFlask, snapsDetected, installedSnap } = useMetaMask();
@@ -236,6 +262,11 @@ const Index = () => {
   const [address, setAddress] = useState('');
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The reentrancy guard for `run`. State updates are asynchronous, so two
+  // rapid clicks could both read a stale `busy === false` and both proceed;
+  // a ref flips synchronously and closes that window. `busy` remains as
+  // state purely so the controls re-render as disabled.
+  const busyRef = useRef(false);
   const [tokenContract, setTokenContract] = useState('');
 
   // The connector: a typed SEP-43 client over wallet_invokeSnap. The
@@ -264,13 +295,6 @@ const Index = () => {
     installedSnap !== null && !isExpectedSnapVersion(installedSnap);
   const snapReady = installedSnap !== null && !versionMismatch;
 
-  type WalletStatus = {
-    network: string;
-    address: string;
-    /** XLM balance; null when unknown (no grant / unfunded lookup failed). */
-    xlm: string | null;
-    funded: boolean | null;
-  };
   const [status, setStatus] = useState<WalletStatus | null>(null);
 
   /**
@@ -328,9 +352,10 @@ const Index = () => {
   const run = async <Type,>(
     work: (client: StellarSnap) => Promise<Type>,
   ): Promise<Type | null> => {
-    if (busy || !snapClient || !snapReady) {
+    if (busyRef.current || !snapClient || !snapReady) {
       return null;
     }
+    busyRef.current = true;
     setBusy(true);
     setResult(null);
     try {
@@ -344,6 +369,11 @@ const Index = () => {
       );
       return null;
     } finally {
+      // The ref is a mutex, taken before the awaited work and released
+      // after it; the atomic-updates rule cannot tell a deliberate release
+      // from a write based on a stale pre-await read.
+      // eslint-disable-next-line require-atomic-updates
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -595,9 +625,22 @@ const Index = () => {
                   Futurenet
                 </ActionButton>
                 <ActionButton
-                  onClick={async () =>
-                    run(async (client) => client.setNetwork('PUBLIC'))
-                  }
+                  onClick={async () => {
+                    // This page is a demo bench; a one-click hop onto real
+                    // funds does not belong on it. The snap's own dialog
+                    // still confirms the switch — this gate exists so a
+                    // stray click never even reaches that dialog.
+                    if (
+                      // eslint-disable-next-line no-alert -- A blocking prompt is the point: this button moves the wallet onto real funds.
+                      !window.confirm(
+                        'Switch the wallet-global network to PUBLIC (mainnet)? ' +
+                          'Transactions signed there move real funds.',
+                      )
+                    ) {
+                      return;
+                    }
+                    await run(async (client) => client.setNetwork('PUBLIC'));
+                  }}
                   disabled={!snapReady || busy}
                 >
                   Public (mainnet)
@@ -684,6 +727,7 @@ const Index = () => {
                   placeholder="Token contract ID (C…)"
                   value={tokenContract}
                   onChange={(event) => setTokenContract(event.target.value)}
+                  disabled={!snapReady || busy}
                 />
                 <ActionButton
                   onClick={async () =>
@@ -729,10 +773,13 @@ const Index = () => {
         )}
         <Notice>
           <p>
-            Sign payment requires access first (it needs your address). Expected
-            address for the published SEP-0005 test mnemonic (&ldquo;illness
-            spike retreat&hellip;&rdquo;):{' '}
-            <b>GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6</b>.
+            Sign payment requires access first (it needs your address). For
+            development against a known key, SEP-0005 publishes standard test
+            vectors (mnemonics with their derived addresses); use one of those
+            in a dedicated test install of MetaMask Flask, and never a phrase
+            that controls real funds. The mnemonic is deliberately not
+            reproduced here: a page that displays a seed phrase normalizes
+            copying seed phrases out of web pages.
           </p>
         </Notice>
         <Notice>

@@ -1,33 +1,38 @@
 /**
  * Get a local storage key.
  *
+ * Access is wrapped in try/catch because the realistic failure mode is not a
+ * null `window.localStorage`: Safari in private mode, sandboxed iframes, and
+ * profiles with cookies blocked throw a SecurityError on the property access
+ * itself. Nothing stored here (a theme preference) is worth a render-time
+ * throw, which would blank the whole page, so failures degrade to "no stored
+ * value".
+ *
  * @param key - The local storage key to access.
- * @returns The value stored at the key provided if the key exists.
+ * @returns The value stored at the key provided, or null when the key does
+ * not exist or storage is unavailable.
  */
-export const getLocalStorage = (key: string) => {
-  const { localStorage: ls } = window;
-
-  if (ls !== null) {
-    const data = ls.getItem(key);
-    return data;
+export const getLocalStorage = (key: string): string | null => {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
   }
-
-  throw new Error('Local storage is not available.');
 };
 
 /**
  * Set a value to local storage at a certain key.
  *
+ * Best effort, for the same reason as {@link getLocalStorage}: when storage
+ * is unavailable the only loss is persistence across reloads.
+ *
  * @param key - The local storage key to set.
  * @param value - The value to set.
  */
 export const setLocalStorage = (key: string, value: string) => {
-  const { localStorage: ls } = window;
-
-  if (ls !== null) {
-    ls.setItem(key, value);
-    return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Storage unavailable: the preference simply is not persisted.
   }
-
-  throw new Error('Local storage is not available.');
 };

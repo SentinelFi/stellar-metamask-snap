@@ -1,28 +1,43 @@
-import type { StellarSnapOptions } from './snap';
-import { StellarSnap } from './snap';
+import type { StellarSnapOptions } from './snap.js';
+import { StellarSnap } from './snap.js';
 import type {
   NetworkDetailsResult,
   NetworkResult,
   SignAuthEntryOptions,
   SignMessageOptions,
   SignTransactionOptions,
-} from './types';
-import { StellarSnapError } from './types';
+  StellarSnapErrorData,
+} from './types.js';
+import { StellarSnapError } from './types.js';
 
-/** Freighter-style error shape. */
-export type FreighterApiError = { code: number; message: string };
+/**
+ * Freighter-style error shape, extended with an explicit recovery bag.
+ *
+ * `recovery` carries the post-approval data of a submit-after-sign failure
+ * (the signed envelope, signer, hash, status), so a caller can still poll or
+ * retry a transaction the user already signed. It lives on the error, not on
+ * the result: real `@stellar/freighter-api` returns empty result fields on
+ * failure, and the very common pattern of destructuring `signedTxXdr` and
+ * submitting when it is truthy must not silently submit an envelope from a
+ * call the dapp believes failed. Reaching into `error.recovery` is an opt-in.
+ */
+export type FreighterApiError = {
+  code: number;
+  message: string;
+  /** Post-approval recovery data, when the failure produced any. */
+  recovery?: StellarSnapErrorData;
+};
 
 type WithError<Type> = Partial<Type> & { error?: FreighterApiError };
 
 /**
  * Runs a call and folds failures into Freighter's `{ ...result, error }`
- * convention instead of throwing. Post-approval recovery data preserved on
- * the typed error (the signed envelope, signer, hash, status of a
- * submit-after-sign failure) is spread alongside `error`, so facade
- * consumers can still poll or retry a transaction the user already signed.
+ * convention instead of throwing. On failure the result fields stay empty
+ * (matching `@stellar/freighter-api`); any recovery data preserved on the
+ * typed error is exposed as `error.recovery`.
  *
  * @param work - The underlying call.
- * @returns The result, or `{ ...recoveryData, error }`.
+ * @returns The result, or `{ error }`.
  */
 async function soft<Type extends Record<string, unknown>>(
   work: () => Promise<Type>,
@@ -30,12 +45,13 @@ async function soft<Type extends Record<string, unknown>>(
   try {
     return await work();
   } catch (error) {
-    // The cast is safe by convention: on failure, the only result-shaped
-    // fields present are the validated recovery strings from `error.data`.
     if (error instanceof StellarSnapError) {
       return {
-        ...(error.data ?? {}),
-        error: { code: error.code, message: error.message },
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.data ? { recovery: error.data } : {}),
+        },
       } as WithError<Type>;
     }
     return {

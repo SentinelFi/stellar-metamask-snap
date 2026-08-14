@@ -3554,13 +3554,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/superstruct@npm:^3.1.0, @metamask/superstruct@npm:^3.2.1":
-  version: 3.2.1
-  resolution: "@metamask/superstruct@npm:3.2.1"
-  checksum: 194e4afc4df89f347e4dd16db8f8dfcbf7990ff82169c3bd43b98ecff2f1ef09488b987af612cc1ea2689826e8460bb2b01e1a3a340383420115b3a90aa68465
-  languageName: node
-  linkType: hard
-
 "@metamask/superstruct@npm:^3.4.1":
   version: 3.4.1
   resolution: "@metamask/superstruct@npm:3.4.1"
@@ -8313,6 +8306,18 @@ __metadata:
   languageName: node
   linkType: hard
 
+"cross-env@npm:^7.0.3":
+  version: 7.0.3
+  resolution: "cross-env@npm:7.0.3"
+  dependencies:
+    cross-spawn: ^7.0.1
+  bin:
+    cross-env: src/bin/cross-env.js
+    cross-env-shell: src/bin/cross-env-shell.js
+  checksum: 26f2f3ea2ab32617f57effb70d329c2070d2f5630adc800985d8b30b56e8bf7f5f439dd3a0358b79cee6f930afc23cf8e23515f17ccfb30092c6b62c6b630a79
+  languageName: node
+  linkType: hard
+
 "cross-fetch@npm:^3.1.5":
   version: 3.1.6
   resolution: "cross-fetch@npm:3.1.6"
@@ -8322,7 +8327,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"cross-spawn@npm:^7.0.2, cross-spawn@npm:^7.0.3, cross-spawn@npm:^7.0.6":
+"cross-spawn@npm:^7.0.1, cross-spawn@npm:^7.0.2, cross-spawn@npm:^7.0.3, cross-spawn@npm:^7.0.6":
   version: 7.0.6
   resolution: "cross-spawn@npm:7.0.6"
   dependencies:
@@ -17816,6 +17821,7 @@ __metadata:
     "@types/react-dom": ^18.0.6
     "@types/styled-components": ^5.1.25
     buffer: ^6.0.3
+    cross-env: ^7.0.3
     eslint: ^9.11.0
     gatsby: ^5.14.5
     gatsby-plugin-manifest: ^5.14.0
@@ -17824,7 +17830,6 @@ __metadata:
     react: ^18.2.0
     react-dom: ^18.2.0
     react-is: ^18.2.0
-    rimraf: ^3.0.2
     stellar-soroban-snap-connector: "workspace:*"
     styled-components: 5.3.3
     typescript: ~5.7.3
@@ -18197,7 +18202,6 @@ __metadata:
     "@jest/globals": ^29.5.0
     eslint: ^9.11.0
     jest: ^29.5.0
-    rimraf: ^3.0.2
     ts-jest: ^29.1.0
     typescript: ~5.7.3
   languageName: unknown
@@ -18218,7 +18222,6 @@ __metadata:
     "@types/react-dom": 18.2.4
     eslint: ^9.11.0
     jest: ^29.5.0
-    rimraf: ^3.0.2
     ts-jest: ^29.1.0
     typescript: ~5.7.3
   languageName: unknown
@@ -18246,7 +18249,7 @@ __metadata:
     eslint-plugin-promise: ^7.1.0
     prettier: ^3.3.3
     prettier-plugin-packagejson: ^2.2.18
-    sharp: ^0.32.6
+    sharp: ^0.35.0
     typescript: ~5.7.3
     typescript-eslint: ^8.6.0
   languageName: unknown
