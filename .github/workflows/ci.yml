@@ -47,8 +47,21 @@ jobs:
       # references (snap.config.ts rewrites them to crypto.getRandomValues).
       # Enforce the claim so a dependency bump reintroducing insecure
       # randomness in a form the rewrite misses fails the build.
+      #
+      # The rewrite itself additionally asserts how many references it
+      # replaced and fails the build when that number moves; this step prints
+      # the resulting counts so the numbers are visible in the CI log without
+      # the build tooling carrying a console call. Counts are reported, not
+      # asserted: `getRandomValues` also comes from @noble and key-tree doing
+      # legitimate crypto, so an exact expectation here would be brittle
+      # rather than meaningful. The exact assertion lives in snap.config.ts,
+      # where it can count only its own replacements.
       - name: Verify bundle contains no insecure randomness
-        run: "! grep -qE 'Math\\.random|Math\\[.random' packages/snap/dist/bundle.js"
+        run: |
+          BUNDLE=packages/snap/dist/bundle.js
+          ! grep -qE 'Math\.random|Math\[.random' "$BUNDLE"
+          echo "Math.random references:      $(grep -o 'Math\.random' "$BUNDLE" | wc -l)"
+          echo "crypto.getRandomValues uses: $(grep -o 'getRandomValues' "$BUNDLE" | wc -l)"
 
       # Direct runtime dependencies must stay advisory-free. The transitive
       # graph is analyzed separately (docs/THREAT-MODEL.md §5): advisories

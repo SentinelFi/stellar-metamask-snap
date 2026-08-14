@@ -42,6 +42,10 @@ type Compilation = {
     };
   };
   updateAsset: (name: string, source: unknown) => void;
+  // Webpack's own per-plugin logger. Preferred over `console` so the message
+  // routes through the compiler's `infrastructureLogging` config like every
+  // other build diagnostic, and so build tooling carries no raw console call.
+  getLogger: (name: string) => { info: (message: string) => void };
 };
 
 class StripInsecureRandomnessPlugin {
@@ -75,14 +79,24 @@ class StripInsecureRandomnessPlugin {
               // the SES evaluation, and still pass CI's "no Math.random
               // remains" grep, because the literal would indeed be gone.
               //
-              // Reporting the count is what makes such a change visible. A
+              // Asserting the count is what makes such a change visible: a
               // build whose number moves is a build whose dependencies
-              // changed where this rewrite reaches, which is worth a look
-              // before the new shasum is committed.
-              console.log(
-                `StripInsecureRandomness: rewrote ${occurrences} Math.random ` +
-                  `reference(s) in ${assetName} (expected ${EXPECTED_RANDOM_REWRITES}).`,
-              );
+              // changed where this rewrite reaches, and it fails below rather
+              // than quietly producing a new shasum.
+              //
+              // The record goes through webpack's own logger, not `console`.
+              // Note that `mm-snap` prints its own build summary rather than
+              // webpack's stats, so this line is captured in the compilation
+              // record but not shown on a successful build. That is deliberate:
+              // the throw below is the control, and a happy-path log is not
+              // worth a raw console call in build tooling that ships to an
+              // audit. CI prints the count separately (see ci.yml).
+              compilation
+                .getLogger('StripInsecureRandomness')
+                .info(
+                  `rewrote ${occurrences} Math.random reference(s) in ` +
+                    `${assetName} (expected ${EXPECTED_RANDOM_REWRITES}).`,
+                );
               if (occurrences !== EXPECTED_RANDOM_REWRITES) {
                 throw new Error(
                   `StripInsecureRandomness: expected ${EXPECTED_RANDOM_REWRITES} ` +
