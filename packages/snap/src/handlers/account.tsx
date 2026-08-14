@@ -1,5 +1,6 @@
 import { getOwnedAccounts, getWalletAddress } from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
+import { clearDialogRejections } from '../rpc/throttle';
 import {
   AddTokenParams,
   OptionalAddressParams,
@@ -224,6 +225,8 @@ export async function addToken(
   ) {
     throw invalidRequest(`Network mismatch: the wallet is on ${network.name}.`);
   }
+  // Redundant with the boundary validation (AddTokenParams), kept as defense
+  // in depth: this is the last stop before the ID reaches metadata reads.
   if (!isContractId(request.contractId)) {
     throw invalidRequest('Invalid contract ID.');
   }
@@ -263,6 +266,8 @@ export async function addToken(
   if (!approved) {
     throw userRejected();
   }
+  // An approved dialog breaks the consecutive-rejection chain.
+  clearDialogRejections(origin);
 
   await addTokenToState(network.name, {
     contractId: request.contractId,

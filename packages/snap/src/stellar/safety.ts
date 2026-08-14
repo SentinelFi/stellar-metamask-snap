@@ -62,16 +62,25 @@ function operationThreshold(operation: OperationRecord): ThresholdLevel {
  * blockers — but always says so when a lookup budget forced it to skip
  * accounts, so partial coverage is never mistaken for a clean check.
  *
- * @param tx - The parsed classic transaction (not seq-0, not fee-bump).
+ * @param tx - The parsed classic transaction (not seq-0; for a fee bump,
+ * its inner transaction).
  * @param network - The active network config.
  * @param signerAddress - The wallet's signing address.
+ * @param options - Check options.
+ * @param options.signerSignsSources - Whether the wallet's signature is what
+ * the source accounts' thresholds are measured against. False for a fee
+ * bump: the wallet signs only the outer envelope, so inner-source weight
+ * warnings would be spurious (existence and memo checks still apply). Use
+ * {@link collectFeeSourceWarnings} for the account the wallet does sign for.
  * @returns Advisory warning strings (empty when nothing to flag).
  */
 export async function collectSafetyWarnings(
   tx: Transaction,
   network: NetworkConfig,
   signerAddress: string,
+  options: { signerSignsSources?: boolean } = {},
 ): Promise<string[]> {
+  const { signerSignsSources = true } = options;
   const warnings: string[] = [];
 
   // Destinations of value-moving operations (classic G-addresses only).
@@ -168,7 +177,7 @@ export async function collectSafetyWarnings(
       );
       return;
     }
-    if (!checks.thresholds) {
+    if (!signerSignsSources || !checks.thresholds) {
       return;
     }
     const level = requiredBySource.get(source) ?? 'med';
@@ -184,4 +193,48 @@ export async function collectSafetyWarnings(
   });
 
   return warnings;
+}
+
+/**
+ * Collects best-effort safety warnings for a fee-bump envelope's fee source:
+ * the account the wallet's signature actually authorizes. Checks existence
+ * and the wallet key's weight against the fee source's low threshold (the
+ * level a fee-bump signature must meet). Best-effort like
+ * {@link collectSafetyWarnings}: degrades silently when Horizon is
+ * unreachable, and skips muxed (`M...`) fee sources it cannot look up.
+ *
+ * @param feeSource - The fee-bump envelope's fee source account.
+ * @param network - The active network config.
+ * @param signerAddress - The wallet's signing address.
+ * @returns Advisory warning strings (empty when nothing to flag).
+ */
+export async function collectFeeSourceWarnings(
+  feeSource: string,
+  network: NetworkConfig,
+  signerAddress: string,
+): Promise<string[]> {
+  if (!feeSource.startsWith('G')) {
+    return [];
+  }
+  const checks = await getAccountChecks(network.horizonUrl, feeSource);
+  if (!checks) {
+    return [];
+  }
+  if (!checks.exists) {
+    return [
+      `Fee source ${truncate(feeSource)} does not exist on ${network.name} — this fee bump will fail if submitted.`,
+    ];
+  }
+  if (!checks.thresholds) {
+    return [];
+  }
+  const required = Math.max(checks.thresholds.low, 1);
+  const ownWeight =
+    checks.signers.find((signer) => signer.key === signerAddress)?.weight ?? 0;
+  if (ownWeight < required) {
+    return [
+      `Your key's weight (${ownWeight}) on the fee source ${truncate(feeSource)} is below the low threshold (${required}) a fee bump requires. The signed fee bump will need additional co-signers before submission.`,
+    ];
+  }
+  return [];
 }

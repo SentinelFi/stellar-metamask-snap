@@ -20,7 +20,7 @@ jest.mock('./horizon', () => ({
 // eslint-disable-next-line import-x/first
 import { getAccountChecks } from './horizon';
 // eslint-disable-next-line import-x/first
-import { collectSafetyWarnings } from './safety';
+import { collectFeeSourceWarnings, collectSafetyWarnings } from './safety';
 // eslint-disable-next-line import-x/first
 import { NETWORKS } from '../state/networks';
 
@@ -196,6 +196,83 @@ describe('collectSafetyWarnings', () => {
   it('stays quiet for a simple funded payment with sufficient weight', async () => {
     const tx = buildTx([payment(DESTINATION)]);
     const warnings = await collectSafetyWarnings(tx, network, SOURCE);
+    expect(warnings).toStrictEqual([]);
+  });
+
+  it('skips source weight checks when the signer does not sign the sources', async () => {
+    // Fee-bump case: the wallet signs only the outer envelope, so an
+    // inner-source threshold the wallet key cannot meet is not its problem
+    // and the old warning here was spurious.
+    mockChecks.mockResolvedValue(
+      fundedAccount({ thresholds: { low: 1, med: 2, high: 2 } }),
+    );
+    const tx = buildTx([payment(DESTINATION)]);
+    const withWeights = await collectSafetyWarnings(tx, network, SOURCE);
+    const withoutWeights = await collectSafetyWarnings(tx, network, SOURCE, {
+      signerSignsSources: false,
+    });
+    expect(withWeights.some((entry) => entry.includes('co-signers'))).toBe(
+      true,
+    );
+    expect(withoutWeights).toStrictEqual([]);
+  });
+
+  it('still reports unfunded sources when weight checks are skipped', async () => {
+    mockChecks.mockImplementation(
+      checksByAddress({ [OTHER_SOURCE]: MISSING_ACCOUNT }) as never,
+    );
+    const tx = buildTx([payment(DESTINATION, OTHER_SOURCE) as never]);
+    const warnings = await collectSafetyWarnings(tx, network, SOURCE, {
+      signerSignsSources: false,
+    });
+    const warning = warnings.find((entry) => entry.includes('does not exist'));
+    expect(warning).toContain(OTHER_SOURCE.slice(0, 6));
+  });
+});
+
+describe('collectFeeSourceWarnings', () => {
+  beforeEach(() => {
+    mockChecks.mockReset();
+    mockChecks.mockResolvedValue(fundedAccount());
+  });
+
+  it('warns when the fee source does not exist', async () => {
+    mockChecks.mockResolvedValue(MISSING_ACCOUNT);
+    const warnings = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
+    const warning = warnings.find((entry) => entry.includes('does not exist'));
+    expect(warning).toContain('Fee source');
+    expect(warning).toContain(SOURCE.slice(0, 6));
+  });
+
+  it('measures the wallet weight against the low threshold', async () => {
+    // A fee-bump signature must meet the fee source's low threshold; weight
+    // 1 is below a low threshold of 2.
+    mockChecks.mockResolvedValue(
+      fundedAccount({ thresholds: { low: 2, med: 2, high: 2 } }),
+    );
+    const warnings = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
+    const warning = warnings.find((entry) => entry.includes('low threshold'));
+    expect(warning).toContain('co-signers');
+  });
+
+  it('stays quiet for a funded fee source with sufficient weight', async () => {
+    const warnings = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
+    expect(warnings).toStrictEqual([]);
+  });
+
+  it('skips muxed fee sources without a Horizon lookup', async () => {
+    const warnings = await collectFeeSourceWarnings(
+      'MDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUAAAAAAAAAAAAAAA',
+      network,
+      SOURCE,
+    );
+    expect(warnings).toStrictEqual([]);
+    expect(mockChecks).not.toHaveBeenCalled();
+  });
+
+  it('degrades silently when Horizon is unreachable', async () => {
+    mockChecks.mockResolvedValue(null);
+    const warnings = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
     expect(warnings).toStrictEqual([]);
   });
 });

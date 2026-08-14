@@ -16,6 +16,7 @@ import {
   invalidRequest,
   userRejected,
 } from '../rpc/errors';
+import { clearDialogRejections } from '../rpc/throttle';
 import {
   SignAuthEntryParams,
   SignMessageParams,
@@ -25,7 +26,10 @@ import {
 import { connectOrigin, getActiveNetwork } from '../state';
 import { submitTransaction } from '../stellar/horizon';
 import { getLatestLedger, sendTransaction } from '../stellar/rpc';
-import { collectSafetyWarnings } from '../stellar/safety';
+import {
+  collectFeeSourceWarnings,
+  collectSafetyWarnings,
+} from '../stellar/safety';
 import type { SimulationSummary } from '../stellar/soroban';
 import {
   boundAuthExpiration,
@@ -242,10 +246,21 @@ export async function signTransaction(
 
   // Classic transactions get best-effort safety checks (unfunded
   // destinations, SEP-29 memo requirements, multisig weight). Advisory only.
-  // Fee bumps get the same checks against their inner transaction.
+  // Fee bumps get the destination/existence checks against their inner
+  // transaction, but the weight check moves to the fee source: the wallet
+  // signs only the outer envelope, so inner-source thresholds are not what
+  // its signature is measured against.
   let warnings: string[] = [];
   if (!isSoroban && innerTx.sequence !== '0') {
-    warnings = await collectSafetyWarnings(innerTx, network, signerAddress);
+    warnings = await collectSafetyWarnings(innerTx, network, signerAddress, {
+      signerSignsSources: tx instanceof Transaction,
+    });
+  }
+  if (!(tx instanceof Transaction)) {
+    warnings = [
+      ...(await collectFeeSourceWarnings(tx.feeSource, network, signerAddress)),
+      ...warnings,
+    ];
   }
 
   const approved = await snap.request({
@@ -268,6 +283,8 @@ export async function signTransaction(
   if (!approved) {
     throw userRejected();
   }
+  // An approved dialog breaks the consecutive-rejection chain.
+  clearDialogRejections(origin);
 
   // An approved signature is also consent to be connected.
   await connectOrigin(origin);
@@ -485,6 +502,8 @@ export async function signAuthEntry(
   if (!approved) {
     throw userRejected();
   }
+  // An approved dialog breaks the consecutive-rejection chain.
+  clearDialogRejections(origin);
 
   await connectOrigin(origin);
 
@@ -537,6 +556,8 @@ export async function signMessage(
   if (!approved) {
     throw userRejected();
   }
+  // An approved dialog breaks the consecutive-rejection chain.
+  clearDialogRejections(origin);
 
   await connectOrigin(origin);
 

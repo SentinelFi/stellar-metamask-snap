@@ -104,8 +104,15 @@ export function recordDialogRejection(origin: string): void {
 }
 
 /**
- * Clears the origin's consecutive-rejection count after a completed
- * dialog-bearing request (an approval breaks the "consecutive" chain).
+ * Clears the origin's consecutive-rejection count after an *approved* dialog
+ * (an approval breaks the "consecutive" chain).
+ *
+ * Handlers call this at the moment the user approves, never on a mere
+ * handler success: several dialog-bearing methods have success paths that
+ * show no dialog at all (`setNetwork` to the current network,
+ * `setActiveAccount` to the active index, `requestAccess` with a standing
+ * grant), and clearing on those would let a connected origin reset its
+ * rejection count between rejections and never reach the cooldown.
  *
  * @param origin - The requesting dapp origin.
  */

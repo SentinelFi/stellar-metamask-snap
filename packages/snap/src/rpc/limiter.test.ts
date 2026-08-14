@@ -14,6 +14,8 @@ const ORIGIN = 'https://dapp.example';
 const FUND_LIMIT = (RATE_LIMITS.get('fund') as { limit: number }).limit;
 const BALANCES_LIMIT = (RATE_LIMITS.get('getBalances') as { limit: number })
   .limit;
+const ADD_TOKEN_LIMIT = (RATE_LIMITS.get('addToken') as { limit: number })
+  .limit;
 
 describe('assertRateAllowed', () => {
   beforeEach(() => {
@@ -41,6 +43,18 @@ describe('assertRateAllowed', () => {
     }
     expect(() => assertRateAllowed(ORIGIN, 'getBalances')).toThrow(
       'Too many getBalances requests',
+    );
+  });
+
+  it('throttles addToken once its window limit is reached', () => {
+    // Regression: addToken runs two metadata simulations before any dialog,
+    // and a non-token contract ID fails before a dialog opens, so without a
+    // window limit a connected origin could drive unbounded RPC traffic.
+    for (let index = 0; index < ADD_TOKEN_LIMIT; index += 1) {
+      expect(() => assertRateAllowed(ORIGIN, 'addToken')).not.toThrow();
+    }
+    expect(() => assertRateAllowed(ORIGIN, 'addToken')).toThrow(
+      'Too many addToken requests',
     );
   });
 

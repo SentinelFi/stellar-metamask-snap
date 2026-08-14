@@ -159,11 +159,16 @@ export function containsHiddenCharacters(value: string): boolean {
  * rendered dialog. Unlike {@link sanitizeInlineText} this is lossless: the
  * user can see exactly which code points are present.
  *
+ * Literal backslashes are escaped first (`\` becomes `\\`) so the encoding
+ * is unambiguous: without that, a value containing the plain ASCII text
+ * `\u{202e}` would be indistinguishable in this view from a value containing
+ * the actual U+202E override character.
+ *
  * @param value - The untrusted string.
  * @returns The string with hidden characters made visible.
  */
 export function escapeHiddenCharacters(value: string): string {
-  return value.replace(/[\p{Cc}\p{Cf}]/gu, (char) => {
+  return value.replace(/\\/gu, '\\\\').replace(/[\p{Cc}\p{Cf}]/gu, (char) => {
     const code = char.codePointAt(0) ?? 0;
     return `\\u{${code.toString(16)}}`;
   });

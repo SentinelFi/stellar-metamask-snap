@@ -14,6 +14,7 @@ import { StrKey } from '@stellar/stellar-sdk';
 import { invalidRequest } from './errors';
 import { AccountIndexStruct } from '../state';
 import { NETWORK_NAMES } from '../state/networks';
+import { isContractId } from '../stellar/token';
 
 /**
  * Upper bounds on dapp-supplied payloads, enforced before any XDR parse so a
@@ -24,6 +25,14 @@ import { NETWORK_NAMES } from '../state/networks';
 export const MAX_XDR_LENGTH = 256 * 1024;
 export const MAX_AUTH_ENTRY_LENGTH = 64 * 1024;
 export const MAX_MESSAGE_LENGTH = 4096;
+
+/**
+ * Upper bound on a dapp-supplied network passphrase. The field is only ever
+ * compared against the active network's passphrase (the longest real one is
+ * under 50 characters), so the bound costs nothing legitimate and keeps this
+ * the one string field without a cap from accepting arbitrary payloads.
+ */
+export const MAX_NETWORK_PASSPHRASE_LENGTH = 256;
 
 /**
  * A non-empty base64/text string bounded to `max` characters.
@@ -43,6 +52,29 @@ export const StellarAddress = refine(string(), 'StellarAddress', (value) =>
   StrKey.isValidEd25519PublicKey(value)
     ? true
     : 'Expected a Stellar account address (G...).',
+);
+
+/**
+ * A Soroban contract address (`C...` strkey shape). Validated at the RPC
+ * boundary like every other address the snap accepts, so a value that cannot
+ * name a contract is rejected before it reaches metadata reads, and the
+ * field carries an implicit length bound instead of none.
+ */
+export const SorobanContractAddress = refine(
+  string(),
+  'SorobanContractAddress',
+  (value) =>
+    isContractId(value)
+      ? true
+      : 'Expected a Soroban token contract address (C...).',
+);
+
+/**
+ * The optional dapp-supplied network passphrase, bounded: it is only ever
+ * compared for equality with the active network's passphrase.
+ */
+const NetworkPassphraseOption = optional(
+  boundedString(MAX_NETWORK_PASSPHRASE_LENGTH),
 );
 
 /**
@@ -84,7 +116,7 @@ export const SignTransactionParams = object({
   /** Base64-encoded TransactionEnvelope XDR. */
   xdr: boundedString(MAX_XDR_LENGTH),
   /** Must match the active network's passphrase when provided. */
-  networkPassphrase: optional(string()),
+  networkPassphrase: NetworkPassphraseOption,
   /** Selects the signing account; must be one the wallet holds. */
   address: AddressOption,
   /** When true, submit the signed transaction to Horizon after signing. */
@@ -99,7 +131,7 @@ export const SignMessageParams = object({
 export const SignAuthEntryParams = object({
   /** Base64-encoded SorobanAuthorizationEntry XDR. */
   authEntry: boundedString(MAX_AUTH_ENTRY_LENGTH),
-  networkPassphrase: optional(string()),
+  networkPassphrase: NetworkPassphraseOption,
   address: AddressOption,
 });
 
@@ -118,6 +150,6 @@ export const OptionalAddressParams = object({
 
 export const AddTokenParams = object({
   /** The Soroban token contract address (`C...`). */
-  contractId: string(),
-  networkPassphrase: optional(string()),
+  contractId: SorobanContractAddress,
+  networkPassphrase: NetworkPassphraseOption,
 });

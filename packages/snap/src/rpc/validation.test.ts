@@ -2,8 +2,10 @@ import { describe, expect, it } from '@jest/globals';
 import { SnapError } from '@metamask/snaps-sdk';
 
 import {
+  AddTokenParams,
   MAX_AUTH_ENTRY_LENGTH,
   MAX_MESSAGE_LENGTH,
+  MAX_NETWORK_PASSPHRASE_LENGTH,
   MAX_XDR_LENGTH,
   OptionalAddressParams,
   SignAuthEntryParams,
@@ -13,6 +15,7 @@ import {
 } from './validation';
 
 const ADDRESS = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
+const CONTRACT_ID = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 
 describe('OptionalAddressParams', () => {
   it('accepts a valid ed25519 account address', () => {
@@ -156,5 +159,61 @@ describe('payload size bounds', () => {
     expect(() => validate({ message: '' }, SignMessageParams)).toThrow(
       SnapError,
     );
+  });
+
+  it('bounds the networkPassphrase option', () => {
+    // Regression: the passphrase (compared for equality only) was the one
+    // string field with no length cap at the RPC boundary.
+    const oversized = 'p'.repeat(MAX_NETWORK_PASSPHRASE_LENGTH + 1);
+    expect(() =>
+      validate(
+        { xdr: 'AAAA', networkPassphrase: oversized },
+        SignTransactionParams,
+      ),
+    ).toThrow(SnapError);
+    expect(() =>
+      validate(
+        { authEntry: 'AAAA', networkPassphrase: oversized },
+        SignAuthEntryParams,
+      ),
+    ).toThrow(SnapError);
+    expect(() =>
+      validate(
+        { contractId: CONTRACT_ID, networkPassphrase: oversized },
+        AddTokenParams,
+      ),
+    ).toThrow(SnapError);
+    expect(
+      validate(
+        { xdr: 'AAAA', networkPassphrase: 'Test SDF Network ; September 2015' },
+        SignTransactionParams,
+      ),
+    ).toBeDefined();
+  });
+});
+
+describe('AddTokenParams', () => {
+  it('accepts a valid contract address', () => {
+    expect(validate({ contractId: CONTRACT_ID }, AddTokenParams)).toStrictEqual(
+      { contractId: CONTRACT_ID },
+    );
+  });
+
+  it('rejects anything that is not a contract strkey', () => {
+    // Regression: contractId was validated as a bare unbounded string at the
+    // boundary, with the shape check deferred to the handler.
+    const invalid = [
+      'not-a-contract',
+      '',
+      // Account strkey: valid strkey, wrong kind.
+      ADDRESS,
+      CONTRACT_ID.toLowerCase(),
+      CONTRACT_ID.slice(0, 20),
+      // Unbounded before: no length cap applied to this field at all.
+      `C${'A'.repeat(100_000)}`,
+    ];
+    for (const contractId of invalid) {
+      expect(() => validate({ contractId }, AddTokenParams)).toThrow(SnapError);
+    }
   });
 });

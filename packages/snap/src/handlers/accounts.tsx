@@ -1,6 +1,7 @@
 import { assertConnected } from './account';
 import { getAddressForIndex, getOwnedAccounts } from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
+import { clearDialogRejections } from '../rpc/throttle';
 import { SetActiveAccountParams, validate } from '../rpc/validation';
 import {
   getState,
@@ -85,6 +86,10 @@ export async function setActiveAccount(
     if (!approved) {
       throw userRejected();
     }
+    // An approved dialog breaks the consecutive-rejection chain. Cleared
+    // here, not on handler success: the no-dialog path (index already
+    // active) must not reset the count.
+    clearDialogRejections(origin);
     // Re-read and commit under the state lock; membership is re-checked
     // there against the post-dialog state.
     await setActiveAccountState(index);

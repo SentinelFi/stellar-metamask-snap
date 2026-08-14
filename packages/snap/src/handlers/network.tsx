@@ -1,5 +1,6 @@
 import { assertConnected } from './account';
 import { userRejected } from '../rpc/errors';
+import { clearDialogRejections } from '../rpc/throttle';
 import { SetNetworkParams, validate } from '../rpc/validation';
 import { getActiveNetwork, getState, setActiveNetwork } from '../state';
 import type { NetworkName } from '../state/networks';
@@ -75,6 +76,10 @@ export async function setNetwork(
     if (!approved) {
       throw userRejected();
     }
+    // An approved dialog breaks the consecutive-rejection chain. Cleared
+    // here, not on handler success: the no-dialog path (target already
+    // active) must not reset the count.
+    clearDialogRejections(origin);
     // Re-read and write under the state lock: the pre-dialog snapshot may
     // be stale by the time the user approves.
     await setActiveNetwork(target);

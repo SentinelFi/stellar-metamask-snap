@@ -779,9 +779,12 @@ describe('Soroban invocation dialogs', () => {
     // No rendered string may carry a real line break: that is what would
     // split one value across two apparent dialog lines.
     expect(inline.filter((text) => text.includes('\n'))).toStrictEqual([]);
-    // The name is shown quoted, with the break as a visible two-character
-    // escape, so it reads as one value rather than as an extra field.
-    expect(inline).toContain('"ok\\nAmount: 1000"');
+    // The name is shown quoted, with the break as a visible escape, so it
+    // reads as one value rather than as an extra field. The backslash that
+    // JSON.stringify introduces for the newline is itself escaped by
+    // escapeHiddenCharacters (which doubles backslashes so its encoding is
+    // injective), hence the four-backslash source literal here.
+    expect(inline).toContain('"ok\\\\nAmount: 1000"');
   });
 });
 

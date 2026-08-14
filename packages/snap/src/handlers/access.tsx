@@ -1,5 +1,6 @@
 import { getWalletAddress } from '../keys';
 import { userRejected } from '../rpc/errors';
+import { clearDialogRejections } from '../rpc/throttle';
 import {
   connectOrigin,
   getState,
@@ -47,6 +48,10 @@ export async function requestAccess(
   if (!approved) {
     throw userRejected();
   }
+  // An approved dialog breaks the consecutive-rejection chain. Cleared here,
+  // not on handler success: the silent already-granted path above must not
+  // reset the count.
+  clearDialogRejections(origin);
 
   await connectOrigin(origin);
   return { address };

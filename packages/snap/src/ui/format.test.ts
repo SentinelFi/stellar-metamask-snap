@@ -222,6 +222,18 @@ describe('escapeHiddenCharacters', () => {
   it('leaves ordinary text unchanged', () => {
     expect(escapeHiddenCharacters('hello world')).toBe('hello world');
   });
+
+  it('escapes literal backslashes so the encoding is unambiguous', () => {
+    // Regression: without backslash escaping, a value containing the plain
+    // ASCII text `\u{202e}` rendered identically to a value containing the
+    // actual U+202E override character.
+    const bidi = String.fromCodePoint(0x202e);
+    expect(escapeHiddenCharacters('a\\u{202e}b')).toBe('a\\\\u{202e}b');
+    expect(escapeHiddenCharacters(`a${bidi}b`)).toBe('a\\u{202e}b');
+    expect(escapeHiddenCharacters('a\\u{202e}b')).not.toBe(
+      escapeHiddenCharacters(`a${bidi}b`),
+    );
+  });
 });
 
 describe('displayOrigin', () => {

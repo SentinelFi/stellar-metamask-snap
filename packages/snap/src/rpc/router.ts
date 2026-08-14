@@ -5,7 +5,6 @@ import { internalError, SEP43_ERROR_CODES } from './errors';
 import { assertRateAllowed, withInflightBudget } from './limiter';
 import {
   assertDialogAllowed,
-  clearDialogRejections,
   DIALOG_METHODS,
   recordDialogRejection,
 } from './throttle';
@@ -88,13 +87,15 @@ export async function route(
   assertRateAllowed(origin, request.method);
 
   try {
-    const result = await withInflightBudget(origin, async () =>
+    // The rejection count is NOT cleared here on success: handlers clear it
+    // themselves at the moment a dialog is approved. Some dialog methods can
+    // succeed without showing any dialog (setNetwork to the current network,
+    // setActiveAccount to the active index, requestAccess with a standing
+    // grant), and a router-level clear on those would let a connected origin
+    // reset its count between rejections and never reach the cooldown.
+    return await withInflightBudget(origin, async () =>
       handler(origin, request.params),
     );
-    if (dialogMethod) {
-      clearDialogRejections(origin);
-    }
-    return result;
   } catch (error) {
     if (error instanceof SnapError) {
       if (dialogMethod && isUserRejection(error)) {

@@ -591,4 +591,52 @@ describe('dialog cooldown', () => {
     expect(error.data?.code).toBe(-3);
     expect(error.message).toContain('Try again in');
   }, 45000);
+
+  it('is not reset by a dialog-free success between rejections', async () => {
+    // Regression: the router used to clear the rejection count on ANY
+    // successful dialog-method call, but setNetwork to the current network
+    // completes without showing a dialog. A connected origin could interleave
+    // that no-op between rejections and never reach the cooldown.
+    const { request } = await install(CONNECTED_STATE);
+
+    for (let i = 0; i < 2; i++) {
+      const pending = request({
+        origin: ORIGIN,
+        method: 'signMessage',
+        params: { message: 'hello' },
+      });
+      const ui = await pending.getInterface();
+      await (ui as { cancel: () => Promise<void> }).cancel();
+      expect(getError(await pending).data?.code).toBe(-4);
+    }
+
+    // Dialog-free success: the wallet is already on TESTNET, so no dialog
+    // opens. This must not break the consecutive-rejection chain.
+    const noop = await request({
+      origin: ORIGIN,
+      method: 'setNetwork',
+      params: { network: 'TESTNET' },
+    });
+    expect(getResult<{ network: string }>(noop).network).toBe('TESTNET');
+
+    // The third rejection still reaches the threshold.
+    const third = request({
+      origin: ORIGIN,
+      method: 'signMessage',
+      params: { message: 'hello' },
+    });
+    const thirdUi = await third.getInterface();
+    await (thirdUi as { cancel: () => Promise<void> }).cancel();
+    expect(getError(await third).data?.code).toBe(-4);
+
+    const error = getError(
+      await request({
+        origin: ORIGIN,
+        method: 'signMessage',
+        params: { message: 'hello' },
+      }),
+    );
+    expect(error.data?.code).toBe(-3);
+    expect(error.message).toContain('Try again in');
+  }, 60000);
 });
