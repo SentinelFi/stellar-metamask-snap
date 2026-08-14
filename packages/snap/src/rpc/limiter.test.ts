@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it } from '@jest/globals';
 import {
   assertRateAllowed,
   MAX_INFLIGHT_PER_ORIGIN,
+  MAX_PREDIALOG_LOOKUPS,
   RATE_LIMITS,
   resetRequestLimits,
+  takePredialogBudget,
   withInflightBudget,
 } from './limiter';
 
@@ -15,6 +17,8 @@ const FUND_LIMIT = (RATE_LIMITS.get('fund') as { limit: number }).limit;
 const BALANCES_LIMIT = (RATE_LIMITS.get('getBalances') as { limit: number })
   .limit;
 const ADD_TOKEN_LIMIT = (RATE_LIMITS.get('addToken') as { limit: number })
+  .limit;
+const SIGN_TX_LIMIT = (RATE_LIMITS.get('signTransaction') as { limit: number })
   .limit;
 
 describe('assertRateAllowed', () => {
@@ -58,6 +62,24 @@ describe('assertRateAllowed', () => {
     );
   });
 
+  it('throttles the signing methods once their window limit is reached', () => {
+    // The signing dialogs do not bound their own cost: each request derives a
+    // key and (for signTransaction) fans out Horizon lookups or a simulation
+    // before any dialog exists, and all three are callable without a
+    // connection grant. The dialog throttle only engages after three
+    // consecutive *rejections*, so a caller that never resolves a dialog
+    // never reaches it.
+    for (const method of ['signTransaction', 'signAuthEntry', 'signMessage']) {
+      resetRequestLimits();
+      for (let index = 0; index < SIGN_TX_LIMIT; index += 1) {
+        expect(() => assertRateAllowed(ORIGIN, method)).not.toThrow();
+      }
+      expect(() => assertRateAllowed(ORIGIN, method)).toThrow(
+        `Too many ${method} requests`,
+      );
+    }
+  });
+
   it('tracks origins independently', () => {
     for (let index = 0; index < FUND_LIMIT; index += 1) {
       assertRateAllowed(ORIGIN, 'fund');
@@ -65,6 +87,58 @@ describe('assertRateAllowed', () => {
     expect(() =>
       assertRateAllowed('https://other.example', 'fund'),
     ).not.toThrow();
+  });
+
+  it('keeps an active origin out of the eviction path', () => {
+    // Regression: eviction ran in raw insertion order, so an attacker
+    // rotating origins could evict an *active* origin's window. Eviction
+    // fails open, so the evicted party loses its throttle: exactly backwards.
+    for (let index = 0; index < FUND_LIMIT; index += 1) {
+      assertRateAllowed(ORIGIN, 'fund');
+    }
+    // Fill the tracking map well past its 100-entry cap, touching ORIGIN
+    // throughout so it stays the most recently used key.
+    for (let index = 0; index < 300; index += 1) {
+      assertRateAllowed(`https://rotate-${index}.example`, 'fund');
+      expect(() => assertRateAllowed(ORIGIN, 'fund')).toThrow(
+        'Too many fund requests',
+      );
+    }
+  });
+});
+
+describe('takePredialogBudget', () => {
+  beforeEach(() => {
+    resetRequestLimits();
+  });
+
+  it('allows lookups up to the global budget', () => {
+    for (let index = 0; index < MAX_PREDIALOG_LOOKUPS; index += 1) {
+      expect(takePredialogBudget()).toBe(true);
+    }
+    expect(takePredialogBudget()).toBe(false);
+  });
+
+  it('is origin-independent, so subdomain rotation cannot reset it', () => {
+    // This is the whole point of the budget: every other control here is
+    // keyed on `origin`, and the snap cannot distinguish `a1.example` from
+    // `a2.example`, so a wildcard domain gets a fresh per-origin budget per
+    // subdomain. The global budget is what survives that.
+    for (let index = 0; index < MAX_PREDIALOG_LOOKUPS; index += 1) {
+      takePredialogBudget();
+    }
+    expect(takePredialogBudget()).toBe(false);
+  });
+
+  it('claims a whole batch atomically or not at all', () => {
+    // A caller about to run N lookups must not get a partial reservation:
+    // it would spend budget it could not use and still be denied.
+    expect(takePredialogBudget(MAX_PREDIALOG_LOOKUPS - 1)).toBe(true);
+    expect(takePredialogBudget(5)).toBe(false);
+    // The refused batch consumed nothing, so a batch that does fit still
+    // passes.
+    expect(takePredialogBudget(1)).toBe(true);
+    expect(takePredialogBudget(1)).toBe(false);
   });
 });
 

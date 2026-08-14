@@ -45,5 +45,15 @@ Nothing has been published to npm yet, so every change below is still unreleased
 - Submission responses are accepted only when the returned transaction hash matches the locally computed hash of the exact signed envelope.
 - RPC dispatch resolves handlers as own properties only, so names like `constructor` cannot resolve inherited JavaScript properties.
 - Release provenance procedure documented in `docs/RELEASE.md`: publish from the annotated tag, treat the audited ID and version as protected inputs, verify the published tarball against a rebuild, retain an attestation.
+- The signing methods are rate limited per origin: their dialogs do not bound their cost, since each derives a key and `signTransaction` fans out up to seven Horizon lookups or a Soroban simulation before any dialog exists, and all three are callable without a connection grant.
+- A global, origin-independent budget bounds the advisory lookups that run before a signing dialog (Horizon account checks and the display-verification simulation). Every other limit is keyed on origin, which a wildcard domain defeats by rotating subdomains; this one does not. Exhaustion is disclosed in the dialog as checks that did not run, never as silence and never as a refused signature.
+- Rate-limit and dialog-cooldown tracking evicts the least recently used origin rather than the oldest, and refreshes recency on refused requests too, so an origin can no longer rotate throwaway origins to evict an active caller's counters or the record of its own cooldown.
+- Muxed (`M...`) destinations, sources, and fee-bump fee sources are disclosed as unchecked instead of silently skipped, since Horizon cannot look them up and absence of a warning must never read as a passed check.
+- Hidden-character detection, escaping, and inline stripping share one character class covering Unicode line and paragraph separators and the invisible fillers (U+115F, U+1160, U+17B4, U+17B5, U+2800, U+3164, U+FFA0) alongside control and format characters, so a SEP-53 message can no longer carry invisible text past the warning.
+- Contract-reported token balances format correctly when negative, instead of rendering a malformed amount such as `-1.-5`.
+
+### Changed
+
+- The snap home page renders from a single decrypted state read instead of four, so the page is assembled from one consistent snapshot.
 
 [unreleased]: https://github.com/jeffnuclear/stelllar-metamask-snap/commits/main

@@ -131,6 +131,40 @@ export async function readTokenMetadata(
 }
 
 /**
+ * Renders a raw i128 token amount as a decimal string at the token's
+ * precision. Exported so the formatting can be tested directly: it is
+ * otherwise reachable only behind a simulation round-trip, and the value it
+ * formats is contract-reported and fully attacker-controllable.
+ *
+ * @param value - The raw amount in the token's smallest unit.
+ * @param decimals - The token's decimal precision (already bounds-checked).
+ * @returns The decimal string.
+ */
+export function formatTokenAmount(value: bigint, decimals: number): string {
+  if (decimals === 0) {
+    return value.toString();
+  }
+  // Format the magnitude and reattach the sign. BigInt division and remainder
+  // both truncate toward zero, so a negative balance would otherwise carry its
+  // sign into the fractional part and render as `-1.-5`. No real token should
+  // report a negative balance, but a hostile one can choose to, and a
+  // malformed balance row is a display-integrity defect either way.
+  const negative = value < 0n;
+  const magnitude = negative ? -value : value;
+  const divisor = 10n ** BigInt(decimals);
+  const whole = magnitude / divisor;
+  const fraction = (magnitude % divisor)
+    .toString()
+    .padStart(decimals, '0')
+    .replace(/0+$/u, '');
+  // The sign is applied to the rendered string, not to `whole`: a magnitude
+  // below 1 has `whole === 0n`, and `-0n` stringifies as `0`, which would drop
+  // the sign entirely (`-0.5` rendering as `0.5`).
+  const sign = negative ? '-' : '';
+  return fraction ? `${sign}${whole}.${fraction}` : `${sign}${whole}`;
+}
+
+/**
  * Reads an account's token balance via simulation and formats it with the
  * token's decimals.
  *
@@ -168,16 +202,7 @@ export async function readTokenBalance(
   } catch {
     return null;
   }
-  if (decimals === 0) {
-    return value.toString();
-  }
-  const divisor = 10n ** BigInt(decimals);
-  const whole = value / divisor;
-  const fraction = (value % divisor)
-    .toString()
-    .padStart(decimals, '0')
-    .replace(/0+$/u, '');
-  return fraction ? `${whole}.${fraction}` : `${whole}`;
+  return formatTokenAmount(value, decimals);
 }
 
 /**

@@ -3,6 +3,7 @@ import { Address, Asset, hash, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { simulateTransaction } from './rpc';
+import { takePredialogBudget } from '../rpc/limiter';
 import {
   escapeHiddenCharacters,
   sanitizeInlineText,
@@ -919,6 +920,19 @@ export async function simulateForDisplay(
   rpcUrl: string,
   transactionXdr: string,
 ): Promise<SimulationSummary> {
+  // This simulation runs before any dialog exists and is reachable without a
+  // connection grant, so it shares the global pre-dialog budget with the
+  // Horizon safety lookups. Denial renders the existing "Simulation
+  // unavailable" banner, which already tells the user the call could not be
+  // verified: a visible caution, not a silent omission.
+  if (!takePredialogBudget()) {
+    return {
+      ok: false,
+      error:
+        'Too many simulations have run recently. Retry in a minute to verify this call.',
+    };
+  }
+
   let response;
   try {
     response = await simulateTransaction(rpcUrl, transactionXdr);

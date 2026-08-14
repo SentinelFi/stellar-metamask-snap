@@ -140,16 +140,61 @@ export function stroopsToXlm(stroops: string | number): string {
 }
 
 /**
+ * The character class treated as hidden or display-altering everywhere in
+ * this module, kept in one place so detection ({@link containsHiddenCharacters}),
+ * escaping ({@link escapeHiddenCharacters}), and stripping
+ * ({@link sanitizeInlineText}) can never drift apart. A code point one of
+ * them catches but another does not is precisely the gap an attacker wants:
+ * flagged but not made visible, or stripped from the preview but not
+ * reported as a difference.
+ *
+ * Beyond the obvious `\p{Cc}` (controls) and `\p{Cf}` (bidi overrides,
+ * zero-width marks, soft hyphen) it covers `\p{Zl}`/`\p{Zp}`, which is U+2028
+ * LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR: both break lines in most
+ * renderers but are neither control nor format characters.
+ *
+ * It also covers the "invisible letter" fillers, which render as blank space
+ * while sitting in ordinary letter, symbol, and mark categories, so no
+ * `\p{C}` class reaches them: U+115F and U+1160 HANGUL CHOSEONG/JUNGSEONG
+ * FILLER, U+17B4 and U+17B5 KHMER INHERENT VOWELS, U+2800 BRAILLE PATTERN
+ * BLANK, U+3164 HANGUL FILLER, and U+FFA0 HALFWIDTH HANGUL FILLER. These are
+ * the standard tools for padding text out of view, or for splitting a word so
+ * it reads as two.
+ */
+const HIDDEN_CHARACTER_CLASS =
+  '\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\u115F\\u1160\\u17B4\\u17B5\\u2800\\u3164\\uFFA0';
+
+/*
+ * `no-misleading-character-class` exists to catch a multi-code-point grapheme
+ * written accidentally into a class. Here the combining marks (U+17B4/U+17B5)
+ * are listed deliberately and individually, as escapes, precisely because they
+ * are invisible on their own: matching them one code point at a time is the
+ * intent, not a mistake.
+ */
+/* eslint-disable no-misleading-character-class */
+
+/** Matches a single hidden character. */
+const HIDDEN_CHARACTER = new RegExp(`[${HIDDEN_CHARACTER_CLASS}]`, 'u');
+
+/** Matches every hidden character (for replacement). */
+const HIDDEN_CHARACTERS_GLOBAL = new RegExp(
+  `[${HIDDEN_CHARACTER_CLASS}]`,
+  'gu',
+);
+
+/* eslint-enable no-misleading-character-class */
+
+/**
  * Whether a string contains hidden or direction-altering characters
- * (controls, bidi overrides, zero-width marks) that could make the rendered
- * text differ from what is actually signed. Ordinary line breaks and tabs
- * are allowed.
+ * (controls, bidi overrides, zero-width marks, line/paragraph separators,
+ * invisible fillers) that could make the rendered text differ from what is
+ * actually signed. Ordinary line breaks and tabs are allowed.
  *
  * @param value - The string to inspect.
  * @returns True when hidden characters are present.
  */
 export function containsHiddenCharacters(value: string): boolean {
-  return /[\p{Cc}\p{Cf}]/u.test(value.replace(/[\t\n\r]/gu, ''));
+  return HIDDEN_CHARACTER.test(value.replace(/[\t\n\r]/gu, ''));
 }
 
 /**
@@ -168,10 +213,12 @@ export function containsHiddenCharacters(value: string): boolean {
  * @returns The string with hidden characters made visible.
  */
 export function escapeHiddenCharacters(value: string): string {
-  return value.replace(/\\/gu, '\\\\').replace(/[\p{Cc}\p{Cf}]/gu, (char) => {
-    const code = char.codePointAt(0) ?? 0;
-    return `\\u{${code.toString(16)}}`;
-  });
+  return value
+    .replace(/\\/gu, '\\\\')
+    .replace(HIDDEN_CHARACTERS_GLOBAL, (char) => {
+      const code = char.codePointAt(0) ?? 0;
+      return `\\u{${code.toString(16)}}`;
+    });
 }
 
 /** Inline display cap for origins, so a long origin cannot flood a dialog. */
@@ -228,7 +275,7 @@ export function originLooksConfusable(origin: string): boolean {
  */
 export function sanitizeInlineText(value: string): string {
   return value
-    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+    .replace(HIDDEN_CHARACTERS_GLOBAL, ' ')
     .replace(/\s+/gu, ' ')
     .trim();
 }

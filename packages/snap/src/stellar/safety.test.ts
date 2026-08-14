@@ -3,6 +3,7 @@ import {
   Account,
   Asset,
   Keypair,
+  MuxedAccount,
   Networks,
   Operation,
   TransactionBuilder,
@@ -22,6 +23,12 @@ import { getAccountChecks } from './horizon';
 // eslint-disable-next-line import-x/first
 import { collectFeeSourceWarnings, collectSafetyWarnings } from './safety';
 // eslint-disable-next-line import-x/first
+import {
+  MAX_PREDIALOG_LOOKUPS,
+  resetRequestLimits,
+  takePredialogBudget,
+} from '../rpc/limiter';
+// eslint-disable-next-line import-x/first
 import { NETWORKS } from '../state/networks';
 
 const SOURCE = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
@@ -31,6 +38,11 @@ const DESTINATIONS = [1, 2, 3, 4].map((seed) =>
   Keypair.fromRawEd25519Seed(Buffer.alloc(32, seed)).publicKey(),
 );
 const DESTINATION = DESTINATIONS[0] as string;
+/** A muxed (`M...`) address: Horizon's accounts endpoint cannot look it up. */
+const MUXED_DESTINATION = new MuxedAccount(
+  new Account(DESTINATION, '0'),
+  '1',
+).accountId();
 
 const mockChecks = getAccountChecks as jest.MockedFunction<
   typeof getAccountChecks
@@ -117,6 +129,55 @@ describe('collectSafetyWarnings', () => {
   beforeEach(() => {
     mockChecks.mockReset();
     mockChecks.mockResolvedValue(fundedAccount());
+    // The safety lookups draw on the global pre-dialog budget, which is
+    // module state shared by every test in this file.
+    resetRequestLimits();
+  });
+
+  it('discloses muxed destinations rather than skipping them silently', async () => {
+    // Regression: `M...` addresses were filtered out before the lookup and
+    // never mentioned, so a transaction paying only muxed destinations
+    // produced zero warnings, which is indistinguishable from one that
+    // passed every check. Muxed destinations are common in exchange and
+    // custodial flows, exactly where the SEP-29 memo warning matters.
+    const tx = buildTx([payment(MUXED_DESTINATION) as never]);
+    const warnings = await collectSafetyWarnings(tx, network, SOURCE);
+    const warning = warnings.find((entry) => entry.includes('muxed'));
+    expect(warning).toContain('NOT checked');
+  });
+
+  it('discloses a muxed transaction source', async () => {
+    // `Account` rejects M-addresses, so the muxed source has to come from a
+    // MuxedAccount: this is the shape a real muxed-source envelope has.
+    const tx = new TransactionBuilder(
+      new MuxedAccount(new Account(DESTINATION, '1'), '5'),
+      { fee: '100', networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(payment(OTHER_SOURCE) as never)
+      .setTimeout(300)
+      .build();
+    const warnings = await collectSafetyWarnings(tx, network, SOURCE);
+    expect(warnings.some((entry) => entry.includes('muxed'))).toBe(true);
+  });
+
+  it('stays silent about muxed accounts when there are none', async () => {
+    const tx = buildTx([payment(DESTINATION) as never]);
+    const warnings = await collectSafetyWarnings(tx, network, SOURCE);
+    expect(warnings.some((entry) => entry.includes('muxed'))).toBe(false);
+  });
+
+  it('discloses skipped checks when the global lookup budget is exhausted', async () => {
+    // Denial must surface as a visible caution, never as silence: an
+    // attacker who could drain the budget would otherwise be suppressing a
+    // legitimate transaction's safety warnings.
+    for (let index = 0; index < MAX_PREDIALOG_LOOKUPS; index += 1) {
+      takePredialogBudget();
+    }
+    const tx = buildTx([payment(DESTINATION) as never]);
+    const warnings = await collectSafetyWarnings(tx, network, SOURCE);
+    expect(warnings.some((entry) => entry.includes('NOT checked'))).toBe(true);
+    // Budget denial must not spend network lookups it was refused.
+    expect(mockChecks).not.toHaveBeenCalled();
   });
 
   it('discloses when destinations beyond the check budget were skipped', async () => {
@@ -234,6 +295,7 @@ describe('collectFeeSourceWarnings', () => {
   beforeEach(() => {
     mockChecks.mockReset();
     mockChecks.mockResolvedValue(fundedAccount());
+    resetRequestLimits();
   });
 
   it('warns when the fee source does not exist', async () => {
@@ -260,13 +322,28 @@ describe('collectFeeSourceWarnings', () => {
     expect(warnings).toStrictEqual([]);
   });
 
-  it('skips muxed fee sources without a Horizon lookup', async () => {
+  it('discloses a skipped muxed fee source instead of staying silent', async () => {
+    // Regression: this returned no warnings at all. The fee source is the
+    // account the wallet's signature actually authorizes, so silence here is
+    // the most misleading silence in the module: it is indistinguishable
+    // from a lookup that ran and passed.
     const warnings = await collectFeeSourceWarnings(
-      'MDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUAAAAAAAAAAAAAAA',
+      MUXED_DESTINATION,
       network,
       SOURCE,
     );
-    expect(warnings).toStrictEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('muxed');
+    expect(warnings[0]).toContain('NOT checked');
+    expect(mockChecks).not.toHaveBeenCalled();
+  });
+
+  it('discloses a skipped fee source when the global budget is exhausted', async () => {
+    for (let index = 0; index < MAX_PREDIALOG_LOOKUPS; index += 1) {
+      takePredialogBudget();
+    }
+    const warnings = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
+    expect(warnings.some((entry) => entry.includes('NOT checked'))).toBe(true);
     expect(mockChecks).not.toHaveBeenCalled();
   });
 

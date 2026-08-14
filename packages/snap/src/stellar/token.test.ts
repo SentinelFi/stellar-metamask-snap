@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  formatTokenAmount,
   isContractId,
   MAX_TOKEN_DECIMALS,
   readTokenBalance,
@@ -73,6 +74,36 @@ describe('sanitizeTokenMetadata', () => {
     expect(sanitizeTokenMetadata('USDC', 7.5)).toBeNull();
     expect(sanitizeTokenMetadata('USDC', Number.NaN)).toBeNull();
     expect(sanitizeTokenMetadata('USDC', '7')).toBeNull();
+  });
+});
+
+describe('formatTokenAmount', () => {
+  it('renders ordinary amounts at the token precision', () => {
+    expect(formatTokenAmount(15n, 1)).toBe('1.5');
+    expect(formatTokenAmount(0n, 7)).toBe('0');
+    expect(formatTokenAmount(10000000n, 7)).toBe('1');
+    expect(formatTokenAmount(12345000n, 7)).toBe('1.2345');
+    expect(formatTokenAmount(5n, 1)).toBe('0.5');
+    // decimals 0 is the whole-unit token case.
+    expect(formatTokenAmount(42n, 0)).toBe('42');
+  });
+
+  it('renders negative amounts without a sign in the fraction', () => {
+    // Regression: BigInt `/` and `%` both truncate toward zero, so the
+    // remainder kept the sign and `-15n` at 1 decimal rendered as `-1.-5`.
+    // The value is contract-reported, so a hostile token can pick it.
+    expect(formatTokenAmount(-15n, 1)).toBe('-1.5');
+    expect(formatTokenAmount(-12345000n, 7)).toBe('-1.2345');
+    expect(formatTokenAmount(-10000000n, 7)).toBe('-1');
+    expect(formatTokenAmount(-42n, 0)).toBe('-42');
+  });
+
+  it('keeps the sign when the magnitude is below one whole unit', () => {
+    // The whole part is 0n here, and `-0n` stringifies as '0', so applying
+    // the sign to the number rather than the rendered string would silently
+    // turn a negative balance into a positive one.
+    expect(formatTokenAmount(-5n, 1)).toBe('-0.5');
+    expect(formatTokenAmount(-1n, 7)).toBe('-0.0000001');
   });
 });
 

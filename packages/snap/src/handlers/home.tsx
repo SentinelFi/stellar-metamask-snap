@@ -12,8 +12,9 @@ import {
 
 import { getOwnedAccounts } from '../keys';
 import type { TrackedToken } from '../state';
-import { getActiveNetwork, getState, getTokens } from '../state';
+import { getState } from '../state';
 import type { NetworkName } from '../state/networks';
+import { NETWORKS } from '../state/networks';
 import type { AccountSummary } from '../stellar/horizon';
 import { getAccountSummary } from '../stellar/horizon';
 import { readTokenBalance } from '../stellar/token';
@@ -183,14 +184,20 @@ const HomePage: SnapComponent<HomePageProps> = ({
  * @returns The home page content.
  */
 export async function homePage() {
-  const network = await getActiveNetwork();
+  // One state read for the whole render. Each `getState()` is a separate
+  // `snap_manageState` decrypt, and this page needs the network, the active
+  // account, the account list, the origins, and the tracked tokens: reading
+  // them through four helpers that each re-read state cost four decrypts of
+  // the same value, and left the page assembled from four snapshots that
+  // could in principle differ.
   const state = await getState();
-  const accounts = await getOwnedAccounts();
+  const network = NETWORKS[state.network];
+  const accounts = await getOwnedAccounts(state);
   const activeIndex = state.activeAccount;
   const address =
     accounts.find((account) => account.index === activeIndex)?.address ?? '';
   const origins = Object.keys(state.origins);
-  const tokens = await getTokens(network.name);
+  const tokens = state.tokens?.[network.name] ?? [];
 
   let summary: AccountSummary | null = null;
   try {

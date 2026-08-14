@@ -23,8 +23,15 @@ export const COOLDOWN_MS = 30_000;
 
 /**
  * Cap on tracked origins so an attacker rotating origins cannot grow the
- * map without bound. Oldest entries are evicted first; eviction only ever
- * forgets rejections, so it fails open, never closed.
+ * map without bound. The *least recently used* entry is evicted; eviction
+ * only ever forgets rejections, so it fails open, never closed.
+ *
+ * Recency matters here more than in the rate limiter. Eviction releases a
+ * cooldown, so evicting by raw insertion order would hand an origin a way to
+ * clear its *own* cooldown: rotate through 100 throwaway origins and the
+ * entry recording the block is gone. Touching an entry on every access keeps
+ * the origin currently making requests at the most-recently-used end, where
+ * it cannot be evicted.
  */
 const MAX_TRACKED_ORIGINS = 100;
 
@@ -53,12 +60,16 @@ const entries = new Map<string, ThrottleEntry>();
 function entryFor(origin: string): ThrottleEntry {
   const existing = entries.get(origin);
   if (existing) {
+    // Re-insert so the entry moves to the most-recently-used end: `Map.set`
+    // alone would keep its original position.
+    entries.delete(origin);
+    entries.set(origin, existing);
     return existing;
   }
   if (entries.size >= MAX_TRACKED_ORIGINS) {
-    const oldest = entries.keys().next().value;
-    if (oldest !== undefined) {
-      entries.delete(oldest);
+    const leastRecent = entries.keys().next().value;
+    if (leastRecent !== undefined) {
+      entries.delete(leastRecent);
     }
   }
   const created = { rejections: 0, blockedUntil: 0 };
@@ -83,6 +94,10 @@ export function assertDialogAllowed(origin: string): void {
     entries.delete(origin);
     return;
   }
+  // A blocked origin that keeps calling keeps its entry fresh, so it cannot
+  // rotate other origins in to evict the record of its own cooldown.
+  entries.delete(origin);
+  entries.set(origin, entry);
   const seconds = Math.ceil((entry.blockedUntil - now) / 1000);
   throw invalidRequest(
     `Too many rejected requests from this site. Try again in ${seconds}s.`,

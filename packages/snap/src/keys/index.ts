@@ -3,6 +3,7 @@ import { Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { invalidRequest } from '../rpc/errors';
+import type { SnapState } from '../state';
 import { getState, MAX_ACCOUNT_INDEX } from '../state';
 
 /**
@@ -132,14 +133,19 @@ export async function getWalletAddress(): Promise<string> {
 /**
  * Every revealed account with its address, in index order.
  *
+ * @param state - An already-read state snapshot, when the caller has one.
+ * Every `getState()` is a separate `snap_manageState` decrypt round-trip, so
+ * a caller that has already read state (the home page reads it to resolve the
+ * active account and network) passes it here rather than paying for a second
+ * read of the same value. Omitting it reads fresh state, as before.
  * @returns `{ index, address }` for each account in state.
  */
-export async function getOwnedAccounts(): Promise<
-  { index: number; address: string }[]
-> {
-  const state = await getState();
-  await cacheAddresses(state.accounts);
-  return state.accounts.map((index) => ({
+export async function getOwnedAccounts(
+  state?: SnapState,
+): Promise<{ index: number; address: string }[]> {
+  const resolved = state ?? (await getState());
+  await cacheAddresses(resolved.accounts);
+  return resolved.accounts.map((index) => ({
     index,
     address: addressCache.get(index) as string,
   }));

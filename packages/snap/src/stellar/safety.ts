@@ -1,8 +1,17 @@
 import type { OperationRecord, Transaction } from '@stellar/stellar-sdk';
 
 import { getAccountChecks } from './horizon';
+import { takePredialogBudget } from '../rpc/limiter';
 import type { NetworkConfig } from '../state/networks';
 import { truncate } from '../ui/format';
+
+/**
+ * The advisory shown when a check could not be performed at all, rather than
+ * performed and passed. Absence of a warning must never read as "verified
+ * safe", so every path that skips work says so in the same voice as the
+ * lookup-budget advisories below.
+ */
+const SKIPPED_PREFIX = 'Safety checks were skipped:';
 
 /** Cap Horizon destination lookups so dialog latency stays bounded. */
 const MAX_DESTINATION_CHECKS = 3;
@@ -83,20 +92,35 @@ export async function collectSafetyWarnings(
   const { signerSignsSources = true } = options;
   const warnings: string[] = [];
 
-  // Destinations of value-moving operations (classic G-addresses only).
-  // Account merges transfer the source's entire XLM balance, so their
-  // destinations carry the same existence and SEP-29 memo risks as payments.
+  // Destinations of value-moving operations. Account merges transfer the
+  // source's entire XLM balance, so their destinations carry the same
+  // existence and SEP-29 memo risks as payments.
+  //
+  // Only classic `G...` addresses can be looked up on Horizon's accounts
+  // endpoint. Muxed (`M...`) and any other shape are collected separately
+  // rather than dropped: a transaction paying only muxed destinations would
+  // otherwise produce zero warnings, which is indistinguishable from one that
+  // passed every check. Muxed destinations are common in exchange and
+  // custodial flows, which is exactly where the SEP-29 memo warning matters.
   const valueDestinations = new Set<string>();
+  const unresolvableAccounts = new Set<string>();
   for (const operation of tx.operations) {
     if (
-      (operation.type === 'payment' ||
-        operation.type === 'pathPaymentStrictSend' ||
-        operation.type === 'pathPaymentStrictReceive' ||
-        operation.type === 'accountMerge') &&
-      typeof operation.destination === 'string' &&
-      operation.destination.startsWith('G')
+      operation.type !== 'payment' &&
+      operation.type !== 'pathPaymentStrictSend' &&
+      operation.type !== 'pathPaymentStrictReceive' &&
+      operation.type !== 'accountMerge'
     ) {
-      valueDestinations.add(operation.destination);
+      continue;
+    }
+    const { destination } = operation;
+    if (typeof destination !== 'string') {
+      continue;
+    }
+    if (destination.startsWith('G')) {
+      valueDestinations.add(destination);
+    } else {
+      unresolvableAccounts.add(destination);
     }
   }
 
@@ -116,10 +140,13 @@ export async function collectSafetyWarnings(
   const requiredBySource = new Map<string, ThresholdLevel>();
   if (tx.source.startsWith('G')) {
     requiredBySource.set(tx.source, 'low');
+  } else {
+    unresolvableAccounts.add(tx.source);
   }
   for (const operation of tx.operations) {
     const source = operation.source ?? tx.source;
     if (!source.startsWith('G')) {
+      unresolvableAccounts.add(source);
       continue;
     }
     const level = operationThreshold(operation);
@@ -135,6 +162,28 @@ export async function collectSafetyWarnings(
     warnings.push(
       `This transaction draws on ${allSources.length} different source accounts; only the first ${sources.length} were checked. The rest were NOT checked.`,
     );
+  }
+
+  if (unresolvableAccounts.size > 0) {
+    const [first] = [...unresolvableAccounts];
+    warnings.push(
+      `${SKIPPED_PREFIX} ${unresolvableAccounts.size} muxed or non-standard account address(es) in this transaction (for example ${truncate(
+        first ?? '',
+      )}) cannot be looked up, so they were NOT checked for existence, memo requirements (SEP-29), or signature weight.`,
+    );
+  }
+
+  // Claim the global pre-dialog budget before spending it. Denial degrades to
+  // a disclosed skip rather than an error: refusing the request outright would
+  // let an attacker exhaust the budget to block a legitimate signature, and
+  // dropping the warnings silently would let them exhaust it to suppress a
+  // real one.
+  const lookups = destinations.length + sources.length;
+  if (lookups > 0 && !takePredialogBudget(lookups)) {
+    warnings.push(
+      `${SKIPPED_PREFIX} too many account lookups have run recently, so the accounts in this transaction were NOT checked for existence, memo requirements (SEP-29), or signature weight. Review it carefully, or retry in a minute for the full checks.`,
+    );
+    return warnings;
   }
 
   const [destinationChecks, sourceChecks] = await Promise.all([
@@ -214,7 +263,21 @@ export async function collectFeeSourceWarnings(
   signerAddress: string,
 ): Promise<string[]> {
   if (!feeSource.startsWith('G')) {
-    return [];
+    // A muxed fee source cannot be looked up. Say so: this is the account the
+    // wallet's signature actually authorizes, so silence here is the most
+    // misleading silence in the module.
+    return [
+      `${SKIPPED_PREFIX} the fee source ${truncate(
+        feeSource,
+      )} is a muxed or non-standard address that cannot be looked up, so it was NOT checked for existence or signature weight.`,
+    ];
+  }
+  if (!takePredialogBudget()) {
+    return [
+      `${SKIPPED_PREFIX} too many account lookups have run recently, so the fee source ${truncate(
+        feeSource,
+      )} was NOT checked for existence or signature weight. Review it carefully, or retry in a minute for the full checks.`,
+    ];
   }
   const checks = await getAccountChecks(network.horizonUrl, feeSource);
   if (!checks) {

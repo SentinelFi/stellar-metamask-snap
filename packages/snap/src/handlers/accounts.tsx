@@ -38,7 +38,7 @@ export async function getAccounts(
     );
   }
   const state = await getState();
-  const accounts = await getOwnedAccounts();
+  const accounts = await getOwnedAccounts(state);
   return { accounts, activeIndex: state.activeAccount };
 }
 

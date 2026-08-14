@@ -156,6 +156,57 @@ describe('containsHiddenCharacters', () => {
     // U+00AD soft hyphen (format character).
     expect(containsHiddenCharacters('soft\u00ADhyphen')).toBe(true);
   });
+
+  it('flags line and paragraph separators', () => {
+    // Regression: U+2028/U+2029 are Zl/Zp, not Cc/Cf, so a Cc/Cf-only check
+    // missed them. They break lines in most renderers, and `signMessage`
+    // gates its whole warning on this function, so a SEP-53 message could
+    // render as several lines with nothing to say the preview was not exact.
+    expect(containsHiddenCharacters('one\u2028two')).toBe(true);
+    expect(containsHiddenCharacters('one\u2029two')).toBe(true);
+  });
+
+  it('flags invisible fillers that are ordinary letters or symbols', () => {
+    // Regression: these render as blank space but sit in Lo/So/Mn, so no
+    // \p{C} class reaches them. They are the standard way to pad text out of
+    // view or split a word so it reads as two.
+    // U+3164 HANGUL FILLER.
+    expect(containsHiddenCharacters('admin\u3164istrator')).toBe(true);
+    // U+2800 BRAILLE PATTERN BLANK.
+    expect(containsHiddenCharacters('pay\u2800\u2800\u28001 XLM')).toBe(true);
+    // U+115F HANGUL CHOSEONG FILLER.
+    expect(containsHiddenCharacters('a\u115Fb')).toBe(true);
+    // U+FFA0 HALFWIDTH HANGUL FILLER.
+    expect(containsHiddenCharacters('a\uFFA0b')).toBe(true);
+    // U+17B4 KHMER VOWEL INHERENT AQ.
+    expect(containsHiddenCharacters('a\u17B4b')).toBe(true);
+  });
+
+  it('makes every flagged character visible when escaped', () => {
+    // Detection and escaping must cover the same set: a character flagged but
+    // not escaped leaves the user warned with nothing to inspect.
+    for (const char of [
+      '\u202E',
+      '\u200B',
+      '',
+      '\u00AD',
+      '\u2028',
+      '\u2029',
+      '\u3164',
+      '\u2800',
+      '\u115F',
+      '\uFFA0',
+      '\u17B4',
+    ]) {
+      const value = `a${char}b`;
+      expect(containsHiddenCharacters(value)).toBe(true);
+      expect(escapeHiddenCharacters(value)).toBe(
+        `a\\u{${(char.codePointAt(0) as number).toString(16)}}b`,
+      );
+      // And inline rendering must report itself as lossy for the same set.
+      expect(isLossyInline(value)).toBe(true);
+    }
+  });
 });
 
 describe('sanitizeInlineText', () => {
