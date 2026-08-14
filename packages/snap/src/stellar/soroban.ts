@@ -914,18 +914,22 @@ export type SimulationSummary =
  *
  * @param rpcUrl - The Soroban RPC endpoint for the active network.
  * @param transactionXdr - The transaction envelope XDR.
+ * @param connected - Whether the requesting origin holds a standing connection
+ * grant; decides which share of the global pre-dialog budget this simulation
+ * draws on. Defaults to false, the conservative side.
  * @returns A summary for the review dialog.
  */
 export async function simulateForDisplay(
   rpcUrl: string,
   transactionXdr: string,
+  connected = false,
 ): Promise<SimulationSummary> {
   // This simulation runs before any dialog exists and is reachable without a
   // connection grant, so it shares the global pre-dialog budget with the
   // Horizon safety lookups. Denial renders the existing "Simulation
   // unavailable" banner, which already tells the user the call could not be
   // verified: a visible caution, not a silent omission.
-  if (!takePredialogBudget()) {
+  if (!takePredialogBudget(connected)) {
     return {
       ok: false,
       error:

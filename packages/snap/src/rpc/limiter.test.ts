@@ -4,11 +4,17 @@ import {
   assertRateAllowed,
   MAX_INFLIGHT_PER_ORIGIN,
   MAX_PREDIALOG_LOOKUPS,
+  MAX_PREDIALOG_UNCONNECTED,
   RATE_LIMITS,
   resetRequestLimits,
   takePredialogBudget,
   withInflightBudget,
 } from './limiter';
+
+/** Budget claim by an origin holding a standing connection grant. */
+const CONNECTED = true;
+/** Budget claim by a cold-callable origin with no grant. */
+const COLD = false;
 
 const ORIGIN = 'https://dapp.example';
 
@@ -114,9 +120,9 @@ describe('takePredialogBudget', () => {
 
   it('allows lookups up to the global budget', () => {
     for (let index = 0; index < MAX_PREDIALOG_LOOKUPS; index += 1) {
-      expect(takePredialogBudget()).toBe(true);
+      expect(takePredialogBudget(CONNECTED)).toBe(true);
     }
-    expect(takePredialogBudget()).toBe(false);
+    expect(takePredialogBudget(CONNECTED)).toBe(false);
   });
 
   it('is origin-independent, so subdomain rotation cannot reset it', () => {
@@ -125,20 +131,66 @@ describe('takePredialogBudget', () => {
     // `a2.example`, so a wildcard domain gets a fresh per-origin budget per
     // subdomain. The global budget is what survives that.
     for (let index = 0; index < MAX_PREDIALOG_LOOKUPS; index += 1) {
-      takePredialogBudget();
+      takePredialogBudget(CONNECTED);
     }
-    expect(takePredialogBudget()).toBe(false);
+    expect(takePredialogBudget(CONNECTED)).toBe(false);
   });
 
   it('claims a whole batch atomically or not at all', () => {
     // A caller about to run N lookups must not get a partial reservation:
     // it would spend budget it could not use and still be denied.
-    expect(takePredialogBudget(MAX_PREDIALOG_LOOKUPS - 1)).toBe(true);
-    expect(takePredialogBudget(5)).toBe(false);
+    expect(takePredialogBudget(CONNECTED, MAX_PREDIALOG_LOOKUPS - 1)).toBe(
+      true,
+    );
+    expect(takePredialogBudget(CONNECTED, 5)).toBe(false);
     // The refused batch consumed nothing, so a batch that does fit still
     // passes.
-    expect(takePredialogBudget(1)).toBe(true);
-    expect(takePredialogBudget(1)).toBe(false);
+    expect(takePredialogBudget(CONNECTED, 1)).toBe(true);
+    expect(takePredialogBudget(CONNECTED, 1)).toBe(false);
+  });
+
+  it('caps cold callers below the full budget', () => {
+    for (let index = 0; index < MAX_PREDIALOG_UNCONNECTED; index += 1) {
+      expect(takePredialogBudget(COLD)).toBe(true);
+    }
+    expect(takePredialogBudget(COLD)).toBe(false);
+  });
+
+  it('keeps a share reserved that cold callers cannot drain', () => {
+    // The finding this guards: the budget was one undifferentiated pool
+    // claimed *before* any dialog opens, so a site rotating subdomains could
+    // empty it with no user interaction and leave every other site's signing
+    // dialog rendering "checks were skipped" for the rest of the window. A
+    // caution an attacker can make permanent stops being a caution.
+    for (let index = 0; index < MAX_PREDIALOG_UNCONNECTED * 4; index += 1) {
+      takePredialogBudget(COLD);
+    }
+    // Cold callers are exhausted...
+    expect(takePredialogBudget(COLD)).toBe(false);
+    // ...but a connected origin still gets its full classic fan-out checked.
+    expect(takePredialogBudget(CONNECTED, 6)).toBe(true);
+  });
+
+  it('lets connected origins draw on the reserved share only', () => {
+    // The reserve is headroom above the cold ceiling, not a separate pool:
+    // total work stays bounded by MAX_PREDIALOG_LOOKUPS however the claims
+    // are split, so the anti-amplification property is preserved.
+    for (let index = 0; index < MAX_PREDIALOG_UNCONNECTED; index += 1) {
+      takePredialogBudget(COLD);
+    }
+    const reserved = MAX_PREDIALOG_LOOKUPS - MAX_PREDIALOG_UNCONNECTED;
+    for (let index = 0; index < reserved; index += 1) {
+      expect(takePredialogBudget(CONNECTED)).toBe(true);
+    }
+    expect(takePredialogBudget(CONNECTED)).toBe(false);
+  });
+
+  it('leaves the cold ceiling unchanged from before the split', () => {
+    // The cold-callable surface is the unauthenticated one, so its
+    // amplification bound must not have been loosened by adding headroom
+    // above it.
+    expect(MAX_PREDIALOG_UNCONNECTED).toBe(60);
+    expect(MAX_PREDIALOG_LOOKUPS).toBeGreaterThan(MAX_PREDIALOG_UNCONNECTED);
   });
 });
 

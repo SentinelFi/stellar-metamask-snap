@@ -59,8 +59,12 @@ jobs:
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
 
-      - name: Snap tests
-        run: yarn workspace stellar-soroban-snap test
+      # Run with coverage so the per-module thresholds in jest.config.js gate
+      # the build. They exist because the fail-closed signing guards are each
+      # a single `if` whose deletion is invisible in review; the threshold on
+      # handlers/sign.tsx is what turns that into a failing test.
+      - name: Snap tests (with coverage thresholds)
+        run: yarn workspace stellar-soroban-snap test:coverage
 
       - name: Connector tests
         run: yarn workspace stellar-soroban-snap-connector test

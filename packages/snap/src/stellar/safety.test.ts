@@ -25,6 +25,7 @@ import { collectFeeSourceWarnings, collectSafetyWarnings } from './safety';
 // eslint-disable-next-line import-x/first
 import {
   MAX_PREDIALOG_LOOKUPS,
+  MAX_PREDIALOG_UNCONNECTED,
   resetRequestLimits,
   takePredialogBudget,
 } from '../rpc/limiter';
@@ -171,12 +172,51 @@ describe('collectSafetyWarnings', () => {
     // attacker who could drain the budget would otherwise be suppressing a
     // legitimate transaction's safety warnings.
     for (let index = 0; index < MAX_PREDIALOG_LOOKUPS; index += 1) {
-      takePredialogBudget();
+      takePredialogBudget(true);
     }
     const tx = buildTx([payment(DESTINATION) as never]);
     const warnings = await collectSafetyWarnings(tx, network, SOURCE);
     expect(warnings.some((entry) => entry.includes('NOT checked'))).toBe(true);
     // Budget denial must not spend network lookups it was refused.
+    expect(mockChecks).not.toHaveBeenCalled();
+  });
+
+  it('still checks a connected origin after cold callers drain their share', async () => {
+    // Regression: the pre-dialog budget was one pool claimed before any
+    // dialog opens, so a site rotating subdomains could empty it with no user
+    // interaction and force every other site's dialog into the "checks were
+    // skipped" state. A connected origin now draws on a share the cold
+    // surface cannot reach.
+    for (let index = 0; index < MAX_PREDIALOG_UNCONNECTED; index += 1) {
+      takePredialogBudget(false);
+    }
+    mockChecks.mockImplementation(
+      checksByAddress({ [DESTINATION]: MISSING_ACCOUNT }) as never,
+    );
+    const tx = buildTx([payment(DESTINATION) as never]);
+
+    const cold = await collectSafetyWarnings(tx, network, SOURCE);
+    expect(cold.some((entry) => entry.includes('NOT checked'))).toBe(true);
+
+    const granted = await collectSafetyWarnings(tx, network, SOURCE, {
+      connected: true,
+    });
+    // The real warning survives for the connected site.
+    expect(granted.some((entry) => entry.includes('does not exist'))).toBe(
+      true,
+    );
+    expect(granted.some((entry) => entry.includes('NOT checked'))).toBe(false);
+  });
+
+  it('treats an omitted connection flag as unconnected', async () => {
+    // Fail-safe default: a caller that forgets to pass the flag must land in
+    // the cold share, never silently reach the reserved one.
+    for (let index = 0; index < MAX_PREDIALOG_UNCONNECTED; index += 1) {
+      takePredialogBudget(false);
+    }
+    const tx = buildTx([payment(DESTINATION) as never]);
+    const warnings = await collectSafetyWarnings(tx, network, SOURCE);
+    expect(warnings.some((entry) => entry.includes('NOT checked'))).toBe(true);
     expect(mockChecks).not.toHaveBeenCalled();
   });
 
@@ -340,7 +380,7 @@ describe('collectFeeSourceWarnings', () => {
 
   it('discloses a skipped fee source when the global budget is exhausted', async () => {
     for (let index = 0; index < MAX_PREDIALOG_LOOKUPS; index += 1) {
-      takePredialogBudget();
+      takePredialogBudget(true);
     }
     const warnings = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
     expect(warnings.some((entry) => entry.includes('NOT checked'))).toBe(true);
@@ -351,5 +391,28 @@ describe('collectFeeSourceWarnings', () => {
     mockChecks.mockResolvedValue(null);
     const warnings = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
     expect(warnings).toStrictEqual([]);
+  });
+
+  it('still checks the fee source for a connected origin under cold pressure', async () => {
+    // The fee source is the account the wallet's signature actually
+    // authorizes on a fee bump, so it is the check least acceptable to lose
+    // to another site's traffic.
+    for (let index = 0; index < MAX_PREDIALOG_UNCONNECTED; index += 1) {
+      takePredialogBudget(false);
+    }
+    mockChecks.mockResolvedValue(MISSING_ACCOUNT);
+
+    const cold = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
+    expect(cold.some((entry) => entry.includes('NOT checked'))).toBe(true);
+
+    const granted = await collectFeeSourceWarnings(
+      SOURCE,
+      network,
+      SOURCE,
+      true,
+    );
+    expect(granted.some((entry) => entry.includes('does not exist'))).toBe(
+      true,
+    );
   });
 });

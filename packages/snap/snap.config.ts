@@ -20,6 +20,16 @@ const webpack = require(
 const SECURE_RANDOM =
   '(() => crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000)';
 
+/**
+ * How many `Math.random` references the bundle is known to contain. The
+ * rewrite below fails the build when the real count differs, so a dependency
+ * change that adds one (or that adds the literal in a position where a blind
+ * textual replacement would corrupt a string) surfaces at build time rather
+ * than silently producing a new shasum. Update deliberately, never to make a
+ * red build go green.
+ */
+const EXPECTED_RANDOM_REWRITES = 7;
+
 /** Minimal structural types for the parts of webpack this plugin touches. */
 type WebpackSource = { source: () => { toString: () => string } };
 type Compilation = {
@@ -53,14 +63,41 @@ class StripInsecureRandomnessPlugin {
               }
               const asset = assets[assetName];
               const source = asset ? asset.source().toString() : '';
-              if (source.includes('Math.random')) {
-                compilation.updateAsset(
-                  assetName,
-                  new webpack.sources.RawSource(
-                    source.split('Math.random').join(SECURE_RANDOM),
-                  ),
+              const occurrences = source.split('Math.random').length - 1;
+              if (occurrences === 0) {
+                continue;
+              }
+              // This is a textual replacement over emitted bytes, so it also
+              // rewrites the literal inside string constants, comments, and
+              // regexes. Nothing bundled today contains it in one of those
+              // positions, but a dependency bump could, and the corruption
+              // would be semantic: the bundle would still parse, still pass
+              // the SES evaluation, and still pass CI's "no Math.random
+              // remains" grep, because the literal would indeed be gone.
+              //
+              // Reporting the count is what makes such a change visible. A
+              // build whose number moves is a build whose dependencies
+              // changed where this rewrite reaches, which is worth a look
+              // before the new shasum is committed.
+              console.log(
+                `StripInsecureRandomness: rewrote ${occurrences} Math.random ` +
+                  `reference(s) in ${assetName} (expected ${EXPECTED_RANDOM_REWRITES}).`,
+              );
+              if (occurrences !== EXPECTED_RANDOM_REWRITES) {
+                throw new Error(
+                  `StripInsecureRandomness: expected ${EXPECTED_RANDOM_REWRITES} ` +
+                    `Math.random reference(s) in ${assetName}, found ${occurrences}. ` +
+                    `A dependency changed where this rewrite applies. Confirm the ` +
+                    `new occurrences are real call sites (not string literals) and ` +
+                    `update EXPECTED_RANDOM_REWRITES in snap.config.ts.`,
                 );
               }
+              compilation.updateAsset(
+                assetName,
+                new webpack.sources.RawSource(
+                  source.split('Math.random').join(SECURE_RANDOM),
+                ),
+              );
             }
           },
         );

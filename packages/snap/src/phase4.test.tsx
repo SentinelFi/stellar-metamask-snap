@@ -213,16 +213,16 @@ describe('home page tracked tokens', () => {
 
 describe('addToken cap', () => {
   it('rejects a distinct token beyond the cap with SEP-43 code -3', async () => {
-    // Fabricated strkey-shaped contract IDs; the cap check runs before any
-    // network read, so this test needs no live endpoint.
-    const filler = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
-      .slice(0, MAX_TRACKED_TOKENS)
-      .split('')
-      .map((last) => ({
-        contractId: `C${'A'.repeat(54)}${last}`,
-        symbol: `T${last}`,
-        decimals: 7,
-      }));
+    // Distinct valid contract IDs; the cap check runs before any network
+    // read, so this test needs no live endpoint. They are encoded through
+    // `StrKey` rather than assembled by hand because persisted entries are
+    // checksum-validated on read: a strkey-shaped string would be dropped by
+    // normalization and the registry would never reach the cap.
+    const filler = Array.from({ length: MAX_TRACKED_TOKENS }, (_, index) => ({
+      contractId: StrKey.encodeContract(Buffer.alloc(32, index)),
+      symbol: `T${index}`,
+      decimals: 7,
+    }));
 
     const { request } = await install({
       version: 1,

@@ -81,15 +81,20 @@ function operationThreshold(operation: OperationRecord): ThresholdLevel {
  * bump: the wallet signs only the outer envelope, so inner-source weight
  * warnings would be spurious (existence and memo checks still apply). Use
  * {@link collectFeeSourceWarnings} for the account the wallet does sign for.
+ * @param options.connected - Whether the requesting origin holds a standing
+ * connection grant. Decides which share of the global pre-dialog budget these
+ * lookups draw on, so a cold-callable origin cannot starve a connected site.
+ * Defaults to false, the conservative side: an unconnected caller must never
+ * reach the reserved share by omission.
  * @returns Advisory warning strings (empty when nothing to flag).
  */
 export async function collectSafetyWarnings(
   tx: Transaction,
   network: NetworkConfig,
   signerAddress: string,
-  options: { signerSignsSources?: boolean } = {},
+  options: { signerSignsSources?: boolean; connected?: boolean } = {},
 ): Promise<string[]> {
-  const { signerSignsSources = true } = options;
+  const { signerSignsSources = true, connected = false } = options;
   const warnings: string[] = [];
 
   // Destinations of value-moving operations. Account merges transfer the
@@ -179,7 +184,7 @@ export async function collectSafetyWarnings(
   // dropping the warnings silently would let them exhaust it to suppress a
   // real one.
   const lookups = destinations.length + sources.length;
-  if (lookups > 0 && !takePredialogBudget(lookups)) {
+  if (lookups > 0 && !takePredialogBudget(connected, lookups)) {
     warnings.push(
       `${SKIPPED_PREFIX} too many account lookups have run recently, so the accounts in this transaction were NOT checked for existence, memo requirements (SEP-29), or signature weight. Review it carefully, or retry in a minute for the full checks.`,
     );
@@ -255,12 +260,16 @@ export async function collectSafetyWarnings(
  * @param feeSource - The fee-bump envelope's fee source account.
  * @param network - The active network config.
  * @param signerAddress - The wallet's signing address.
+ * @param connected - Whether the requesting origin holds a standing connection
+ * grant; decides which share of the global pre-dialog budget this lookup draws
+ * on. Defaults to false, matching {@link collectSafetyWarnings}.
  * @returns Advisory warning strings (empty when nothing to flag).
  */
 export async function collectFeeSourceWarnings(
   feeSource: string,
   network: NetworkConfig,
   signerAddress: string,
+  connected = false,
 ): Promise<string[]> {
   if (!feeSource.startsWith('G')) {
     // A muxed fee source cannot be looked up. Say so: this is the account the
@@ -272,7 +281,7 @@ export async function collectFeeSourceWarnings(
       )} is a muxed or non-standard address that cannot be looked up, so it was NOT checked for existence or signature weight.`,
     ];
   }
-  if (!takePredialogBudget()) {
+  if (!takePredialogBudget(connected)) {
     return [
       `${SKIPPED_PREFIX} too many account lookups have run recently, so the fee source ${truncate(
         feeSource,

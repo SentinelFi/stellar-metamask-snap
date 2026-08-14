@@ -610,6 +610,19 @@ function formatTimeBound(value: string | undefined): string | null {
 }
 
 /**
+ * Whether the transaction carries an upper time bound at all. Stellar encodes
+ * "no bound" as `0`, and an envelope may carry no `timeBounds` whatsoever;
+ * both mean the signature stays submittable indefinitely.
+ *
+ * @param tx - The parsed transaction.
+ * @returns True when a real expiry is set.
+ */
+function hasUpperTimeBound(tx: Transaction): boolean {
+  const maxTime = tx.timeBounds?.maxTime;
+  return maxTime !== undefined && maxTime !== '0';
+}
+
+/**
  * Rows for the transaction's preconditions (time/ledger bounds, minimum
  * sequence constraints, extra signers). These bound when and how the
  * signature is usable, so they are part of a faithful review.
@@ -628,14 +641,25 @@ function renderPreconditions(tx: Transaction): GenericSnapElement[] {
       </Row>,
     );
   }
+  // The "Valid until" row is always rendered, including when there is no
+  // bound at all. An unset maxTime means the signature stays submittable
+  // forever, which is the more dangerous case, yet omitting the row rendered
+  // it identically to a transaction expiring in five minutes: in both the row
+  // was simply absent, and absence reads as "not applicable here" rather than
+  // "this never expires". The dapp holds the signed envelope on the default
+  // (non-submitting) path, so unbounded validity is its choice of when.
   const maxTime = formatTimeBound(tx.timeBounds?.maxTime);
-  if (maxTime) {
-    rows.push(
+  rows.push(
+    maxTime ? (
       <Row label="Valid until">
         <Text>{maxTime}</Text>
-      </Row>,
-    );
-  }
+      </Row>
+    ) : (
+      <Row label="Valid until" variant="warning">
+        <Text>No expiry: submittable at any future time</Text>
+      </Row>
+    ),
+  );
 
   if (tx.ledgerBounds) {
     const { minLedger, maxLedger } = tx.ledgerBounds;
@@ -704,9 +728,22 @@ function renderSummary(tx: Transaction): GenericSnapElement {
   const memo = formatMemo(tx.memo);
   const rawMemoText =
     tx.memo.type === 'text' ? tx.memo.value?.toString() : undefined;
+  // A sequence-0 envelope can never execute, so its (absent) expiry is moot:
+  // the banner would be noise on a login challenge, whose own branch already
+  // explains that it cannot be submitted at all.
+  const unbounded = tx.sequence !== '0' && !hasUpperTimeBound(tx);
   return (
     <Section>
       {lossyTextBanner([rawMemoText])}
+      {unbounded ? (
+        <Banner title="This signature never expires" severity="warning">
+          <Text>
+            This transaction sets no expiry time, so once signed it can be
+            submitted to the network at any point in the future, not just now.
+            Only approve if you intend the site to be able to use it later.
+          </Text>
+        </Banner>
+      ) : null}
       <Text>Source</Text>
       <Copyable value={tx.source} />
       <Row label="Max fee">
@@ -848,7 +885,32 @@ export type SignTransactionDialogParams = {
   warnings?: string[];
   /** Approval will also broadcast the signed transaction immediately. */
   submit?: boolean;
+  /**
+   * The endpoint that receives the signed envelope when `submit` is set. Named
+   * in the dialog because a submission endpoint is trusted with more than
+   * display: it can accept a transaction, report its correct hash, and never
+   * broadcast it, retaining a valid signed envelope for later. On PUBLIC the
+   * Soroban path is a third-party gateway, so who receives it is not
+   * self-evident from the network name alone.
+   */
+  submitEndpoint?: string;
 };
+
+/**
+ * The host of a submission endpoint, for inline display. Falls back to the
+ * whole string when it cannot be parsed, so a malformed configuration is
+ * shown rather than silently dropped from the disclosure.
+ *
+ * @param endpoint - The endpoint URL.
+ * @returns The host, or the original string.
+ */
+function endpointHost(endpoint: string): string {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return endpoint;
+  }
+}
 
 /**
  * Renders advisory safety warnings as banners.
@@ -879,6 +941,8 @@ function renderWarnings(warnings: string[]): GenericSnapElement[] {
  * transactions, or null/absent for classic ones.
  * @param params.warnings - Advisory safety warnings for classic transactions.
  * @param params.submit - Approval will also broadcast the transaction.
+ * @param params.submitEndpoint - The endpoint that will receive the signed
+ * envelope, named in the dialog so the user can see who relays it.
  * @returns The dialog content.
  */
 export function buildSignTransactionDialog({
@@ -891,6 +955,7 @@ export function buildSignTransactionDialog({
   simulation,
   warnings = [],
   submit = false,
+  submitEndpoint,
 }: SignTransactionDialogParams): JSXElement {
   const networkBanner =
     network === 'PUBLIC' ? (
@@ -915,12 +980,30 @@ export function buildSignTransactionDialog({
   // The user must know before approving that a single approval both signs
   // and irreversibly broadcasts when submit was requested.
   const submitBanner = submit ? (
-    <Banner title="Sign and submit" severity="warning">
-      <Text>
-        Approving signs this transaction and immediately submits it to the
-        network. This cannot be undone.
-      </Text>
-    </Banner>
+    <Box>
+      <Banner title="Sign and submit" severity="warning">
+        <Text>
+          Approving signs this transaction and immediately submits it to the
+          network. This cannot be undone.
+        </Text>
+      </Banner>
+      {submitEndpoint ? (
+        // The endpoint is not merely a data source here: it receives the
+        // signed envelope. It can accept it, report the correct hash, and
+        // never broadcast, holding a valid signed transaction it may submit
+        // later. Naming it lets the user weigh that before approving.
+        <Section>
+          <Row label="Submitted via">
+            <Text>{endpointHost(submitEndpoint)}</Text>
+          </Row>
+          <Text>
+            This service receives the signed transaction and relays it to the
+            network. It cannot change what you signed, but it can delay or
+            withhold the submission.
+          </Text>
+        </Section>
+      ) : null}
+    </Box>
   ) : null;
 
   const grantNotice = <ConnectionGrantNotice origin={origin} />;

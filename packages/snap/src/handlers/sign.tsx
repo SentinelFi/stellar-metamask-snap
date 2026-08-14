@@ -23,7 +23,7 @@ import {
   SignTransactionParams,
   validate,
 } from '../rpc/validation';
-import { connectOrigin, getActiveNetwork } from '../state';
+import { connectOrigin, getActiveNetwork, isOriginConnected } from '../state';
 import { submitTransaction } from '../stellar/horizon';
 import { getLatestLedger, sendTransaction } from '../stellar/rpc';
 import {
@@ -107,6 +107,11 @@ export async function signTransaction(
 }> {
   const request = validate(params, SignTransactionParams);
   const network = await getActiveNetwork();
+  // Read once, before any pre-dialog lookup. A standing grant decides which
+  // share of the global pre-dialog budget this request's advisory lookups
+  // draw on, so that a cold-callable origin rotating subdomains cannot starve
+  // connected sites of their safety checks (src/rpc/limiter.ts).
+  const connected = await isOriginConnected(origin);
 
   if (
     request.networkPassphrase !== undefined &&
@@ -236,12 +241,22 @@ export async function signTransaction(
   // Soroban transactions get a display-verification simulation (Sui-snap
   // pattern): resource fee, required auth signers, restore requirements.
   // The transaction itself is never modified — we sign the provided XDR.
+  //
+  // A sequence-0 envelope is excluded: it can never execute on-chain, so
+  // there is nothing for a simulation to verify, and its dialog branch does
+  // not render a simulation section anyway. Simulating it anyway would spend
+  // a global pre-dialog budget slot and an RPC round trip on a result that is
+  // then discarded, which a dapp could drive deliberately.
   let simulation: SimulationSummary | null = null;
-  if (isSoroban) {
+  if (isSoroban && innerTx.sequence !== '0') {
     // Simulate the operation-bearing envelope (the inner tx for a fee bump).
     const sorobanXdr =
       tx instanceof Transaction ? request.xdr : innerTx.toXDR();
-    simulation = await simulateForDisplay(network.sorobanRpcUrl, sorobanXdr);
+    simulation = await simulateForDisplay(
+      network.sorobanRpcUrl,
+      sorobanXdr,
+      connected,
+    );
   }
 
   // Classic transactions get best-effort safety checks (unfunded
@@ -254,11 +269,17 @@ export async function signTransaction(
   if (!isSoroban && innerTx.sequence !== '0') {
     warnings = await collectSafetyWarnings(innerTx, network, signerAddress, {
       signerSignsSources: tx instanceof Transaction,
+      connected,
     });
   }
   if (!(tx instanceof Transaction)) {
     warnings = [
-      ...(await collectFeeSourceWarnings(tx.feeSource, network, signerAddress)),
+      ...(await collectFeeSourceWarnings(
+        tx.feeSource,
+        network,
+        signerAddress,
+        connected,
+      )),
       ...warnings,
     ];
   }
@@ -277,6 +298,13 @@ export async function signTransaction(
         simulation,
         warnings,
         submit: Boolean(request.submit),
+        // Which host receives the signed envelope when `submit` is set. On
+        // PUBLIC the Soroban path is a third-party gateway (SDF operates no
+        // public mainnet RPC), and a submission endpoint is trusted with more
+        // than display: it can accept an envelope, report its correct hash,
+        // and never broadcast it, retaining a valid signed transaction. The
+        // user approving a one-click submit must be able to see who that is.
+        submitEndpoint: isSoroban ? network.sorobanRpcUrl : network.horizonUrl,
       }),
     },
   });

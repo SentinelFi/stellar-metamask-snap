@@ -9,6 +9,17 @@ import {
 } from './token';
 import { NETWORKS } from '../state/networks';
 
+/** A real Soroban contract address (checksum valid). */
+const VALID_CONTRACT =
+  'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+
+/**
+ * The same address with one payload character changed, so it keeps the strkey
+ * shape and length but fails the CRC16 checksum. Built at module scope rather
+ * than inside the test, since the fixture is data, not test logic.
+ */
+const CORRUPTED_CONTRACT = `${VALID_CONTRACT.slice(0, 10)}A${VALID_CONTRACT.slice(11)}`;
+
 describe('isContractId', () => {
   it('accepts a valid Soroban contract strkey', () => {
     expect(
@@ -32,6 +43,21 @@ describe('isContractId', () => {
     expect(
       isContractId('cdlzfc3syjydzt7k67vz75hpjvieuvnixf47zg2fb2rmqqvu2hhgcysc'),
     ).toBe(false);
+  });
+
+  it('rejects a shape-valid strkey whose checksum is wrong', () => {
+    // Regression: this was a `/^C[A-Z2-7]{55}$/` shape test, which accepts a
+    // mistyped or truncated-and-repadded ID. Such a value then reached two
+    // metadata simulations that could only fail, spending addToken rate-limit
+    // slots and surfacing "the network may be unreachable" for what is really
+    // malformed input. Every other address in the snap is checksum-validated
+    // via StrKey; contract IDs now hold to the same standard.
+    expect(isContractId(VALID_CONTRACT)).toBe(true);
+    // Same length, same alphabet, one payload character different: the shape
+    // test cannot tell these apart, the checksum can.
+    expect(CORRUPTED_CONTRACT).toHaveLength(VALID_CONTRACT.length);
+    expect(/^C[A-Z2-7]{55}$/u.test(CORRUPTED_CONTRACT)).toBe(true);
+    expect(isContractId(CORRUPTED_CONTRACT)).toBe(false);
   });
 });
 

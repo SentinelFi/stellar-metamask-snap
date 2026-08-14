@@ -284,7 +284,12 @@ export function parseState(stored: unknown): SnapState {
 export async function getState(): Promise<SnapState> {
   const stored = await snap.request({
     method: 'snap_manageState',
-    params: { operation: 'get' },
+    // `encrypted` is explicit, not left to the SDK default. The default is
+    // `true` today, but this store holds the user's connection grants and
+    // revealed account set: linkage data whose storage tier must not be able
+    // to change under a dependency bump, or be lost when one of these call
+    // sites is copied into a context expecting the unencrypted store.
+    params: { operation: 'get', encrypted: true },
   });
   if (!stored) {
     return defaultState();
@@ -300,7 +305,9 @@ export async function getState(): Promise<SnapState> {
 export async function saveState(state: SnapState): Promise<void> {
   await snap.request({
     method: 'snap_manageState',
-    params: { operation: 'update', newState: state },
+    // Explicit for the reason given in `getState`: the read and the write must
+    // never disagree about which store they address.
+    params: { operation: 'update', encrypted: true, newState: state },
   });
 }
 

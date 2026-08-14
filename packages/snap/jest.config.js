@@ -18,12 +18,38 @@ module.exports = {
    * of handler code is calling the handler directly against a mocked `snap`
    * global (see the onUserInput tests in src/multi-account.test.tsx), which is
    * why `index.tsx` and `handlers/home.tsx` report real branch coverage.
+   *
+   * `handlers/sign.tsx` now follows that pattern too, in
+   * src/handlers/sign-guards.test.tsx. That matters beyond the number: the
+   * module is a dozen independent fail-closed guards, each a single `if`
+   * whose removal silently widens what the snap will sign, and while it
+   * reported 0% branches no threshold could protect any of them. The
+   * thresholds below are the ratchet that now does.
    */
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
     '!src/**/*.test.{ts,tsx}',
     '!src/**/*.d.ts',
   ],
+  /*
+   * Set just under current measured coverage, so an accidental deletion trips
+   * them but ordinary refactoring does not. Raise them when coverage rises;
+   * never lower them to make a red build go green. Only modules genuinely
+   * exercised in-process are listed: a global threshold would be dominated by
+   * the simulator-only modules described above and would mean nothing.
+   */
+  coverageThreshold: {
+    'src/handlers/sign.tsx': { branches: 55, lines: 78 },
+    'src/rpc/limiter.ts': { branches: 88, lines: 95 },
+    'src/rpc/throttle.ts': { branches: 70, lines: 88 },
+    'src/rpc/validation.ts': { branches: 80, lines: 95 },
+    'src/state/index.ts': { branches: 60, lines: 78 },
+    'src/stellar/http.ts': { branches: 95, lines: 95 },
+    'src/stellar/safety.ts': { branches: 75, lines: 92 },
+    'src/stellar/soroban.ts': { branches: 60, lines: 78 },
+    'src/ui/format.ts': { branches: 80, lines: 92 },
+    'src/ui/transaction.tsx': { branches: 62, lines: 72 },
+  },
   coverageReporters: ['text', 'text-summary', 'lcov'],
   coverageDirectory: 'coverage',
   transform: {

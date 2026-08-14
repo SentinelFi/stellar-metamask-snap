@@ -206,10 +206,22 @@ export async function readTokenBalance(
 }
 
 /**
- * Whether a string looks like a Soroban contract address.
+ * Whether a string is a Soroban contract address.
+ *
+ * Uses the SDK's strkey decoder rather than a shape regex, so the CRC16
+ * checksum is verified, not just the version byte and base32 alphabet. That
+ * is the same standard `StellarAddress` applies to `G...` addresses in
+ * `src/rpc/validation.ts`; one concept, one validator. A shape-only check let
+ * a mistyped or truncated ID through to two metadata simulations that could
+ * only fail, spending rate-limiter slots and returning "could not read the
+ * token contract, the network may be unreachable" for what is really a
+ * malformed input.
+ *
+ * `StrKey.isValidContract` returns false rather than throwing on malformed
+ * input, so this stays a total predicate.
  *
  * @param value - The string to test.
- * @returns True when it is a `C...` strkey.
+ * @returns True when it is a valid `C...` strkey.
  */
 export const isContractId = (value: string): boolean =>
-  /^C[A-Z2-7]{55}$/u.test(value);
+  StrKey.isValidContract(value);
