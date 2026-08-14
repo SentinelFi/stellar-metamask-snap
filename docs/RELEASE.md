@@ -117,12 +117,16 @@ every step below is mandatory for a production release:
 4. **Retain an attestation.** Keep the CI run URL of the release build, the
    dependency audit, SBOM, and scan outputs together with the tag, so the
    published artifact can later be traced to the audited inputs. CI generates
-   the SBOM on every run (CycloneDX, uploaded as the `sbom` artifact of the
-   verify job); to regenerate it locally from the tagged commit:
+   the SBOM on every run (CycloneDX JSON via syft, uploaded as the
+   `sbom.cdx.json` artifact of the verify job); to regenerate it locally from
+   the tagged commit, install [syft](https://github.com/anchore/syft) and run:
 
    ```bash
-   yarn dlx -q @cyclonedx/yarn-plugin-cyclonedx --output-reproducible --output-file sbom.cdx.json
+   syft scan dir:. -o cyclonedx-json=sbom.cdx.json
    ```
+
+   (The CycloneDX yarn plugin is not an option here: it requires Yarn 4 and
+   this repository pins Yarn 3.)
 
    Both packages publish with npm provenance (`publishConfig.provenance`),
    which requires publishing from a supported CI environment or passing

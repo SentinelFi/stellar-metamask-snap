@@ -90,15 +90,16 @@ jobs:
 
       # SBOM for the release attestation trail (docs/RELEASE.md retains it
       # with the tag). Generated on every run so the artifact of a release
-      # build is always present, reproducibly.
+      # build is always present. syft reads yarn.lock directly, so it works
+      # with the repo's pinned Yarn 3 (the CycloneDX yarn plugin requires
+      # Yarn 4). The action uploads the SBOM as a workflow artifact itself.
       - name: Generate SBOM (CycloneDX)
-        run: yarn dlx -q @cyclonedx/yarn-plugin-cyclonedx --output-reproducible --output-file sbom.cdx.json
-
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          name: sbom
-          path: sbom.cdx.json
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          artifact-name: sbom.cdx.json
 
   site:
     name: Build companion dapp
