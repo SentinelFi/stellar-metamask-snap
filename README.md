@@ -135,4 +135,4 @@ The snap is scanned with [Snapper](https://github.com/sayfer-io/Snapper), the st
 
 Licensed under the [Apache License, Version 2.0](LICENSE). Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
-Copyright © 2026.
+Copyright © 2026-present.
