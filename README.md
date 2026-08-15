@@ -6,8 +6,6 @@ A MetaMask Snap bringing the **Stellar network (including Soroban smart contract
 
 > Independent software, not affiliated with or endorsed by the Stellar Development Foundation.
 
-**Status:** Feature-complete; Phase 5 (audit & distribution) preparation done: hardening sweep, [threat model](docs/THREAT-MODEL.md), npm-publish readiness; remaining steps are external (third-party audit, npm publish, directory allowlisting), see [docs/PHASE-5.md](docs/PHASE-5.md). Phase history: [4](docs/PHASE-4.md) polish · [3](docs/PHASE-3.md) connector · [2](docs/PHASE-2.md) Soroban · [1](docs/PHASE-1.md) SEP-43 API · [0](docs/PHASE-0.md) feasibility.
-
 ## FAQ
 
 <details>
