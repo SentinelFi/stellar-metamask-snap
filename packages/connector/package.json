@@ -30,6 +30,7 @@
     "lint": "yarn lint:eslint",
     "lint:eslint": "eslint . --cache",
     "lint:fix": "yarn lint:eslint --fix",
+    "prepack": "node ../../scripts/check-publish-env.mjs",
     "test": "jest",
     "test:coverage": "jest --coverage"
   },

@@ -1,5 +1,6 @@
 import { getOwnedAccounts, getWalletAddress } from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
+import { takeTokenReadBudget } from '../rpc/limiter';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
   AddTokenParams,
@@ -25,6 +26,21 @@ import { AddTokenDialog } from '../ui/dialogs';
 // Defined next to the state helpers (which enforce it at commit time);
 // re-exported here for existing importers.
 export { MAX_TRACKED_TOKENS };
+
+/**
+ * A `getBalances` result: the classic Horizon balances plus any tracked
+ * Soroban token balances.
+ *
+ * `tokensUnavailable` is present only when the token fan-out was skipped
+ * because the global lookup budget denied it. It exists so a caller cannot
+ * read the absence of token rows as "this account holds none of the tracked
+ * tokens", the same reason `stellar/safety.ts` states outright when a check
+ * did not run instead of silently omitting its warning.
+ */
+export type AccountBalances = AccountSummary & {
+  address: string;
+  tokensUnavailable?: true;
+};
 
 /**
  * Guard for companion-dapp methods: the origin must hold a connection grant.
@@ -104,7 +120,7 @@ const BALANCE_CACHE_TTL_MS = 5000;
 /** Coalesced balance lookups, keyed by `network address`. */
 const balanceCache = new Map<
   string,
-  { at: number; promise: Promise<AccountSummary & { address: string }> }
+  { at: number; promise: Promise<AccountBalances> }
 >();
 
 /** Cache entries kept before the oldest is evicted (accounts × networks). */
@@ -126,31 +142,55 @@ export function resetBalanceCache(): void {
 async function readBalances(
   network: Awaited<ReturnType<typeof getActiveNetwork>>,
   address: string,
-): Promise<AccountSummary & { address: string }> {
+): Promise<AccountBalances> {
   const summary = await getAccountSummary(network.horizonUrl, address);
 
   // Append tracked-token balances (best-effort; failures are skipped).
+  //
+  // The fan-out is one simulation per tracked token, so it is the largest
+  // amount of outbound work a single RPC call can cause: at the cap that is 30
+  // round trips, and the per-origin rate limit permits 15 calls a minute. The
+  // coalescing cache in `getBalances` does not bound it either, since it is
+  // keyed by address and a connected origin learns every revealed address from
+  // `getAccounts`. So the fan-out claims a global, origin-independent budget,
+  // which is the only kind that survives subdomain rotation.
+  //
+  // It claims its own budget rather than the pre-dialog pool. Sharing that
+  // pool would mean a wallet tracking 30 tokens exhausts it in four
+  // `getBalances` calls, so an ordinary polling dapp would degrade the user's
+  // signing dialogs to "safety checks were skipped" purely as a side effect of
+  // refreshing balances. See `takeTokenReadBudget` in ../rpc/limiter.ts.
+  //
+  // Denial omits the token rows rather than failing the call: the classic
+  // Horizon balances are already in hand and are the answer to the question
+  // that was asked. `tokensUnavailable` marks the omission so a caller cannot
+  // read a short list as "this account holds no tokens", which is the same
+  // rule the safety warnings follow.
   const tokens = await getTokens(network.name);
-  const tokenBalances = (
-    await Promise.all(
-      tokens.map(async (token): Promise<HorizonBalance | null> => {
-        const balance = await readTokenBalance(
-          network,
-          token.contractId,
-          address,
-          token.decimals,
-        );
-        return balance === null
-          ? null
-          : { asset: `${token.symbol}:${token.contractId}`, balance };
-      }),
-    )
-  ).filter((entry): entry is HorizonBalance => entry !== null);
+  const budgeted = tokens.length === 0 || takeTokenReadBudget(tokens.length);
+  const tokenBalances = budgeted
+    ? (
+        await Promise.all(
+          tokens.map(async (token): Promise<HorizonBalance | null> => {
+            const balance = await readTokenBalance(
+              network,
+              token.contractId,
+              address,
+              token.decimals,
+            );
+            return balance === null
+              ? null
+              : { asset: `${token.symbol}:${token.contractId}`, balance };
+          }),
+        )
+      ).filter((entry): entry is HorizonBalance => entry !== null)
+    : [];
 
   return {
     address,
     ...summary,
     balances: [...summary.balances, ...tokenBalances],
+    ...(budgeted ? {} : { tokensUnavailable: true as const }),
   };
 }
 
@@ -172,7 +212,7 @@ async function readBalances(
 export async function getBalances(
   origin: string,
   params: unknown,
-): Promise<AccountSummary & { address: string }> {
+): Promise<AccountBalances> {
   await assertConnected(origin);
   const request = validate(params ?? {}, OptionalAddressParams);
   const network = await getActiveNetwork();

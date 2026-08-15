@@ -201,7 +201,11 @@ export const isBalancesResult = (value: unknown): value is BalancesResult =>
   value.balances.every(
     (entry) =>
       isRecord(entry) && isString(entry.asset) && isString(entry.balance),
-  );
+  ) &&
+  // Absent or exactly `true`. Admitting `false` would give the flag two
+  // spellings for "token rows are present" and invite `!tokensUnavailable`
+  // checks that read the wrong one.
+  (value.tokensUnavailable === undefined || value.tokensUnavailable === true);
 
 /**
  * Validates an `addToken` result.

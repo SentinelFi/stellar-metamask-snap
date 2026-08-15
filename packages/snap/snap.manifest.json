@@ -7,7 +7,7 @@
     "url": "https://github.com/jeffnuclear/stelllar-metamask-snap.git"
   },
   "source": {
-    "shasum": "tOREFSKr88Proxtzs4PqMFCqdkETlHhgmiYgZK5EJX4=",
+    "shasum": "Fwzb6ClLa8R1Zi2pPNBHwL7XWMuKnhiZ9YJNuSa1SaE=",
     "location": {
       "npm": {
         "filePath": "dist/bundle.js",
@@ -25,7 +25,7 @@
     "endowment:rpc": {
       "dapps": true,
       "snaps": false,
-      "maxRequestTime": 180000
+      "maxRequestTime": 120000
     },
     "endowment:network-access": {},
     "snap_getBip32Entropy": [

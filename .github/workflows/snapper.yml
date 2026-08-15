@@ -5,15 +5,32 @@ name: Snapper security scan
 on:
   workflow_dispatch:
 
-jobs:
-  snapper:
-    name: Scan packages/snap
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout this repo
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+# Least privilege: both jobs only read and upload an artifact.
+permissions:
+  contents: read
 
+jobs:
+  # Building the scanner is deliberately a separate job from running it.
+  #
+  # `npm ci` executes install lifecycle scripts from a third-party dependency
+  # tree. This repository locks its own installs down (`enableScripts: false`
+  # plus LavaMoat allow-scripts), and that posture should not lapse just
+  # because the code being installed is a security scanner. Isolating the
+  # build means those scripts run in a job that has never checked out this
+  # repository, so there is no audited source tree to tamper with and no
+  # credential on disk to find: `persist-credentials: false` keeps the
+  # checkout token out of `.git/config`, which is where an install script
+  # would otherwise look for it.
+  #
+  # The scanner is shipped to the next job as a tarball including its
+  # `node_modules`, because `dist/main.js` needs them at runtime. Tarring
+  # first is what keeps the upload fast; uploading the tree file by file
+  # would be far slower than the build itself.
+  build-scanner:
+    name: Build Snapper (isolated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
       - name: Checkout Snapper
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -22,6 +39,7 @@ jobs:
           # (review upstream changes first) rather than tracking a moving branch.
           ref: 66ea3158b89039cfa2453c5021aa965985c9135c
           path: .snapper-src
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -33,6 +51,40 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      - name: Package the built scanner
+        run: tar -czf snapper-dist.tar.gz .snapper-src
+
+      - name: Upload the built scanner
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: snapper-dist
+          path: snapper-dist.tar.gz
+          retention-days: 1
+
+  snapper:
+    name: Scan packages/snap
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-scanner
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+
+      - name: Download the built scanner
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: snapper-dist
+
+      - name: Unpack the built scanner
+        run: tar -xzf snapper-dist.tar.gz
 
       - name: Run Snapper against packages/snap
         # Snapper logs via winston; merge stderr into the captured stream so

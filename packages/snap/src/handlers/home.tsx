@@ -229,6 +229,14 @@ export async function homePage() {
   }
 
   // Append tracked-token balances (best-effort).
+  //
+  // Deliberately does NOT claim the token-read budget that the `getBalances`
+  // RPC path claims (`takeTokenReadBudget`, ../rpc/limiter.ts). That budget
+  // bounds work a *dapp* can drive; this page is reached only by the user
+  // opening their own wallet UI, and `onUserInput` re-renders it after their
+  // own clicks, so there is no origin to bound. Making it draw on the same
+  // pool would only hand a connected dapp a way to blank the balance rows on
+  // the page the user checks their wallet with.
   if (summary?.funded) {
     const tokenBalances = (
       await Promise.all(

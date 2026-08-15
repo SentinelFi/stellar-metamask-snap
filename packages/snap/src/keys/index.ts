@@ -172,25 +172,47 @@ function lazyAccountParentNode(): () => Promise<SLIP10Node> {
 }
 
 /**
- * Fills the address cache for any of the given indices not already known,
- * deriving the parent node at most once.
+ * Resolves the address for each of the given indices, deriving the parent
+ * node at most once and filling the memo along the way.
  *
- * @param indices - The account indices to cache.
+ * Returns the resolved pairs rather than leaving callers to read them back
+ * out of {@link addressCache}. That is not a style preference: fetching the
+ * parent node can *clear* the cache (`bindToEntropySource` does so when the
+ * secret recovery phrase changed), so a caller that decided which indices
+ * were missing, awaited the node, and then re-read the map could read
+ * `undefined` for an index it had seen a moment earlier. Today the clear can
+ * only happen on the first parent-node fetch in an execution context, when
+ * the cache is necessarily empty, so nothing is lost; returning the derived
+ * values means that argument is not load-bearing and a future reordering
+ * cannot turn it into `undefined` flowing out through `getAccounts` and the
+ * home page as though it were an address.
+ *
+ * @param indices - The account indices to resolve.
  * @param getNode - The parent-node getter; callers that also derive a key
  * afterwards pass their own so the fetch is shared across both steps.
+ * @returns The `{ index, address }` pair for each requested index, in the
+ * order given.
  */
-async function cacheAddresses(
+async function resolveAddresses(
   indices: number[],
   getNode: () => Promise<SLIP10Node> = lazyAccountParentNode(),
-): Promise<void> {
-  const missing = indices.filter((index) => !addressCache.has(index));
-  if (missing.length === 0) {
-    return;
-  }
-  const node = await getNode();
-  await Promise.all(
-    missing.map(async (index) => {
-      addressCache.set(index, (await deriveFromNode(node, index)).publicKey());
+): Promise<{ index: number; address: string }[]> {
+  // Fetch the node (and settle any cache invalidation it triggers) before
+  // reading the memo, so every read below observes the post-binding cache.
+  const node = indices.some((index) => !addressCache.has(index))
+    ? await getNode()
+    : null;
+  return Promise.all(
+    indices.map(async (index) => {
+      const cached = addressCache.get(index);
+      if (cached !== undefined) {
+        return { index, address: cached };
+      }
+      const address = (
+        await deriveFromNode(node ?? (await getNode()), index)
+      ).publicKey();
+      addressCache.set(index, address);
+      return { index, address };
     }),
   );
 }
@@ -269,11 +291,7 @@ export async function getOwnedAccounts(
   state?: SnapState,
 ): Promise<{ index: number; address: string }[]> {
   const resolved = state ?? (await getState());
-  await cacheAddresses(resolved.accounts);
-  return resolved.accounts.map((index) => ({
-    index,
-    address: addressCache.get(index) as string,
-  }));
+  return resolveAddresses(resolved.accounts);
 }
 
 /**
@@ -305,13 +323,12 @@ export async function resolveSigningKeypair(
   // derivation, so the parent key material crosses the sandbox boundary at
   // most once per request.
   const getNode = lazyAccountParentNode();
-  await cacheAddresses(state.accounts, getNode);
-  const index = state.accounts.find(
-    (candidate) => addressCache.get(candidate) === requestedAddress,
-  );
-  if (index === undefined) {
+  const owned = await resolveAddresses(state.accounts, getNode);
+  const match = owned.find((entry) => entry.address === requestedAddress);
+  if (match === undefined) {
     throw invalidRequest('Unknown address: this wallet does not hold it.');
   }
+  const { index } = match;
 
   const keypair = await deriveFromNode(await getNode(), index);
   // The cache is derived state; never sign on it without confirming the key

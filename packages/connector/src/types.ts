@@ -107,6 +107,16 @@ export type BalancesResult = {
   funded: boolean;
   sequence: string | null;
   balances: BalanceLine[];
+  /**
+   * Present (and always `true`) when the wallet skipped reading tracked
+   * Soroban token balances because its global token-read budget was
+   * exhausted. The classic Horizon balances are complete either way.
+   *
+   * Treat it as "token rows are missing", never as "this account holds none
+   * of the tracked tokens": a caller that renders a total, or that decides a
+   * token is absent, must account for the difference or retry shortly.
+   */
+  tokensUnavailable?: true;
 };
 
 export type FundResult = { funded: true; address: string };

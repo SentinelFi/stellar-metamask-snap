@@ -53,10 +53,19 @@ export const MAX_INFLIGHT_GLOBAL = 32;
  * tell rotated subdomains apart, because it does not try to: the reserved
  * share is reachable only by origins the user has already approved, and an
  * attacker cannot join that set silently, since a grant requires an approved
- * dialog. A cold-callable origin keeps half the ceiling, which is well above
- * any legitimate unconnected use (MetaMask serializes dialogs anyway).
+ * dialog.
+ *
+ * The unconnected share is deliberately small. What it costs an attacker is
+ * `share / MAX_INFLIGHT_PER_ORIGIN` distinct origins, and subdomain rotation
+ * makes each of those nearly free, so the share is really a divisor on how
+ * many origins the attack needs, not a wall. What it costs a legitimate cold
+ * caller is nothing: MetaMask serializes snap dialogs, so an honest
+ * unconnected dapp has at most one or two requests in flight and never
+ * approaches even this. Set at 8 (two origins' worth) rather than half the
+ * ceiling for that reason, and paired with the manifest's `maxRequestTime`,
+ * which bounds how long a held slot stays held.
  */
-export const MAX_INFLIGHT_UNCONNECTED = 16;
+export const MAX_INFLIGHT_UNCONNECTED = 8;
 
 /**
  * Sliding-window rate limits for methods whose external work is dialog-free
@@ -80,12 +89,18 @@ export const RATE_LIMITS: ReadonlyMap<
   // The signing methods are dialog-bearing, but their dialogs are not what
   // bounds their cost: each one derives a key and (for `signTransaction`)
   // fans out up to seven Horizon lookups or a Soroban simulation *before*
-  // any dialog is created, and all three are callable without a connection
-  // grant (cold signing, SEP-43 parity). The dialog throttle only engages
-  // after three consecutive *rejections*, so a caller that never lets a
-  // dialog resolve never reaches it. These caps bound the pre-dialog work
-  // itself. They sit far above real signing traffic: MetaMask serializes
-  // snap dialogs, so a legitimate dapp cannot approach them.
+  // any dialog is created. `signTransaction` and `signMessage` are callable
+  // without a connection grant (cold signing, SEP-43 parity); `signAuthEntry`
+  // is not, because an address-credential entry always names its authorizing
+  // account and naming an account is account *selection*, which is gated (see
+  // `assertAccountSelectionAllowed` in ../handlers/sign.tsx). It is capped
+  // here anyway: these limits bound total outbound work against shared
+  // community infrastructure, not merely the unauthenticated share of it.
+  // The dialog throttle only engages after three consecutive *rejections*, so
+  // a caller that never lets a dialog resolve never reaches it. These caps
+  // bound the pre-dialog work itself. They sit far above real signing traffic:
+  // MetaMask serializes snap dialogs, so a legitimate dapp cannot approach
+  // them.
   ['signTransaction', { limit: 20, windowMs: 60_000 }],
   ['signAuthEntry', { limit: 20, windowMs: 60_000 }],
   ['signMessage', { limit: 20, windowMs: 60_000 }],
@@ -154,8 +169,70 @@ export const MAX_PREDIALOG_UNCONNECTED = 60;
 
 export const PREDIALOG_WINDOW_MS = 60_000;
 
+/**
+ * Global budget on the token-balance simulation fan-out, kept deliberately
+ * SEPARATE from the pre-dialog budget above rather than sharing its pool.
+ *
+ * `getBalances` runs one simulation per tracked token, so a single call can
+ * cost up to {@link MAX_TRACKED_TOKENS} round trips, and its rate limit allows
+ * 15 calls a minute. That is the largest outbound fan-out any RPC method can
+ * cause, and neither the per-origin rate limit nor the 5-second coalescing
+ * cache in `handlers/account.tsx` bounds it: the cache is keyed by address, and
+ * a connected origin learns every revealed address from `getAccounts`.
+ *
+ * Why not simply claim `takePredialogBudget`: the two budgets protect
+ * different things, and merging them would let each break the other. The
+ * pre-dialog budget exists so that safety warnings and the display simulation
+ * are still available when a signing dialog is built, and this module already
+ * argues that a caution an attacker can make permanent stops being a signal.
+ * A wallet tracking 30 tokens would exhaust the 120-slot pre-dialog pool in
+ * four `getBalances` calls, so an ordinary polling dapp would degrade the
+ * user's own signing dialogs to "checks were skipped" as a side effect of
+ * refreshing balances. A separate pool bounds the fan-out without putting
+ * display integrity on the same meter.
+ *
+ * Sized above any real polling client (a few tokens refreshed a few times a
+ * minute) and below the 450/minute a connected origin could otherwise drive.
+ */
+export const MAX_TOKEN_READ_LOOKUPS = 300;
+
 /** Timestamps of recent pre-dialog lookups, across every origin. */
 const predialogLog: number[] = [];
+
+/** Timestamps of recent token-balance simulations, across every origin. */
+const tokenReadLog: number[] = [];
+
+/**
+ * Claims `count` slots from a sliding-window budget, dropping entries that
+ * have aged out first. All or nothing: a claim that would exceed the ceiling
+ * records nothing, so a denied caller does not push the window forward and
+ * turn a throttle into a lockout.
+ *
+ * @param log - The window's timestamp log, mutated in place.
+ * @param ceiling - The maximum entries allowed in the window.
+ * @param count - How many slots the caller is about to use.
+ * @param windowMs - The window length in milliseconds.
+ * @returns True when the budget allowed them (and they were recorded).
+ */
+function takeWindowedBudget(
+  log: number[],
+  ceiling: number,
+  count: number,
+  windowMs: number,
+): boolean {
+  const now = Date.now();
+  const windowStart = now - windowMs;
+  while (log.length > 0 && (log[0] as number) <= windowStart) {
+    log.shift();
+  }
+  if (log.length + count > ceiling) {
+    return false;
+  }
+  for (let index = 0; index < count; index += 1) {
+    log.push(now);
+  }
+  return true;
+}
 
 /**
  * Claims `count` slots from the global pre-dialog lookup budget.
@@ -167,22 +244,33 @@ const predialogLog: number[] = [];
  * @returns True when the budget allowed them (and they were recorded).
  */
 export function takePredialogBudget(connected: boolean, count = 1): boolean {
-  const now = Date.now();
-  const windowStart = now - PREDIALOG_WINDOW_MS;
-  while (
-    predialogLog.length > 0 &&
-    (predialogLog[0] as number) <= windowStart
-  ) {
-    predialogLog.shift();
-  }
-  const ceiling = connected ? MAX_PREDIALOG_LOOKUPS : MAX_PREDIALOG_UNCONNECTED;
-  if (predialogLog.length + count > ceiling) {
-    return false;
-  }
-  for (let index = 0; index < count; index += 1) {
-    predialogLog.push(now);
-  }
-  return true;
+  return takeWindowedBudget(
+    predialogLog,
+    connected ? MAX_PREDIALOG_LOOKUPS : MAX_PREDIALOG_UNCONNECTED,
+    count,
+    PREDIALOG_WINDOW_MS,
+  );
+}
+
+/**
+ * Claims `count` slots from the global token-balance simulation budget.
+ *
+ * Claimed only on the dapp-reachable path (`getBalances`). The snap home page
+ * runs the same fan-out but does not claim: it is reached only by the user
+ * opening their own wallet UI, so it is not a surface an origin can drive, and
+ * making it draw on this pool would hand a dapp a way to blank the user's own
+ * balance rows.
+ *
+ * @param count - How many token reads the caller is about to perform.
+ * @returns True when the budget allowed them (and they were recorded).
+ */
+export function takeTokenReadBudget(count: number): boolean {
+  return takeWindowedBudget(
+    tokenReadLog,
+    MAX_TOKEN_READ_LOOKUPS,
+    count,
+    PREDIALOG_WINDOW_MS,
+  );
 }
 
 /**
@@ -360,4 +448,5 @@ export function resetRequestLimits(): void {
   inflight.clear();
   inflightTotal = 0;
   predialogLog.length = 0;
+  tokenReadLog.length = 0;
 }

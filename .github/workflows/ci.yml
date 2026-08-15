@@ -10,6 +10,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege for the whole workflow: every job here lints, builds, tests,
+# and uploads an artifact. None writes to the repository, so none needs a
+# token that can. Declared explicitly rather than left to the repository
+# default, which is read-write on repositories created before the default
+# changed and can be widened again at the organization level without any
+# change landing here.
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: Lint, build, test

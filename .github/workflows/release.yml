@@ -1,0 +1,150 @@
+name: Release
+
+# Publishing happens here and only here.
+#
+# The reason is npm provenance. Both packages set `publishConfig.provenance`,
+# which produces a signed attestation binding the published tarball to the
+# workflow run and commit that built it. That attestation can only be minted
+# by a supported CI environment holding an OIDC token, so a publish from a
+# laptop cannot produce one.
+#
+# It is worth being precise about why this workflow uses `npm publish` rather
+# than `yarn npm publish`, because the repository otherwise pins Yarn 3 for
+# everything. Yarn 3 does not implement provenance at all (the string does not
+# appear anywhere in .yarn/releases/yarn-3.2.1.cjs), and it does not run the
+# `prepublishOnly` lifecycle script either. Publishing the snap through Yarn
+# would therefore skip BOTH the attestation and `mm-snap manifest`, silently,
+# with a successful exit code. The npm CLI runs both.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Run every gate and pack the tarballs, but do not publish'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Verify and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-publish
+    permissions:
+      contents: read
+      # Required for npm provenance. This is the whole reason the release path
+      # is a workflow: the OIDC token is what signs the attestation.
+      id-token: write
+    steps:
+      - name: Checkout the tagged commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: yarn
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      # The release gates are the CI gates. They are repeated here rather than
+      # assumed from a green CI run on the same commit, because what gets
+      # published is this checkout, and a release must not depend on someone
+      # having noticed that some other run was green.
+      - name: Lint
+        run: yarn lint
+
+      - name: Verify release versions agree
+        run: yarn check:versions
+
+      - name: Build snap
+        run: yarn workspace stellar-soroban-snap build
+
+      - name: Verify committed manifest matches the built bundle
+        run: git diff --exit-code packages/snap/snap.manifest.json
+
+      - name: Verify bundle contains no insecure randomness
+        run: |
+          BUNDLE=packages/snap/dist/bundle.js
+          ! grep -qE 'Math\.random|Math\[.random' "$BUNDLE"
+
+      - name: Audit runtime dependencies (all workspaces)
+        run: yarn npm audit --all --environment production
+
+      - name: Build connector
+        run: yarn workspace stellar-soroban-snap-connector build
+
+      - name: Snap tests (with coverage thresholds)
+        run: yarn workspace stellar-soroban-snap test:coverage
+
+      - name: Connector tests (with coverage thresholds)
+        run: yarn workspace stellar-soroban-snap-connector test:coverage
+
+      # The tag must name the version being published. A tag pointing at a
+      # commit whose package.json says something else would publish a version
+      # that no tag identifies, which is exactly the drift the release
+      # procedure's "publish only from the annotated tag" rule exists to stop.
+      - name: Verify the tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./packages/snap/package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $PKG_VERSION"
+            exit 1
+          fi
+          echo "Publishing $PKG_VERSION from tag $GITHUB_REF_NAME"
+
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          artifact-name: sbom.cdx.json
+
+      # Dry run stops here, having proved the artifact would publish cleanly.
+      - name: Pack (dry run)
+        if: inputs.dry-run
+        run: |
+          npm pack --workspace packages/snap --pack-destination .
+          npm pack --workspace packages/connector --pack-destination .
+          echo "Dry run: packed, not published."
+          ls -la ./*.tgz
+
+      # Snap first: the connector pins the snap version it installs, so a
+      # connector on npm naming a snap release that does not exist yet is a
+      # window in which a dapp can install a broken pair.
+      #
+      # `npm publish` runs `prepublishOnly` (mm-snap manifest), which
+      # regenerates the manifest shasum, and the `git diff --exit-code` gate
+      # above has already proved that regeneration is a no-op for this commit.
+      - name: Publish snap
+        if: ${{ !inputs.dry-run }}
+        run: npm publish --provenance --access public
+        working-directory: packages/snap
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish connector
+        if: ${{ !inputs.dry-run }}
+        run: npm publish --provenance --access public
+        working-directory: packages/connector
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload published tarballs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: release-tarballs
+          path: '*.tgz'
+          if-no-files-found: ignore

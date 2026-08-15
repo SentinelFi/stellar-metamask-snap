@@ -76,14 +76,22 @@ Run from a clean tree on `main`, with CI green.
 
    Release tags use a `v` prefix, distinguishing them from the `phase-N` development tags described in [PLAN.md](PLAN.md).
 
-8. **Publish both packages** from the tagged commit, snap first:
+8. **Publish by pushing the tag.** Publishing runs in CI, not from a laptop:
 
    ```bash
-   yarn workspace stellar-soroban-snap npm publish
-   yarn workspace stellar-soroban-snap-connector npm publish
+   git push origin vX.Y.Z
    ```
 
-   `prepublishOnly: mm-snap manifest` regenerates the manifest shasum as part of the snap publish. Verify both npm pages render afterwards.
+   That triggers [`.github/workflows/release.yml`](../.github/workflows/release.yml), which re-runs every CI gate against the tagged checkout, verifies the tag matches `packages/snap/package.json`'s version, then publishes the snap first and the connector second (the connector pins the snap version it installs, so the reverse order leaves a window in which a dapp can install a broken pair). Verify both npm pages render afterwards, and that each shows the provenance badge.
+
+   To rehearse without publishing, run the workflow manually from the Actions tab with `dry-run` left enabled: it performs every gate and packs both tarballs, but publishes nothing.
+
+   **Do not publish locally, and in particular do not use `yarn npm publish`.** Yarn 3 (which this repository pins for everything else) implements neither of the two things the snap publish depends on:
+
+   - it does not support npm provenance, and ignores `publishConfig.provenance` rather than failing on it, so it publishes an unattested tarball and exits 0;
+   - it does not run `prepublishOnly`, so `mm-snap manifest` never runs and the manifest shasum is not regenerated.
+
+   Both omissions are silent and produce a release that looks successful. `scripts/check-publish-env.mjs` runs on `prepack` (the one lifecycle hook both package managers honour on the publish path) and refuses to proceed outside a CI job holding an OIDC token, so this cannot be reached by accident. To pack a tarball locally for inspection, set `ALLOW_UNSIGNED_PACK=1`.
 
 9. **Submit to the Snaps Directory** with the new version, the audit report, screenshots, and a demo video. Allowlisting is per version: until the review completes, users installing through the Directory continue to get the previous listed version.
 
@@ -129,10 +137,18 @@ every step below is mandatory for a production release:
    this repository pins Yarn 3.)
 
    Both packages publish with npm provenance (`publishConfig.provenance`),
-   which requires publishing from a supported CI environment or passing
-   `--provenance-file`; a plain local `npm publish` of a
-   provenance-configured package will fail rather than silently skip the
-   attestation.
+   minted by `.github/workflows/release.yml`, which is the only job granted
+   the `id-token: write` permission that makes an attestation possible. The
+   attestation is what ties the published tarball to a workflow run and a
+   commit, so it is the one part of this trail that does not rest on process
+   discipline. Check for it on the npm page after publishing, and record the
+   workflow run URL with the tag.
+
+   Note that the npm CLI does refuse to publish a provenance-configured
+   package from an environment that cannot attest, but Yarn 3 does not: it
+   ignores the setting entirely. Do not rely on the package manager to catch
+   this. `scripts/check-publish-env.mjs` is what actually enforces it, on
+   `prepack`, for both CLIs.
 
 ## Companion dapp security headers
 

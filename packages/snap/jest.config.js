@@ -25,6 +25,15 @@ module.exports = {
    * whose removal silently widens what the snap will sign, and while it
    * reported 0% branches no threshold could protect any of them. The
    * thresholds below are the ratchet that now does.
+   *
+   * src/handlers/access-guards.test.tsx extends the same pattern to the
+   * connection boundary, for the same reason. `assertConnected` is one `if`
+   * gating `fund`, `getBalances`, `addToken`, `setNetwork`, `getAccounts`,
+   * `setActiveAccount`, and account selection on the signing methods, and
+   * `resolveSigningKeypair` is one `find` confining signing to revealed
+   * indices. Both were simulator-only, so `handlers/account.tsx` reported 3%
+   * branches and `handlers/access.tsx` 0% while being well tested, and no
+   * threshold could protect either.
    */
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
@@ -39,7 +48,18 @@ module.exports = {
    * the simulator-only modules described above and would mean nothing.
    */
   coverageThreshold: {
+    // The connection gate and the account registry it protects. `account.tsx`
+    // sits lower than the rest of this group because its uncovered remainder
+    // is the `addToken` dialog flow, which the simulator suites drive; the
+    // branch number here is what protects `assertConnected` itself.
+    'src/handlers/access.tsx': { branches: 95, lines: 95 },
+    'src/handlers/account.tsx': { branches: 50, lines: 65 },
+    'src/handlers/accounts.tsx': { branches: 95, lines: 95 },
+    'src/handlers/network.tsx': { branches: 95, lines: 80 },
     'src/handlers/sign.tsx': { branches: 55, lines: 78 },
+    // `resolveSigningKeypair`: the bounded-account-resolution claim.
+    'src/keys/index.ts': { branches: 70, lines: 88 },
+    'src/stellar/token.ts': { branches: 85, lines: 82 },
     'src/rpc/limiter.ts': { branches: 88, lines: 95 },
     // Lines sit lower than branches here: the uncovered lines are the
     // handler-lambda table entries, which the router suite deliberately

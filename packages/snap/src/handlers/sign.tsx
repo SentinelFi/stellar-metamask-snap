@@ -518,14 +518,17 @@ export async function signAuthEntry(
   // minimum means a lying source can only shorten a lifetime (at worst a
   // spurious "expired" rejection), never extend one.
   //
-  // Both reads are pre-dialog network work on a surface that is callable
-  // without a connection grant (an entry naming the active account needs
-  // none), so they claim from the same global, origin-independent budget as
-  // the safety lookups and the display simulation. Without that claim the
-  // per-origin rate limit is the only bound, and it resets per subdomain: a
-  // site rotating origins could drive unbounded traffic at Horizon and the
-  // RPC through this path, which is precisely the amplification the budget
-  // exists to prevent (src/rpc/limiter.ts).
+  // Both reads are pre-dialog network work. They sit behind a connection
+  // grant, unlike the `signTransaction` safety lookups: an address-credential
+  // entry always names its authorizing account, and naming an account is
+  // account selection, which `assertAccountSelectionAllowed` above gates
+  // unconditionally. So this path is not part of the cold-callable surface.
+  //
+  // It claims the same global, origin-independent budget anyway, because that
+  // budget bounds total outbound work against shared community infrastructure
+  // and not merely the unauthenticated share of it. Leaving it unclaimed would
+  // leave the per-origin rate limit as the only bound, and that resets per
+  // subdomain (src/rpc/limiter.ts).
   //
   // Unlike the advisory callers, denial here does NOT degrade to a visible
   // caution. The ledger height is not decoration: it is what bounds the
