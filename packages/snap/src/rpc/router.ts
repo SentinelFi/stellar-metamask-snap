@@ -13,6 +13,7 @@ import { addToken, getBalances, fund } from '../handlers/account';
 import { getAccounts, setActiveAccount } from '../handlers/accounts';
 import { getNetwork, getNetworkDetails, setNetwork } from '../handlers/network';
 import { signAuthEntry, signMessage, signTransaction } from '../handlers/sign';
+import { isOriginConnected } from '../state';
 
 type Handler = (origin: string, params: unknown) => Promise<Json>;
 
@@ -93,8 +94,14 @@ export async function route(
     // setActiveAccount to the active index, requestAccess with a standing
     // grant), and a router-level clear on those would let a connected origin
     // reset its count between rejections and never reach the cooldown.
-    return await withInflightBudget(origin, async () =>
-      handler(origin, request.params),
+    //
+    // The grant check is a thunk: the in-flight budget consults it only once
+    // concurrency reaches the unconnected share, so an ordinary request never
+    // pays for the extra `snap_manageState` decrypt.
+    return await withInflightBudget(
+      origin,
+      async () => handler(origin, request.params),
+      async () => isOriginConnected(origin),
     );
   } catch (error) {
     if (error instanceof SnapError) {

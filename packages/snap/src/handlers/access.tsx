@@ -1,6 +1,6 @@
 import { getWalletAddress } from '../keys';
 import { userRejected } from '../rpc/errors';
-import { clearDialogRejections } from '../rpc/throttle';
+import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
   connectOrigin,
   getState,
@@ -31,6 +31,7 @@ export async function requestAccess(
   }
 
   const state = await getState();
+  recordDialogOpened(origin);
   const approved = await snap.request({
     method: 'snap_dialog',
     params: {

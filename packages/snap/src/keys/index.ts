@@ -1,10 +1,44 @@
 import { SLIP10Node } from '@metamask/key-tree';
-import { Keypair } from '@stellar/stellar-sdk';
+import { hash, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { invalidRequest } from '../rpc/errors';
 import type { SnapState } from '../state';
-import { getState, MAX_ACCOUNT_INDEX } from '../state';
+import { getState, MAX_ACCOUNT_INDEX, reconcileEntropyBinding } from '../state';
+
+/**
+ * Public addresses by account index, memoized for this execution context.
+ *
+ * Addresses are public, so this holds no secret. It exists so that resolving
+ * a dapp-supplied address does not have to derive every revealed account on
+ * every request: without it, repeatedly submitting an address the wallet does
+ * not hold forces a full sweep each time, before any dialog or throttle can
+ * intervene.
+ *
+ * Declared here, above its users, because the entropy binding below is what
+ * governs its lifetime: the cache is only valid for as long as the secret
+ * recovery phrase it was filled from stays the active one.
+ */
+const addressCache = new Map<number, string>();
+
+/**
+ * The fingerprint recorded for the entropy source seen in this execution
+ * context, used to detect a change of secret recovery phrase.
+ */
+let contextFingerprint: string | null = null;
+
+/** Whether the persisted binding has been reconciled in this context. */
+let bindingReconciled = false;
+
+/**
+ * Clears the memoized addresses and the entropy binding recorded for this
+ * execution context. Test hook.
+ */
+export function resetAddressCache(): void {
+  addressCache.clear();
+  contextFingerprint = null;
+  bindingReconciled = false;
+}
 
 /**
  * Fetches the SEP-0005 parent node `m/44'/148'` (curve ed25519), the subtree
@@ -19,11 +53,63 @@ async function getAccountParentNode(): Promise<SLIP10Node> {
   const entropy = await snap.request({
     method: 'snap_getBip32Entropy',
     params: {
+      // No `source`: this resolves the *primary* entropy source. MetaMask
+      // supports several secret recovery phrases, so which one is primary is
+      // an input to every address this snap shows. `bindToEntropySource` below
+      // is what stops that input changing silently underneath the caches and
+      // the stored account registry.
       path: ['m', "44'", "148'"],
       curve: 'ed25519',
     },
   });
-  return SLIP10Node.fromJSON(entropy);
+  const node = await SLIP10Node.fromJSON(entropy);
+  await bindToEntropySource(node);
+  return node;
+}
+
+/**
+ * Detects a change of secret recovery phrase and invalidates everything
+ * derived from the previous one.
+ *
+ * {@link addressCache} is memoized by index alone, so without this it would
+ * keep answering with addresses from a phrase the wallet no longer uses. The
+ * signing path is not exposed to that (it re-derives and compares the result
+ * against the address it was asked for, in `resolveSigningKeypair`). The
+ * display path is, though: `getWalletAddress` feeds `requestAccess`,
+ * `getAddress`, `fund`, and the home page straight from the cache. An address
+ * returned there is one a dapp may pay to, so it gets the same treatment as
+ * one that is signed for.
+ *
+ * The fingerprint hashes the parent node's public key: public data, never key
+ * material, and stable for a given phrase.
+ *
+ * @param node - The freshly fetched SEP-0005 parent node.
+ */
+async function bindToEntropySource(node: SLIP10Node): Promise<void> {
+  const fingerprint = hash(Buffer.from(node.publicKey, 'hex')).toString('hex');
+  if (contextFingerprint !== null && contextFingerprint !== fingerprint) {
+    addressCache.clear();
+  }
+  contextFingerprint = fingerprint;
+  // The persisted reconciliation costs a state read and is only meaningful
+  // once per execution context, so it runs on the first key use and not on
+  // every parent-node fetch.
+  if (!bindingReconciled) {
+    // Set before the await, not after: a store that cannot be written would
+    // otherwise retry this on every parent-node fetch for the rest of the
+    // context.
+    bindingReconciled = true;
+    // Best effort, for the same reason the signing handlers record their grant
+    // best effort: this is bookkeeping *about* the key material, and a store
+    // that cannot be written must not take key derivation down with it. That
+    // would turn a state-write failure into an inability to sign, which is
+    // strictly worse than a fingerprint recorded one context later. The
+    // in-context cache invalidation above does not depend on it.
+    const reset = await reconcileEntropyBinding(fingerprint).catch(() => false);
+    if (reset) {
+      addressCache.clear();
+    }
+  }
 }
 
 /**
@@ -67,22 +153,6 @@ async function deriveFromNode(
  */
 export async function deriveKeypair(index = 0): Promise<Keypair> {
   return deriveFromNode(await getAccountParentNode(), index);
-}
-
-/**
- * Public addresses by account index, memoized for this execution context.
- *
- * Addresses are public, so this holds no secret. It exists so that resolving
- * a dapp-supplied address does not have to derive every revealed account on
- * every request: without it, repeatedly submitting an address the wallet does
- * not hold forces a full sweep each time, before any dialog or throttle can
- * intervene.
- */
-const addressCache = new Map<number, string>();
-
-/** Clears the memoized addresses. Test hook. */
-export function resetAddressCache(): void {
-  addressCache.clear();
 }
 
 /**

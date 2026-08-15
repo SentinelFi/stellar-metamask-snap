@@ -4,6 +4,7 @@ import {
   assertRateAllowed,
   MAX_INFLIGHT_GLOBAL,
   MAX_INFLIGHT_PER_ORIGIN,
+  MAX_INFLIGHT_UNCONNECTED,
   MAX_PREDIALOG_LOOKUPS,
   MAX_PREDIALOG_UNCONNECTED,
   RATE_LIMITS,
@@ -238,15 +239,18 @@ describe('withInflightBudget', () => {
     expect(await withInflightBudget(ORIGIN, async () => 'ok')).toBe('ok');
   });
 
-  it('refuses requests beyond the global concurrency ceiling', async () => {
-    // Origin rotation must not multiply concurrency: fill the global ceiling
-    // from many distinct origins, staying under every per-origin cap.
+  it('refuses unconnected requests beyond the reserved share', async () => {
+    // Origin rotation must not multiply concurrency, and it must not be able
+    // to consume the whole ceiling either: an unconnected caller stops at
+    // MAX_INFLIGHT_UNCONNECTED, well below MAX_INFLIGHT_GLOBAL.
     const resolvers: (() => void)[] = [];
     const hold = async () =>
       new Promise<void>((resolve) => resolvers.push(resolve));
 
-    const held = Array.from({ length: MAX_INFLIGHT_GLOBAL }, async (_, index) =>
-      withInflightBudget(`https://rotate-${index}.example`, hold),
+    const held = Array.from(
+      { length: MAX_INFLIGHT_UNCONNECTED },
+      async (_, index) =>
+        withInflightBudget(`https://rotate-${index}.example`, hold),
     );
     await expect(
       withInflightBudget('https://one-more.example', async () => 'never'),
@@ -261,6 +265,77 @@ describe('withInflightBudget', () => {
     expect(
       await withInflightBudget('https://one-more.example', async () => 'ok'),
     ).toBe('ok');
+  });
+
+  it('reserves headroom above that share for connected origins', async () => {
+    // The point of the split: an unconnected swarm filling its share must not
+    // deny service to a site the user has actually approved.
+    const resolvers: (() => void)[] = [];
+    const hold = async () =>
+      new Promise<void>((resolve) => resolvers.push(resolve));
+    const connected = async () => true;
+
+    const held = Array.from(
+      { length: MAX_INFLIGHT_UNCONNECTED },
+      async (_, index) =>
+        withInflightBudget(`https://rotate-${index}.example`, hold),
+    );
+
+    // Cold caller: refused, the share is full.
+    await expect(
+      withInflightBudget('https://cold.example', async () => 'never'),
+    ).rejects.toThrow('too many concurrent requests');
+    // Connected caller: admitted, drawing on the reserved headroom.
+    expect(
+      await withInflightBudget(
+        'https://granted.example',
+        async () => 'ok',
+        connected,
+      ),
+    ).toBe('ok');
+
+    for (const resolve of resolvers) {
+      resolve();
+    }
+    await Promise.all(held);
+  });
+
+  it('refuses connected requests beyond the global ceiling', async () => {
+    // The reserved headroom is headroom, not an exemption.
+    const resolvers: (() => void)[] = [];
+    const hold = async () =>
+      new Promise<void>((resolve) => resolvers.push(resolve));
+    const connected = async () => true;
+
+    const held = Array.from({ length: MAX_INFLIGHT_GLOBAL }, async (_, index) =>
+      withInflightBudget(`https://rotate-${index}.example`, hold, connected),
+    );
+    await expect(
+      withInflightBudget(
+        'https://one-more.example',
+        async () => 'never',
+        connected,
+      ),
+    ).rejects.toThrow('too many concurrent requests');
+
+    for (const resolve of resolvers) {
+      resolve();
+    }
+    await Promise.all(held);
+  });
+
+  it('does not consult the grant below the reserved share', async () => {
+    // Reading the grant costs a snap_manageState decrypt, so the common path
+    // must not pay for it. Below the share the thunk is never called.
+    let consulted = 0;
+    const isConnected = async () => {
+      consulted += 1;
+      return false;
+    };
+    expect(
+      await withInflightBudget(ORIGIN, async () => 'ok', isConnected),
+    ).toBe('ok');
+    expect(consulted).toBe(0);
   });
 
   it('keeps live in-flight counters intact under origin rotation', async () => {

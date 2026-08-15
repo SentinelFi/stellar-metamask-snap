@@ -1,7 +1,7 @@
 import { assertConnected } from './account';
 import { getAddressForIndex, getOwnedAccounts } from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
-import { clearDialogRejections } from '../rpc/throttle';
+import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import { SetActiveAccountParams, validate } from '../rpc/validation';
 import {
   getState,
@@ -69,6 +69,7 @@ export async function setActiveAccount(
 
   const address = await getAddressForIndex(index);
   if (state.activeAccount !== index) {
+    recordDialogOpened(origin);
     const approved = await snap.request({
       method: 'snap_dialog',
       params: {

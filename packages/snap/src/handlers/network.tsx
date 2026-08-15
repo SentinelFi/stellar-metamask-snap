@@ -1,6 +1,6 @@
 import { assertConnected } from './account';
 import { userRejected } from '../rpc/errors';
-import { clearDialogRejections } from '../rpc/throttle';
+import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import { SetNetworkParams, validate } from '../rpc/validation';
 import { getActiveNetwork, getState, setActiveNetwork } from '../state';
 import type { NetworkName } from '../state/networks';
@@ -64,6 +64,7 @@ export async function setNetwork(
   const state = await getState();
 
   if (state.network !== target) {
+    recordDialogOpened(origin);
     const approved = await snap.request({
       method: 'snap_dialog',
       params: {

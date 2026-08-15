@@ -136,15 +136,19 @@ every step below is mandatory for a production release:
 
 ## Companion dapp security headers
 
-The site ships HTTP security headers in `packages/site/static/_headers`, which Gatsby copies verbatim into the publish directory. Netlify and Cloudflare Pages read that file automatically; **any other host must replicate the same headers in its own configuration** (nginx, Vercel `vercel.json`, S3/CloudFront, and so on), because a host that ignores `_headers` silently ships the site with none of them. The headers are:
+The site ships HTTP security headers in `packages/site/static/_headers`, which Gatsby copies into the publish directory and `gatsby-node.js` then rewrites. Netlify and Cloudflare Pages read that file automatically; **any other host must replicate the same headers in its own configuration** (nginx, Vercel `vercel.json`, S3/CloudFront, and so on), because a host that ignores `_headers` silently ships the site with none of them.
 
-- `Content-Security-Policy`: `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'` (the `'unsafe-inline'` allowances are required by Gatsby's inline runtime and styled-components)
+**Copy the headers from the built `packages/site/public/_headers`, not from `static/_headers`.** The `script-src` directive in the source file contains a placeholder token, not the real value: the policy allowlists Gatsby's inline bootstrap scripts by SHA-256 rather than with `'unsafe-inline'`, and those hashes cover the chunk mapping and the compilation hash, so they change on every build. `onPostBuild` computes them and fails the build if the placeholder is missing, so the policy cannot silently regress to allowing arbitrary inline script. **A host that pins these headers by hand must re-copy them after every build**, or the site's own scripts will be blocked.
+
+The headers are:
+
+- `Content-Security-Policy`: `default-src 'self'; script-src 'self' <per-build sha256 hashes>; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`. `style-src` keeps `'unsafe-inline'` because styled-components injects rules through the CSSOM at runtime, which no hash can cover; that is a far weaker exposure than inline script.
 - `X-Frame-Options: DENY`
 - `Referrer-Policy: no-referrer`
 - `X-Content-Type-Options: nosniff`
 - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
 
-When deploying to a new host, verify the headers are actually served (for example `curl -sI https://<host>/ | grep -i content-security-policy`) before announcing the deployment.
+When deploying to a new host, verify the headers are actually served (for example `curl -sI https://<host>/ | grep -i content-security-policy`) before announcing the deployment. Then load the deployed page and confirm the browser console shows no CSP violations and the app actually renders: a stale or mis-copied hash list blocks Gatsby's own bootstrap, which fails as a blank page rather than a visible error.
 
 ## First release
 

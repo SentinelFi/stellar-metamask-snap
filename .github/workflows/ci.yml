@@ -72,6 +72,19 @@ jobs:
       - name: Audit runtime dependencies (all workspaces)
         run: yarn npm audit --all --environment production
 
+      # The gate above covers what ships. This step covers what *builds* it,
+      # which nothing surfaced before: a compromised or vulnerable build
+      # dependency reaches the deployed dapp, and for the snap it would reach
+      # the bundle the shasum then seals. Reporting rather than gating is
+      # deliberate. The Gatsby toolchain carries advisories that only upstream
+      # can clear, so failing on them would leave the build permanently red and
+      # train reviewers to ignore it, which is worse than not checking. The
+      # point is that the list is visible in every run and Dependabot has a
+      # signal to act on. Advisories that CAN be cleared are pinned in the root
+      # package.json "resolutions" instead.
+      - name: Report build-chain advisories (non-blocking)
+        run: yarn npm audit --all --recursive || true
+
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
 

@@ -2,6 +2,7 @@ import type {
   OnHomePageHandler,
   OnInstallHandler,
   OnRpcRequestHandler,
+  OnUpdateHandler,
   OnUserInputHandler,
 } from '@metamask/snaps-sdk';
 import { UserInputEventType } from '@metamask/snaps-sdk';
@@ -17,7 +18,7 @@ import {
   USE_ACCOUNT_PREFIX,
   homePage,
 } from './handlers/home';
-import { installWelcome } from './handlers/install';
+import { installWelcome, updateNotice } from './handlers/install';
 import { findAccountIndexByAddress, getAddressForIndex } from './keys';
 import { route } from './rpc/router';
 import {
@@ -65,6 +66,14 @@ export const onHomePage: OnHomePageHandler = async () => homePage();
  * @returns Resolves when dismissed.
  */
 export const onInstall: OnInstallHandler = async () => installWelcome();
+
+/**
+ * Post-update notice, shown only when an existing connection grant needs
+ * re-consent under the current disclosure.
+ *
+ * @returns Resolves when dismissed, or immediately when nothing needs saying.
+ */
+export const onUpdate: OnUpdateHandler = async () => updateNotice();
 
 /**
  * Shows a plain informational dialog.

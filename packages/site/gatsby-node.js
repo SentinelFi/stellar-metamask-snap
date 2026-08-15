@@ -1,4 +1,5 @@
-const { readFileSync, existsSync, readdirSync } = require('fs');
+const { createHash } = require('crypto');
+const { readFileSync, existsSync, readdirSync, writeFileSync } = require('fs');
 const { dirname, join } = require('path');
 
 // Use the exact webpack instance bundled with Gatsby — a second webpack copy
@@ -141,6 +142,123 @@ module.exports.onPreBuild = ({ reporter }) => {
   }
 };
 
+/** The token in `static/_headers` that build-time script hashes replace. */
+const HASH_PLACEHOLDER = '{{INLINE_SCRIPT_HASHES}}';
+
+/**
+ * Matches an inline `<script>` (one with no `src` attribute). Gatsby emits a
+ * handful of these to bootstrap the runtime: the page path, the chunk
+ * mapping, and the compilation hash.
+ */
+const INLINE_SCRIPT = /<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gu;
+
+/**
+ * Recursively collects every file under a directory whose name matches.
+ *
+ * @param {string} dir - The directory to walk.
+ * @param {(name: string) => boolean} matches - Filename predicate.
+ * @returns {string[]} Absolute paths of every matching file.
+ */
+function collectFiles(dir, matches) {
+  // eslint-disable-next-line n/no-sync
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return collectFiles(fullPath, matches);
+    }
+    return entry.isFile() && matches(entry.name) ? [fullPath] : [];
+  });
+}
+
+/**
+ * Replaces the CSP placeholder in `public/_headers` with the SHA-256 hashes of
+ * every inline script the build actually emitted.
+ *
+ * Why this exists rather than a static `'unsafe-inline'`: the dapp is the page
+ * that discovers the wallet provider and drives the user's snap interactions,
+ * so it is exactly the page where an injected-markup XSS would be most useful
+ * to an attacker, and `'unsafe-inline'` disables CSP as a defence against
+ * precisely that. Gatsby's inline scripts are few, small, and fixed per build,
+ * so hashing them costs nothing and closes the hole.
+ *
+ * The hashes must be computed here rather than committed: they cover the
+ * chunk mapping and the compilation hash, which change on every build.
+ *
+ * Failing loudly when the placeholder is absent is deliberate. A silent no-op
+ * would leave whatever `script-src` the file happens to contain, and the most
+ * likely way to reach that state is someone "simplifying" the header back to
+ * `'unsafe-inline'`, which is the regression this whole mechanism exists to
+ * prevent.
+ *
+ * @param {object} reporter - Gatsby reporter.
+ */
+function writeScriptHashes(reporter) {
+  const publicDir = join(__dirname, 'public');
+  const headersPath = join(publicDir, '_headers');
+  // eslint-disable-next-line n/no-sync
+  if (!existsSync(headersPath)) {
+    reporter.panic(
+      `No _headers file in the build output. static/_headers is the source ` +
+        `of the site's security headers and must be copied into public/.`,
+    );
+    return;
+  }
+
+  // eslint-disable-next-line n/no-sync
+  const headers = readFileSync(headersPath, 'utf8');
+  if (!headers.includes(HASH_PLACEHOLDER)) {
+    reporter.panic(
+      `static/_headers no longer contains the ${HASH_PLACEHOLDER} placeholder, ` +
+        `so the Content-Security-Policy could not be given the hashes of the ` +
+        `build's inline scripts. Restore the placeholder in script-src. Do not ` +
+        `replace it with 'unsafe-inline': that would re-enable arbitrary ` +
+        `inline script on the page that drives the user's snap interactions.`,
+    );
+    return;
+  }
+
+  const hashes = new Set();
+  for (const path of collectFiles(publicDir, (name) =>
+    name.endsWith('.html'),
+  )) {
+    // eslint-disable-next-line n/no-sync
+    const html = readFileSync(path, 'utf8');
+    for (const [, body] of html.matchAll(INLINE_SCRIPT)) {
+      // A CSP hash covers the element's exact text content, byte for byte.
+      hashes.add(
+        `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`,
+      );
+    }
+  }
+
+  if (hashes.size === 0) {
+    // Not obviously benign: it more likely means the inline-script pattern
+    // stopped matching what Gatsby emits (an upgrade changing the markup)
+    // than that the scripts genuinely disappeared. Shipping a script-src with
+    // no hashes would break the site, so say so rather than write it.
+    reporter.panic(
+      `Found no inline scripts in the build output. The CSP would then allow ` +
+        `no inline script at all and Gatsby's runtime bootstrap would be ` +
+        `blocked. Check whether the emitted markup changed.`,
+    );
+    return;
+  }
+
+  // `replaceAll`, not `replace`: a string pattern replaces only the first
+  // match, and any prose above the directive that names the token would then
+  // absorb the hashes and leave the directive itself unsubstituted, shipping a
+  // literal placeholder as a script-src source expression.
+  // eslint-disable-next-line n/no-sync
+  writeFileSync(
+    headersPath,
+    headers.replaceAll(HASH_PLACEHOLDER, [...hashes].sort().join(' ')),
+    'utf8',
+  );
+  reporter.info(
+    `CSP: allowlisted ${hashes.size} inline script hash(es) in _headers.`,
+  );
+}
+
 /**
  * Recursively collects every `.js` file under a directory.
  *
@@ -203,6 +321,13 @@ function hasQuotedLiteral(emitted, value) {
  */
 module.exports.onPostBuild = ({ reporter }) => {
   const { snapOrigin, snapVersion, allowLocal } = readReleaseConfig();
+
+  // Before the release checks, and deliberately outside the ALLOW_LOCAL_SNAP
+  // bypass below: the security headers are not part of the release-identity
+  // question, and a development build must exercise this path too, otherwise
+  // CI (which builds the site with ALLOW_LOCAL_SNAP=true) would never run it
+  // and a regression would surface only in a release build.
+  writeScriptHashes(reporter);
 
   if (allowLocal) {
     // The bypass exists for local development builds only. Make it loud:

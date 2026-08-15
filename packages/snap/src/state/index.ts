@@ -85,6 +85,31 @@ export const AccountIndexStruct = refine(number(), 'AccountIndex', (value) =>
  */
 export const CURRENT_DISCLOSURE_VERSION = 1;
 
+/**
+ * Cap on recorded connection grants.
+ *
+ * The registry grows on its own, not only when the user connects a site
+ * deliberately: an approved signature also records a grant, so a wallet used
+ * across many sites accumulates entries monotonically, and nothing removes one
+ * except a manual disconnect on the home page. Every `getState()` decrypts the
+ * whole store, and the home page renders every entry, so unbounded growth
+ * taxes each of those and degrades the one revocation UI the user has.
+ *
+ * Pruning drops the least recently connected grant. That is the safe direction:
+ * a dropped grant only means the origin sees `getAddress() === ''` and must
+ * call `requestAccess` again, which re-consents explicitly. Unlike token
+ * pruning it is user-visible, which is why the cap sits far above the number of
+ * sites any wallet realistically connects to.
+ */
+export const MAX_TRACKED_GRANTS = 100;
+
+/**
+ * Cap on the length of a stored origin key. MetaMask supplies real URL
+ * origins, which are far shorter, so this only bounds what a corrupt store
+ * could carry into the home page and the grant lookups.
+ */
+const MAX_ORIGIN_KEY_LENGTH = 2048;
+
 /** A recorded connection grant. */
 export type OriginGrant = {
   connectedAt: string;
@@ -112,6 +137,22 @@ export type SnapState = {
   origins: Record<string, OriginGrant>;
   /** Soroban tokens the user has added, keyed by network. */
   tokens?: Partial<Record<NetworkName, TrackedToken[]>>;
+  /**
+   * Which secret recovery phrase this store's key-derived contents belong to:
+   * a SHA-256 of the `m/44'/148'` parent node's public key.
+   *
+   * The account registry and the connection grants both describe a specific
+   * key set. `snap_getBip32Entropy` is called without a `source`, so it always
+   * resolves the *primary* entropy source, and MetaMask supports more than one
+   * secret recovery phrase. Nothing in the store previously recorded which one
+   * produced it, so a change of primary phrase would silently reinterpret
+   * "account 3" and every recorded grant against an unrelated key set.
+   *
+   * Absent on stores written before this field existed; recorded on first key
+   * use (see `reconcileEntropyBinding` in `src/keys/index.ts`). It holds a hash
+   * of a public key, never key material.
+   */
+  entropyFingerprint?: string;
 };
 
 /**
@@ -138,6 +179,7 @@ const SnapStateStruct = object({
       ),
     ),
   ),
+  entropyFingerprint: optional(string()),
 });
 
 /**
@@ -237,9 +279,46 @@ function normalizeTokens(
       seen.add(entry.contractId);
       kept.push({ contractId: entry.contractId, ...metadata });
     }
-    normalized[network] = kept;
+    // Only networks that actually carry tokens get a key. Writing an empty
+    // array for every known network grew the store on each parse and made
+    // "no tokens here" and "never had tokens here" indistinguishable; every
+    // reader already treats a missing key as empty (`tokens?.[network] ?? []`).
+    if (kept.length > 0) {
+      normalized[network] = kept;
+    }
   }
   return normalized;
+}
+
+/**
+ * Normalizes the grant registry at the parse boundary, mirroring
+ * {@link normalizeTokens}.
+ *
+ * The structural schema stays permissive on purpose: bounding the registry
+ * there would make an oversized store fail validation and reset *everything*,
+ * dropping the account registry along with the grants. So the bound is applied
+ * here instead, where an over-cap store loses only its oldest grants. Keys that
+ * would touch the prototype chain, or that are implausibly long, are dropped
+ * rather than carried into the home page and the grant lookups.
+ *
+ * @param origins - The raw (structurally valid) origins map.
+ * @returns The normalized origins map.
+ */
+function normalizeOrigins(origins: SnapState['origins']): SnapState['origins'] {
+  const entries = Object.entries(origins).filter(
+    ([origin]) =>
+      isSafeStateKey(origin) && origin.length <= MAX_ORIGIN_KEY_LENGTH,
+  );
+  if (entries.length <= MAX_TRACKED_GRANTS) {
+    return Object.fromEntries(entries);
+  }
+  // Most recently connected first, so the cap drops the stalest grants. ISO
+  // timestamps sort lexicographically, and an unparseable one sorts last,
+  // which is the right side of the cut for a value that cannot be trusted.
+  entries.sort(([, left], [, right]) =>
+    right.connectedAt.localeCompare(left.connectedAt),
+  );
+  return Object.fromEntries(entries.slice(0, MAX_TRACKED_GRANTS));
 }
 
 /**
@@ -257,6 +336,7 @@ export function parseState(stored: unknown): SnapState {
     const state = stored as SnapState;
     return normalizeAccounts({
       ...state,
+      origins: normalizeOrigins(state.origins),
       tokens: normalizeTokens(state.tokens),
     });
   }
@@ -270,6 +350,7 @@ export function parseState(stored: unknown): SnapState {
       version: 2,
       activeAccount: 0,
       accounts: [0],
+      origins: normalizeOrigins(legacy.origins),
       tokens: normalizeTokens(legacy.tokens),
     };
   }
@@ -576,13 +657,60 @@ export async function connectOrigin(origin: string): Promise<void> {
     const existing = originHasGrant(state.origins, origin)
       ? state.origins[origin]
       : undefined;
-    state.origins[origin] = {
+    const origins = { ...state.origins };
+    origins[origin] = {
       // An upgraded grant keeps the original connection time; only the
       // disclosure it was approved under changes.
       connectedAt: existing?.connectedAt ?? new Date().toISOString(),
       disclosureVersion: CURRENT_DISCLOSURE_VERSION,
     };
-    await saveState(state);
+    // Enforce the cap at the write that causes growth, not only at the parse
+    // boundary, so the store never holds more than the cap even transiently.
+    // `normalizeOrigins` keeps the most recently connected, and the grant just
+    // written carries the newest timestamp, so it is never the one dropped.
+    await saveState({ ...state, origins: normalizeOrigins(origins) });
+  });
+}
+
+/**
+ * Binds the store to the secret recovery phrase its key-derived contents were
+ * built from, resetting those contents when the phrase has changed.
+ *
+ * Called from the key layer, which is the only place that can compute the
+ * fingerprint. A store with no fingerprint recorded simply adopts the current
+ * one: that is the upgrade path for wallets written before this field existed,
+ * and it assumes continuity, which is correct because a vault restored from a
+ * different phrase does not carry the old snap state forward anyway.
+ *
+ * A *mismatch* is different: the account registry and the grants describe key
+ * material this wallet no longer has. Account indices would name unrelated
+ * addresses, and a grant would extend consent given for one wallet to another.
+ * Both are reset. The network preference and the tracked-token registry are
+ * kept, since neither is derived from the phrase. The check cannot false
+ * positive: the fingerprint is a deterministic function of the phrase.
+ *
+ * @param fingerprint - The current entropy fingerprint.
+ * @returns True when a mismatch was found and the store was reset.
+ */
+export async function reconcileEntropyBinding(
+  fingerprint: string,
+): Promise<boolean> {
+  return withStateLock(async () => {
+    const state = await getState();
+    if (state.entropyFingerprint === fingerprint) {
+      return false;
+    }
+    if (state.entropyFingerprint === undefined) {
+      await saveState({ ...state, entropyFingerprint: fingerprint });
+      return false;
+    }
+    await saveState({
+      ...defaultState(),
+      network: state.network,
+      tokens: state.tokens ?? {},
+      entropyFingerprint: fingerprint,
+    });
+    return true;
   });
 }
 

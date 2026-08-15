@@ -12,6 +12,8 @@ import {
 } from '@stellar/stellar-sdk';
 
 import { signAuthEntry, signMessage, signTransaction } from './sign';
+import { resetAddressCache } from '../keys';
+import { resetRequestLimits, takePredialogBudget } from '../rpc/limiter';
 
 /*
  * Fail-closed gate tests for the signing handlers.
@@ -89,6 +91,11 @@ describe('signing handlers: fail-closed gates', () => {
     stored = stateV2();
     dialogs = [];
     dialogResponse = true;
+    // Module-level caches and budgets outlive a test otherwise: the address
+    // cache and the entropy binding are per-execution-context, and the
+    // pre-dialog budget is a global sliding window.
+    resetAddressCache();
+    resetRequestLimits();
 
     (globalThis as { snap?: unknown }).snap = {
       request: async (args: {
@@ -435,6 +442,111 @@ describe('signing handlers: fail-closed gates', () => {
         }),
       ).rejects.toThrow('Could not reach the Stellar RPC');
       expect(dialogs).toHaveLength(0);
+    });
+
+    it('claims the global pre-dialog budget for its ledger lookups', async () => {
+      // The finding this guards: these two ledger reads are pre-dialog network
+      // work on a surface callable without a connection grant, and they drew on
+      // no budget at all. Every other per-origin control here is keyed on
+      // `origin` and resets per subdomain, so a site rotating origins could
+      // drive unbounded traffic at Horizon and the RPC through this path.
+      //
+      // Draining the budget first must therefore stop the request, and stop it
+      // *before* a dialog exists. Asserting on the distinct message is what
+      // proves the budget is the cause, rather than the disabled `fetch` in
+      // this suite producing the same fail-closed outcome for another reason.
+      stored = stateV2({ origins: CONNECTED });
+      while (takePredialogBudget(true)) {
+        // Exhaust it.
+      }
+      await expect(
+        signAuthEntry(ORIGIN, {
+          authEntry: encode(addressAuthEntry(ADDRESS_0)),
+        }),
+      ).rejects.toThrow('Too many ledger lookups have run recently');
+      expect(dialogs).toHaveLength(0);
+    });
+
+    it('requires a connection grant before it looks anything up', async () => {
+      // This ordering is what keeps signAuthEntry off the cold-callable
+      // amplification surface, and it is easy to lose in a refactor.
+      //
+      // An address-credential entry always names its authorizing account, and
+      // `assertAccountSelectionAllowed` demands a grant for *any* named
+      // address (including the active one, so the outcome cannot be used as a
+      // membership oracle). Source-account entries are rejected earlier. So
+      // every entry that reaches the ledger lookups has already passed the
+      // grant check, and an ungated caller cannot drive a single request.
+      //
+      // The budget is deliberately drained here: if the grant check ever moved
+      // below the lookups, this test would fail on the budget message instead
+      // of the not-connected one, rather than passing quietly.
+      while (takePredialogBudget(false)) {
+        // Exhaust the cold share.
+      }
+      await expect(
+        signAuthEntry(ORIGIN, {
+          authEntry: encode(addressAuthEntry(ADDRESS_0)),
+        }),
+      ).rejects.toThrow('Origin is not connected');
+      expect(dialogs).toHaveLength(0);
+    });
+  });
+
+  describe('an approved signature survives an ancillary state failure', () => {
+    /**
+     * Makes every `snap_manageState` write fail, leaving reads working.
+     *
+     * Models a store that cannot be written: a platform size limit, or a
+     * transient failure. Reads must keep working, because the handler needs
+     * state to get as far as the dialog in the first place.
+     */
+    type SnapRequest = (args: {
+      method: string;
+      params: { operation?: string };
+    }) => Promise<unknown>;
+
+    /** Installs the failing-write wrapper over the mocked `snap` global. */
+    function failStateWrites() {
+      const snapGlobal = (
+        globalThis as unknown as { snap: { request: SnapRequest } }
+      ).snap;
+      const original = snapGlobal.request.bind(snapGlobal);
+      snapGlobal.request = async (args) => {
+        if (
+          args.method === 'snap_manageState' &&
+          args.params.operation !== 'get'
+        ) {
+          throw new Error('state store unavailable');
+        }
+        return original(args);
+      };
+    }
+
+    it('still returns a signed transaction when the grant cannot be recorded', async () => {
+      // The finding this guards: `connectOrigin` sat unguarded between the
+      // approval and `tx.sign()`, so any state-write failure turned an approved
+      // signature into a generic internal error. The user had already consented;
+      // recording an ancillary grant must not be able to undo that.
+      failStateWrites();
+      const result = await signTransaction(ORIGIN, {
+        xdr: classicTx().toXDR(),
+      });
+      expect(dialogs).toHaveLength(1);
+      expect(result.signerAddress).toBe(ADDRESS_0);
+      const signed = TransactionBuilder.fromXDR(
+        result.signedTxXdr,
+        Networks.TESTNET,
+      );
+      expect(signed.signatures).toHaveLength(1);
+    });
+
+    it('still returns a signature from signMessage', async () => {
+      failStateWrites();
+      const result = await signMessage(ORIGIN, { message: 'hello' });
+      expect(dialogs).toHaveLength(1);
+      expect(result.signerAddress).toBe(ADDRESS_0);
+      expect(result.signedMessage).toStrictEqual(expect.any(String));
     });
   });
 

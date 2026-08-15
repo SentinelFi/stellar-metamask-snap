@@ -1,6 +1,6 @@
 import { getOwnedAccounts, getWalletAddress } from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
-import { clearDialogRejections } from '../rpc/throttle';
+import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
   AddTokenParams,
   OptionalAddressParams,
@@ -248,6 +248,7 @@ export async function addToken(
     );
   }
 
+  recordDialogOpened(origin);
   const approved = await snap.request({
     method: 'snap_dialog',
     params: {

@@ -14,6 +14,8 @@ import {
   COOLDOWN_MS,
   DIALOG_METHODS,
   MAX_CONSECUTIVE_REJECTIONS,
+  MAX_UNANSWERED_DIALOGS,
+  recordDialogOpened,
   recordDialogRejection,
   resetDialogThrottle,
 } from './throttle';
@@ -113,5 +115,52 @@ describe('dialog throttle', () => {
     // The chain restarts: the next rejection is number one, not the third.
     recordDialogRejection(ORIGIN);
     expect(check(ORIGIN)).toBeNull();
+  });
+
+  it('cools down an origin whose dialogs are never answered', () => {
+    // The gap this closes: the rejection counter only advances on an explicit
+    // SEP-43 -4, which needs the user to press reject. A hostile origin can
+    // avoid it entirely by summoning dialogs the user simply ignores; the
+    // request then unwinds when the platform request timeout expires, the snap
+    // sees no rejection, and the cooldown never engages however many dialogs
+    // pile up. Counting opens is what reaches that case.
+    for (let i = 0; i < MAX_UNANSWERED_DIALOGS - 1; i++) {
+      recordDialogOpened(ORIGIN);
+      expect(check(ORIGIN)).toBeNull();
+    }
+    recordDialogOpened(ORIGIN);
+    expect(check(ORIGIN)).not.toBeNull();
+  });
+
+  it('lets a rejection trip the tighter threshold first', () => {
+    // Opens advance on every dialog, rejections only on refusals, so a user
+    // who actually rejects must hit the rejection rule (and its more accurate
+    // message) before the coarser unanswered-dialog rule can apply.
+    for (let i = 0; i < MAX_CONSECUTIVE_REJECTIONS; i++) {
+      recordDialogOpened(ORIGIN);
+      recordDialogRejection(ORIGIN);
+    }
+    expect(MAX_CONSECUTIVE_REJECTIONS).toBeLessThan(MAX_UNANSWERED_DIALOGS);
+    expect(check(ORIGIN)).not.toBeNull();
+  });
+
+  it('clears the unanswered count on an approval', () => {
+    // An approval is positive evidence the dialogs reach a user who engages.
+    for (let i = 0; i < MAX_UNANSWERED_DIALOGS - 1; i++) {
+      recordDialogOpened(ORIGIN);
+    }
+    clearDialogRejections(ORIGIN);
+    for (let i = 0; i < MAX_UNANSWERED_DIALOGS - 1; i++) {
+      recordDialogOpened(ORIGIN);
+      expect(check(ORIGIN)).toBeNull();
+    }
+  });
+
+  it('tracks unanswered dialogs per origin', () => {
+    for (let i = 0; i < MAX_UNANSWERED_DIALOGS; i++) {
+      recordDialogOpened(ORIGIN);
+    }
+    expect(check(ORIGIN)).not.toBeNull();
+    expect(check('https://other.example')).toBeNull();
   });
 });

@@ -16,7 +16,8 @@ import {
   invalidRequest,
   userRejected,
 } from '../rpc/errors';
-import { clearDialogRejections } from '../rpc/throttle';
+import { takePredialogBudget } from '../rpc/limiter';
+import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
   SignAuthEntryParams,
   SignMessageParams,
@@ -51,6 +52,24 @@ import {
 
 /** SEP-53 signed-message prefix. */
 const SIGNED_MESSAGE_PREFIX = 'Stellar Signed Message:\n';
+
+/**
+ * Records the durable connection grant an approved signature implies, without
+ * letting a failure to record it undo the signature.
+ *
+ * The grant is ancillary: it saves the origin a later `requestAccess` round
+ * trip. The signature is what the user actually approved. Awaiting
+ * `connectOrigin` unguarded coupled the two in the wrong direction, since any
+ * state-write failure between approval and `tx.sign()` would surface as a
+ * generic internal error, consuming the user's approval and returning nothing.
+ * A missing grant is self-correcting (the next `requestAccess` records it);
+ * a lost signature is not.
+ *
+ * @param origin - The requesting dapp origin.
+ */
+async function recordGrantBestEffort(origin: string): Promise<void> {
+  await connectOrigin(origin).catch(() => undefined);
+}
 
 /**
  * Gates account selection on a standing connection grant.
@@ -284,6 +303,7 @@ export async function signTransaction(
     ];
   }
 
+  recordDialogOpened(origin);
   const approved = await snap.request({
     method: 'snap_dialog',
     params: {
@@ -314,8 +334,9 @@ export async function signTransaction(
   // An approved dialog breaks the consecutive-rejection chain.
   clearDialogRejections(origin);
 
-  // An approved signature is also consent to be connected.
-  await connectOrigin(origin);
+  // An approved signature is also consent to be connected. Best effort: see
+  // `recordGrantBestEffort`.
+  await recordGrantBestEffort(origin);
 
   tx.sign(keypair);
   const signedTxXdr = tx.toXDR();
@@ -402,6 +423,10 @@ export async function signAuthEntry(
 ): Promise<{ signedAuthEntry: string; signerAddress: string }> {
   const request = validate(params, SignAuthEntryParams);
   const network = await getActiveNetwork();
+  // Read once, before any pre-dialog lookup, exactly as `signTransaction`
+  // does: a standing grant decides which share of the global pre-dialog
+  // budget the ledger-height reads below draw on.
+  const connected = await isOriginConnected(origin);
 
   if (
     request.networkPassphrase !== undefined &&
@@ -492,15 +517,33 @@ export async function signAuthEntry(
   // third-party gateway, so it must not be the only voice; taking the
   // minimum means a lying source can only shorten a lifetime (at worst a
   // spurious "expired" rejection), never extend one.
-  const [rpcLedger, horizonLedger] = await Promise.all([
-    getLatestLedger(network.sorobanRpcUrl).catch(() => null),
-    getHorizonLatestLedger(network.horizonUrl),
-  ]);
-  const ledgerSources = [rpcLedger, horizonLedger].filter(
-    (sequence): sequence is number => sequence !== null,
-  );
-  const latestLedger =
-    ledgerSources.length > 0 ? Math.min(...ledgerSources) : null;
+  //
+  // Both reads are pre-dialog network work on a surface that is callable
+  // without a connection grant (an entry naming the active account needs
+  // none), so they claim from the same global, origin-independent budget as
+  // the safety lookups and the display simulation. Without that claim the
+  // per-origin rate limit is the only bound, and it resets per subdomain: a
+  // site rotating origins could drive unbounded traffic at Horizon and the
+  // RPC through this path, which is precisely the amplification the budget
+  // exists to prevent (src/rpc/limiter.ts).
+  //
+  // Unlike the advisory callers, denial here does NOT degrade to a visible
+  // caution. The ledger height is not decoration: it is what bounds the
+  // signature's lifetime, and this module already refuses to sign when the
+  // height cannot be verified. Denial therefore takes the same fail-closed
+  // path as an unreachable endpoint.
+  let latestLedger: number | null = null;
+  const budgeted = takePredialogBudget(connected, 2);
+  if (budgeted) {
+    const [rpcLedger, horizonLedger] = await Promise.all([
+      getLatestLedger(network.sorobanRpcUrl).catch(() => null),
+      getHorizonLatestLedger(network.horizonUrl),
+    ]);
+    const ledgerSources = [rpcLedger, horizonLedger].filter(
+      (sequence): sequence is number => sequence !== null,
+    );
+    latestLedger = ledgerSources.length > 0 ? Math.min(...ledgerSources) : null;
+  }
 
   const bounded = boundAuthExpiration(
     decoded.signatureExpirationLedger ?? 0,
@@ -515,12 +558,17 @@ export async function signAuthEntry(
         'This authorization would stay valid for too long. Ask the site for a shorter expiration.',
       );
     }
+    // Same fail-closed outcome either way; the message distinguishes an
+    // unreachable endpoint from a budget the caller can simply wait out.
     throw externalServiceError(
-      'Could not reach the Stellar RPC to verify the authorization expiry. Try again later.',
+      budgeted
+        ? 'Could not reach the Stellar RPC to verify the authorization expiry. Try again later.'
+        : 'Too many ledger lookups have run recently, so the authorization expiry could not be verified. Try again in a minute.',
     );
   }
   const { validUntil, ledgersRemaining } = bounded;
 
+  recordDialogOpened(origin);
   const approved = await snap.request({
     method: 'snap_dialog',
     params: {
@@ -545,7 +593,7 @@ export async function signAuthEntry(
   // An approved dialog breaks the consecutive-rejection chain.
   clearDialogRejections(origin);
 
-  await connectOrigin(origin);
+  await recordGrantBestEffort(origin);
 
   const signed = await authorizeEntry(
     entry,
@@ -578,6 +626,7 @@ export async function signMessage(
   );
   const signerAddress = keypair.publicKey();
 
+  recordDialogOpened(origin);
   const approved = await snap.request({
     method: 'snap_dialog',
     params: {
@@ -599,7 +648,7 @@ export async function signMessage(
   // An approved dialog breaks the consecutive-rejection chain.
   clearDialogRejections(origin);
 
-  await connectOrigin(origin);
+  await recordGrantBestEffort(origin);
 
   const payload = hash(
     Buffer.concat([
