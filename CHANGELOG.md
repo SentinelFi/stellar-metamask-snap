@@ -87,4 +87,4 @@ Nothing has been published to npm yet, so every change below is still unreleased
 - The connector compiles with NodeNext module resolution and explicit `.js` import extensions, so the shipped ESM loads under native Node, not only through bundlers; both packages publish with npm provenance; `rimraf` is replaced by Node's built-in `fs.rmSync`; the site's build scripts use `cross-env` so they run on Windows shells.
 - New test suites cover the RPC router (dispatch, error laundering, throttle bookkeeping), the Horizon and Stellar RPC clients (response validation, sanitization, degradation), connector provider discovery, response-shape validators, and the Freighter facade; root `yarn test` now runs the snap and connector workspaces, and the router/Horizon/RPC modules carry coverage thresholds.
 
-[unreleased]: https://github.com/jeffnuclear/stelllar-metamask-snap/commits/main
+[unreleased]: https://github.com/SentinelFi/stellar-metamask-snap/commits/main

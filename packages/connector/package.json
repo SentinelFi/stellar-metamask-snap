@@ -2,16 +2,16 @@
   "name": "stellar-soroban-snap-connector",
   "version": "0.1.0",
   "description": "Dapp connector for the Stellar Soroban MetaMask Snap: typed SEP-43 client, Freighter-compatible facade, and Stellar Wallets Kit module.",
-  "homepage": "https://github.com/jeffnuclear/stelllar-metamask-snap#readme",
+  "homepage": "https://github.com/SentinelFi/stellar-metamask-snap#readme",
   "bugs": {
-    "url": "https://github.com/jeffnuclear/stelllar-metamask-snap/issues"
+    "url": "https://github.com/SentinelFi/stellar-metamask-snap/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/jeffnuclear/stelllar-metamask-snap.git"
+    "url": "https://github.com/SentinelFi/stellar-metamask-snap.git"
   },
   "license": "Apache-2.0",
-  "author": "jeffnuclear",
+  "author": "SentinelFi",
   "type": "module",
   "exports": {
     ".": {

@@ -18,7 +18,7 @@ A MetaMask Snap that brings the **Stellar network** — including **Soroban smar
 - Every signature requires an explicit MetaMask confirmation; dapp origins need a user grant before reading your address.
 - Networks: PUBLIC (mainnet), TESTNET (default), FUTURENET — with the network passphrase pinned into every signature.
 
-See the [threat model](https://github.com/jeffnuclear/stelllar-metamask-snap/blob/main/docs/THREAT-MODEL.md) and [SECURITY.md](https://github.com/jeffnuclear/stelllar-metamask-snap/blob/main/SECURITY.md) for reporting.
+See the [threat model](https://github.com/SentinelFi/stellar-metamask-snap/blob/main/docs/THREAT-MODEL.md) and [SECURITY.md](https://github.com/SentinelFi/stellar-metamask-snap/blob/main/SECURITY.md) for reporting.
 
 ### Supported operations
 
@@ -47,4 +47,4 @@ const { signedTxXdr } = await snap.signTransaction(xdr);
 
 ## Repository
 
-Source, documentation, and companion dapp: [github.com/jeffnuclear/stelllar-metamask-snap](https://github.com/jeffnuclear/stelllar-metamask-snap) (Apache-2.0).
+Source, documentation, and companion dapp: [github.com/SentinelFi/stellar-metamask-snap](https://github.com/SentinelFi/stellar-metamask-snap) (Apache-2.0).

@@ -4,9 +4,9 @@
   "private": true,
   "description": "Companion dapp for the Stellar Soroban MetaMask Snap.",
   "license": "Apache-2.0",
-  "author": "jeffnuclear",
+  "author": "SentinelFi",
   "scripts": {
-    "allow-scripts": "yarn workspace stelllar-metamask-snap allow-scripts",
+    "allow-scripts": "yarn workspace stellar-metamask-snap allow-scripts",
     "build": "cross-env GATSBY_TELEMETRY_DISABLED=1 gatsby build",
     "clean": "node -e \"fs.rmSync('public', { recursive: true, force: true })\"",
     "lint": "yarn lint:eslint && yarn lint:misc --check",

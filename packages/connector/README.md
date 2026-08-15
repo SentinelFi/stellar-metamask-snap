@@ -134,4 +134,4 @@ const kit = new StellarWalletsKit({
 
 ## Repository
 
-Source and documentation: [github.com/jeffnuclear/stelllar-metamask-snap](https://github.com/jeffnuclear/stelllar-metamask-snap) (Apache-2.0).
+Source and documentation: [github.com/SentinelFi/stellar-metamask-snap](https://github.com/SentinelFi/stellar-metamask-snap) (Apache-2.0).

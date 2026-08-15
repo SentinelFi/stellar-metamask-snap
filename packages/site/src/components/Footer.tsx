@@ -67,7 +67,7 @@ export const Footer = () => {
       <LegalNotice>
         © 2026 Stellar Soroban Snap — licensed under{' '}
         <a
-          href="https://github.com/jeffnuclear/stelllar-metamask-snap/blob/main/LICENSE"
+          href="https://github.com/SentinelFi/stellar-metamask-snap/blob/main/LICENSE"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -75,7 +75,7 @@ export const Footer = () => {
         </a>{' '}
         —{' '}
         <a
-          href="https://github.com/jeffnuclear/stelllar-metamask-snap"
+          href="https://github.com/SentinelFi/stellar-metamask-snap"
           target="_blank"
           rel="noopener noreferrer"
         >

@@ -1,18 +1,18 @@
 {
-  "name": "stelllar-metamask-snap",
+  "name": "stellar-metamask-snap",
   "version": "0.1.0",
   "private": true,
   "description": "Monorepo for the Stellar Soroban MetaMask Snap: SEP-0005 key derivation, SEP-43 signing API, and companion dapp.",
-  "homepage": "https://github.com/jeffnuclear/stelllar-metamask-snap#readme",
+  "homepage": "https://github.com/SentinelFi/stellar-metamask-snap#readme",
   "bugs": {
-    "url": "https://github.com/jeffnuclear/stelllar-metamask-snap/issues"
+    "url": "https://github.com/SentinelFi/stellar-metamask-snap/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jeffnuclear/stelllar-metamask-snap.git"
+    "url": "git+https://github.com/SentinelFi/stellar-metamask-snap.git"
   },
   "license": "Apache-2.0",
-  "author": "jeffnuclear",
+  "author": "SentinelFi",
   "workspaces": [
     "packages/*"
   ],

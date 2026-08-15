@@ -4,10 +4,10 @@
   "description": "MetaMask Snap for the Stellar network with Soroban smart contract support.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jeffnuclear/stelllar-metamask-snap.git"
+    "url": "https://github.com/SentinelFi/stellar-metamask-snap.git"
   },
   "license": "Apache-2.0",
-  "author": "jeffnuclear",
+  "author": "SentinelFi",
   "main": "./dist/bundle.js",
   "files": [
     "dist/",
@@ -15,7 +15,7 @@
     "snap.manifest.json"
   ],
   "scripts": {
-    "allow-scripts": "yarn workspace stelllar-metamask-snap allow-scripts",
+    "allow-scripts": "yarn workspace stellar-metamask-snap allow-scripts",
     "build": "mm-snap build",
     "build:clean": "yarn clean && yarn build",
     "clean": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\"",

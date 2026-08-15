@@ -69,7 +69,7 @@ For the [Snaps Directory Information form](https://docs.metamask.io/snaps/how-to
 - **Category:** Interoperability
 - **One-line description:** Stellar and Soroban in MetaMask — SEP-0005 accounts, transaction review with in-snap simulation, and the standard Stellar wallet API for dapps.
 - **Longer description:** derive from the snap README (SEP-5 derivation compatible with Freighter/Ledger, SEP-43 dapp API, decoded confirmation dialogs with Soroban simulation, safety warnings, token tracking, home page).
-- **Repository:** https://github.com/jeffnuclear/stelllar-metamask-snap
+- **Repository:** https://github.com/SentinelFi/stellar-metamask-snap
 - **Audit report:** attach when available (required — entropy permission).
 - **Support contact:** GitHub issues + the SECURITY.md private-reporting channel.
 - **To produce at submission time:** screenshots (install prompt, transaction review dialog incl. Soroban simulation, home page) and a short demo video (connect → fund → sign payment → sign Soroban invoke).

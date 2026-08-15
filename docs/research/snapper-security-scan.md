@@ -40,7 +40,7 @@ Building from source on Node ≥ 18 (we use 22) sidesteps both. The bin entry is
 ```bash
 git clone https://github.com/sayfer-io/Snapper.git
 cd Snapper && npm install && npm run build
-node ./dist/main.js --path /abs/path/to/stelllar-metamask-snaps/packages/snap --verbose
+node ./dist/main.js --path /abs/path/to/stellar-metamask-snaps/packages/snap --verbose
 ```
 
 This is exactly what [.github/workflows/snapper.yml](../../.github/workflows/snapper.yml) automates (manual `workflow_dispatch`), so no local setup is needed — run it from the Actions tab and download the `snapper-report` artifact.
