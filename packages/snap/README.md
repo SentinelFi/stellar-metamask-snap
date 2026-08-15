@@ -20,6 +20,19 @@ A MetaMask Snap that brings the **Stellar network** — including **Soroban smar
 
 See the [threat model](https://github.com/jeffnuclear/stelllar-metamask-snap/blob/main/docs/THREAT-MODEL.md) and [SECURITY.md](https://github.com/jeffnuclear/stelllar-metamask-snap/blob/main/SECURITY.md) for reporting.
 
+### Supported operations
+
+The snap **refuses to sign what it cannot show you in full**. Rather than fall back to a warning over raw XDR, which is not a review anyone can perform, `signTransaction` rejects the request before any dialog opens when a transaction contains an operation type it has no renderer for. The same rule applies to undecodable host functions, contract-call arguments too large or deeply nested to display, embedded authorization entries it cannot render, and Soroban footprints that are missing or cannot be shown in full.
+
+That makes the supported set a hard compatibility boundary, so it is stated here rather than discovered at signing time:
+
+| Supported today                                                                                                                            | Not yet supported (signing is refused)                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `payment`, `createAccount`, `changeTrust`, `pathPaymentStrictSend`, `pathPaymentStrictReceive`, `manageData`, `setOptions`, `accountMerge` | `manageBuyOffer`, `manageSellOffer`, `createPassiveSellOffer`, `liquidityPoolDeposit`, `liquidityPoolWithdraw`                                                                                                      |
+| `invokeHostFunction`, `extendFootprintTtl`, `restoreFootprint`                                                                             | `createClaimableBalance`, `claimClaimableBalance`, `clawback`, `clawbackClaimableBalance`, `setTrustLineFlags`, `bumpSequence`, `beginSponsoringFutureReserves`, `endSponsoringFutureReserves`, `revokeSponsorship` |
+
+In practice this means payments, trustlines, account setup and recovery, and the full Soroban surface work today, while DEX, AMM, claimable-balance, and sponsorship flows do not. A refused request returns SEP-43 error `-3` and names the offending operation types, so an integrator can detect it precisely. Renderers for the unsupported set are planned; the fail-closed rule itself is not up for relaxation.
+
 ## For dapp developers
 
 Use the companion package [`stellar-soroban-snap-connector`](https://www.npmjs.com/package/stellar-soroban-snap-connector): a typed SEP-43 client, a drop-in `@stellar/freighter-api` facade, and a Stellar Wallets Kit module.

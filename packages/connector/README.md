@@ -49,6 +49,16 @@ await snap.signTransaction(xdr, { address: accounts[1].address });
 
 Requesting an address the wallet does not hold returns `-3`.
 
+### Which transactions the wallet will sign
+
+The snap decodes every transaction from its XDR and refuses to sign anything it cannot render in full, rather than showing a warning over raw XDR. A transaction containing an operation type it has no renderer for is rejected with `-3` **before any dialog is shown**, and the message names the offending types.
+
+Supported today: `payment`, `createAccount`, `changeTrust`, `pathPaymentStrictSend`, `pathPaymentStrictReceive`, `manageData`, `setOptions`, `accountMerge`, `invokeHostFunction`, `extendFootprintTtl`, `restoreFootprint`.
+
+Not yet supported, so signing is refused: the DEX operations (`manageBuyOffer`, `manageSellOffer`, `createPassiveSellOffer`), the liquidity-pool operations, the claimable-balance operations, `clawback` and `clawbackClaimableBalance`, `setTrustLineFlags`, `bumpSequence`, and the sponsorship operations.
+
+The same fail-closed rule rejects undecodable host functions, contract-call arguments too large or deeply nested to display, embedded authorization entries that cannot be rendered, and Soroban transactions whose footprint is missing (unprepared) or too large to show. If you build Soroban envelopes yourself, simulate or prepare them before requesting a signature so they carry a footprint.
+
 ### Reading balances
 
 `getBalances()` returns the account's classic Horizon balances plus any Soroban tokens the user tracks, in one array. Branch on `type`, never on the `asset` string:
@@ -64,6 +74,30 @@ const tokens = balances.filter((line) => line.type === 'soroban');
 `asset` is a display string: `XLM` for the native asset, `CODE:ISSUER` for a classic asset, and `SYMBOL:CONTRACT_ID` for a tracked token. The last two are the same shape, and a token's symbol is reported by its contract, so a contract the user was persuaded to track can call itself `USDC`. Code that splits `asset` on `:` and shows the first field will display exactly that. `type` and `contractId` are what make the distinction available without parsing.
 
 `tokensUnavailable: true` means the wallet's global token-read budget was exhausted and the token rows are missing, not that the account holds none of them. The classic balances are complete either way.
+
+### Signing with `submit`, and recovering from an ambiguous failure
+
+`signTransaction(xdr, { submit: true })` signs and broadcasts in one approval. Broadcasting can fail _after_ the user has approved and the envelope has been signed, and one of those failures is genuinely ambiguous: the wallet aborts the Horizon submit at 10 seconds, but Horizon's synchronous endpoint waits for ledger close, so under congestion a transaction that actually lands can still surface as an error.
+
+**Do not blind-retry that error.** The signed envelope is preserved on it so you can poll instead:
+
+```ts
+try {
+  const { hash } = await snap.signTransaction(xdr, { submit: true });
+  return hash;
+} catch (error) {
+  if (error instanceof StellarSnapError && error.data?.signedTxXdr) {
+    // The user DID sign, and the transaction may already be on the ledger.
+    // Compute its hash from the returned envelope and poll Horizon before
+    // doing anything else. Re-signing or re-submitting blindly risks a
+    // duplicate.
+    return pollForTransaction(error.data.signedTxXdr);
+  }
+  throw error;
+}
+```
+
+On the Freighter facade the same data is at `error.recovery`, deliberately _not_ merged into the result fields: the common `const { signedTxXdr } = await api.signTransaction(...); if (signedTxXdr) submit(...)` pattern must not silently submit an envelope from a call the dapp believes failed. Reaching into `error.recovery` is an opt-in.
 
 ## 2. Freighter-compatible facade
 

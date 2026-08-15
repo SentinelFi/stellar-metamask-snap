@@ -643,8 +643,16 @@ export async function connectOrigin(origin: string): Promise<void> {
     };
     // Enforce the cap at the write that causes growth, not only at the parse
     // boundary, so the store never holds more than the cap even transiently.
-    // `normalizeOrigins` keeps the most recently connected, and the grant just
-    // written carries the newest timestamp, so it is never the one dropped.
+    //
+    // The grant just written is never the one `normalizeOrigins` drops, but
+    // not because it is the newest: an *upgraded* grant deliberately keeps its
+    // original `connectedAt` (above), which may well be the oldest in the
+    // registry. The reason is that only a *new* grant can push the count over
+    // the cap, and pruning runs only when it is over. An upgrade rewrites an
+    // existing key, leaving the count unchanged, so `normalizeOrigins` returns
+    // the map untouched on that path. State the mechanism rather than the
+    // timestamp: a future change that prunes unconditionally would silently
+    // start dropping the grant it was asked to record.
     await saveState({ ...state, origins: normalizeOrigins(origins) });
   });
 }

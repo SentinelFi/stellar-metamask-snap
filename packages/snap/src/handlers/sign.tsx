@@ -10,7 +10,11 @@ import {
 import { Buffer } from 'buffer';
 
 import { assertConnected } from './account';
-import { resolveSigningKeypair, wipeKeypair } from '../keys';
+import {
+  deriveSigningKeypair,
+  resolveSigningAccount,
+  wipeKeypair,
+} from '../keys';
 import {
   externalServiceError,
   invalidRequest,
@@ -192,11 +196,14 @@ export async function signTransaction(
 
   // SEP-43 `address` option: resolve to an owned, revealed account (or the
   // active account when absent); a non-owned address is rejected.
+  //
+  // Address only, not a keypair. The signing key is derived after approval,
+  // below, so no account secret is live during the simulation, the Horizon
+  // lookups, or the dialog the user may leave open for the whole 60s
+  // `maxRequestTime` window. See `resolveSigningAccount` in ../keys.
   await assertAccountSelectionAllowed(origin, request.address);
-  const { keypair, index: accountIndex } = await resolveSigningKeypair(
-    request.address,
-  );
-  const signerAddress = keypair.publicKey();
+  const { index: accountIndex, address: signerAddress } =
+    await resolveSigningAccount(request.address);
 
   // Resolve the transaction that carries the operations: for a fee bump that
   // is the inner transaction, so a fee-bumped Soroban tx is still recognised
@@ -380,9 +387,15 @@ export async function signTransaction(
   // `recordGrantBestEffort`.
   await recordGrantBestEffort(origin);
 
+  // Derived here, not before the dialog: the account secret exists only for
+  // the signature itself. The re-derivation is checked against the address the
+  // dialog displayed, so an approval can only ever be spent by the key the
+  // user was shown.
+  //
   // Wiped immediately: this is the keypair's last use, and everything below
   // works from the signed envelope. The submission path in particular is a
   // network round trip that the secret has no reason to outlive.
+  const keypair = await deriveSigningKeypair(accountIndex, signerAddress);
   try {
     tx.sign(keypair);
   } finally {
@@ -542,16 +555,17 @@ export async function signAuthEntry(
   // entry naming any account but the active one needs a grant, exactly like
   // an explicit `address` option.
   await assertAccountSelectionAllowed(origin, decoded.address);
-  let signer: Awaited<ReturnType<typeof resolveSigningKeypair>>;
+  // Address only; the signing key is derived after approval, below, so no
+  // account secret is live across the two ledger reads or the dialog.
+  let signer: Awaited<ReturnType<typeof resolveSigningAccount>>;
   try {
-    signer = await resolveSigningKeypair(decoded.address);
+    signer = await resolveSigningAccount(decoded.address);
   } catch {
     throw invalidRequest(
       'The authorization entry names a different account than this wallet.',
     );
   }
-  const { keypair, index: accountIndex } = signer;
-  const signerAddress = keypair.publicKey();
+  const { index: accountIndex, address: signerAddress } = signer;
 
   // Bound the signature lifetime against the current ledger: reject
   // an already-expired entry and cap how far in the future it may reach, so
@@ -679,7 +693,9 @@ export async function signAuthEntry(
 
   await recordGrantBestEffort(origin);
 
+  // Derived only now, checked against the address the dialog displayed.
   // `authorizeEntry` signs internally, so the wipe waits for it to settle.
+  const keypair = await deriveSigningKeypair(accountIndex, signerAddress);
   let signed;
   try {
     signed = await authorizeEntry(
@@ -709,12 +725,21 @@ export async function signMessage(
   params: unknown,
 ): Promise<{ signedMessage: string; signerAddress: string }> {
   const request = validate(params, SignMessageParams);
+  // A SEP-53 signature is not bound to a network: the payload is
+  // `SHA-256("Stellar Signed Message:\n" + message)` and carries no network
+  // ID, so there is nothing here to mismatch and no `networkPassphrase` to
+  // require. The network is read purely so the dialog can state it. That is
+  // worth the extra state read: this signature proves control of a key, and
+  // that proof is just as usable by a mainnet-facing verifier whatever network
+  // the wallet happens to be on. Every other signing dialog in this snap
+  // carries a network banner, and a user who has learned to look for it as the
+  // "this matters" signal must not find it missing here.
+  const network = await getActiveNetwork();
 
   await assertAccountSelectionAllowed(origin, request.address);
-  const { keypair, index: accountIndex } = await resolveSigningKeypair(
-    request.address,
-  );
-  const signerAddress = keypair.publicKey();
+  // Address only; the signing key is derived after approval, below.
+  const { index: accountIndex, address: signerAddress } =
+    await resolveSigningAccount(request.address);
 
   recordDialogOpened(origin);
   const approved = await snap.request({
@@ -724,6 +749,7 @@ export async function signMessage(
       content: (
         <SignMessageDialog
           origin={origin}
+          network={network.name}
           address={signerAddress}
           accountIndex={accountIndex}
           message={request.message}
@@ -746,6 +772,8 @@ export async function signMessage(
       Buffer.from(request.message, 'utf8'),
     ]),
   );
+  // Derived only now, checked against the address the dialog displayed.
+  const keypair = await deriveSigningKeypair(accountIndex, signerAddress);
   let signature;
   try {
     signature = keypair.sign(payload);

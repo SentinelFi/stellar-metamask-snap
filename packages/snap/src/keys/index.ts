@@ -184,8 +184,22 @@ async function bindToEntropySource(node: SLIP10Node): Promise<void> {
  * to another. So this refuses, while key derivation and cold signing (which
  * name no account and always show a dialog) keep working.
  *
- * Deriving the active account, rather than only fetching the parent node, is
- * what keeps this from costing an extra `snap_getBip32Entropy`: it fills
+ * Fetching the parent node explicitly, rather than calling
+ * {@link getWalletAddress}, is what makes the retry real. That helper reads
+ * {@link addressCache} first, and a warm cache short-circuits the fetch
+ * entirely: no fetch means no {@link bindToEntropySource}, which means no
+ * reconciliation, which means `bindingVerified` can never become true again.
+ * And the cache is necessarily warm on exactly the path that matters, because
+ * the *failing* call repopulates it: the rejection arm clears the cache, then
+ * derivation continues (by design) and writes the address straight back. So
+ * routing through the cache turned one transient state-write failure into a
+ * refusal that lasted for the rest of the execution context, for every caller
+ * of this function. Regression test:
+ * `src/handlers/access-guards.test.tsx`, "recovers once the store can be
+ * written again".
+ *
+ * Deriving the active account afterwards, rather than only fetching the node,
+ * is what keeps this to a single `snap_getBip32Entropy`: it fills
  * {@link addressCache}, so the address lookup every caller does immediately
  * afterwards is a cache hit rather than a second crossing of the sandbox
  * boundary with the parent key material. The flag then short-circuits every
@@ -195,7 +209,9 @@ async function bindToEntropySource(node: SLIP10Node): Promise<void> {
  */
 export async function ensureEntropyBinding(): Promise<void> {
   if (!bindingVerified) {
-    await getWalletAddress();
+    const { activeAccount } = await getState();
+    const node = await getAccountParentNode();
+    addressCache.set(activeAccount, await deriveAddress(node, activeAccount));
   }
   if (!bindingVerified) {
     throw externalServiceError(
@@ -250,6 +266,39 @@ async function deriveFromNode(
     return Keypair.fromRawEd25519Seed(seed);
   } finally {
     seed.fill(0);
+  }
+}
+
+/**
+ * Derives an account's public address, wiping the keypair that had to be
+ * materialized to read it.
+ *
+ * Every address lookup in this module goes through key derivation, because
+ * that is the only way to learn a SEP-0005 address. The keypair it produces is
+ * then immediately garbage, but garbage that holds an account secret: without
+ * the wipe, `getOwnedAccounts` leaves one unwiped account secret per revealed
+ * account behind on every home-page render and on every `fund`, `getBalances`,
+ * and `getAccounts` call, and {@link findAccountIndexByAddress} leaves up to
+ * {@link MAX_ACCOUNT_INDEX} of them behind on a single unmatched search. That
+ * is the great majority of the account secrets this snap ever materializes,
+ * and none of it is needed for longer than the `publicKey()` call below.
+ *
+ * Reading the public key before the wipe is required, not incidental: the seed
+ * and the secret key are the same buffer, so a wiped keypair cannot sign, but
+ * the public key is computed in the constructor and survives (see
+ * {@link wipeKeypair}). Mitigation, not a guarantee, in the sense
+ * {@link deriveFromNode} sets out.
+ *
+ * @param node - The SEP-0005 parent node.
+ * @param index - The SEP-0005 account index.
+ * @returns The `G...` address.
+ */
+async function deriveAddress(node: SLIP10Node, index: number): Promise<string> {
+  const keypair = await deriveFromNode(node, index);
+  try {
+    return keypair.publicKey();
+  } finally {
+    wipeKeypair(keypair);
   }
 }
 
@@ -356,9 +405,7 @@ async function resolveAddresses(
       if (cached !== undefined) {
         return { index, address: cached };
       }
-      const address = (
-        await deriveFromNode(node ?? (await getNode()), index)
-      ).publicKey();
+      const address = await deriveAddress(node ?? (await getNode()), index);
       addressCache.set(index, address);
       return { index, address };
     }),
@@ -389,7 +436,7 @@ export async function findAccountIndexByAddress(
   for (let index = 0; index < MAX_ACCOUNT_INDEX; index += 1) {
     let candidate = addressCache.get(index);
     if (candidate === undefined) {
-      candidate = (await deriveFromNode(await getNode(), index)).publicKey();
+      candidate = await deriveAddress(await getNode(), index);
       addressCache.set(index, candidate);
     }
     if (candidate === address) {
@@ -410,9 +457,9 @@ export async function getAddressForIndex(index: number): Promise<string> {
   if (cached !== undefined) {
     return cached;
   }
-  const keypair = await deriveKeypair(index);
-  addressCache.set(index, keypair.publicKey());
-  return keypair.publicKey();
+  const address = await deriveAddress(await getAccountParentNode(), index);
+  addressCache.set(index, address);
+  return address;
 }
 
 /**
@@ -443,47 +490,98 @@ export async function getOwnedAccounts(
 }
 
 /**
- * Resolves the SEP-43 `address` option to an owned account's keypair
- * (Freighter parity: "switch to that account if available"), staying
+ * Resolves the SEP-43 `address` option to an owned account's *index and
+ * address* (Freighter parity: "switch to that account if available"), staying
  * fail-closed: only indices the user has revealed (`state.accounts`) are
  * ever derived and compared, so an origin cannot probe or sign for an
  * arbitrary never-revealed index. No selection means the active account.
  *
+ * Deliberately does not return a keypair. This is the half of signer
+ * resolution that runs *before* the confirmation dialog, and everything a
+ * dialog needs is here: the index and the address are what it renders. The
+ * signing key is derived afterwards by {@link deriveSigningKeypair}, once the
+ * user has approved.
+ *
+ * That split is the point. Materializing the keypair here left an account
+ * secret live in the snap heap for the whole pre-dialog phase (a Soroban
+ * simulation, up to seven Horizon lookups, or two ledger reads) *and* for
+ * however long the user spent reading the dialog, which the manifest bounds
+ * only at `maxRequestTime`, 60 seconds. Deriving after approval narrows that
+ * window to the signature itself. It is the same reasoning {@link wipeKeypair}
+ * already applies to the tail of the request, applied to the much longer head
+ * of it, and the same caveat holds: this narrows the window, it does not close
+ * it.
+ *
  * @param requestedAddress - The `address` option, when the dapp sent one.
- * @returns The signing keypair and its account index.
+ * @returns The signing account's index and address.
  * @throws An invalid-request error when the address is not held.
  */
-export async function resolveSigningKeypair(
+export async function resolveSigningAccount(
   requestedAddress?: string,
-): Promise<{ keypair: Keypair; index: number }> {
+): Promise<{ index: number; address: string }> {
   const state = await getState();
   if (requestedAddress === undefined) {
     return {
-      keypair: await deriveKeypair(state.activeAccount),
       index: state.activeAccount,
+      address: await getAddressForIndex(state.activeAccount),
     };
   }
 
   // Resolve through the address index, so an address the wallet does not hold
-  // is rejected without deriving anything. Repeating an unowned address is
-  // then a map lookup rather than a full sweep of every revealed account.
-  // One shared parent-node getter covers both the cache fill and the final
-  // derivation, so the parent key material crosses the sandbox boundary at
-  // most once per request.
-  const getNode = lazyAccountParentNode();
-  const owned = await resolveAddresses(state.accounts, getNode);
+  // is rejected without deriving a signing key at all. Repeating an unowned
+  // address is then a map lookup rather than a full sweep of every revealed
+  // account.
+  const owned = await resolveAddresses(state.accounts);
   const match = owned.find((entry) => entry.address === requestedAddress);
   if (match === undefined) {
     throw invalidRequest('Unknown address: this wallet does not hold it.');
   }
-  const { index } = match;
+  return match;
+}
 
-  const keypair = await deriveFromNode(await getNode(), index);
-  // The cache is derived state; never sign on it without confirming the key
-  // it pointed at really is the address that was asked for.
-  if (keypair.publicKey() !== requestedAddress) {
+/**
+ * Derives the signing keypair for an already-resolved account, refusing when
+ * it does not match the address that resolution named.
+ *
+ * The check is not redundant with {@link resolveSigningAccount}. That function
+ * may answer from {@link addressCache}, which is derived state, and its result
+ * is what the user saw in the dialog they approved. So this re-derives and
+ * compares: a signature is only ever produced by the key that really does
+ * belong to the address that was displayed. A mismatch drops the cache, since
+ * a cache that mis-answered once cannot be trusted for anything else either.
+ *
+ * This fetches the parent node a second time, rather than sharing the one
+ * {@link resolveSigningAccount} used. That is deliberate: sharing it would
+ * mean holding the `m/44'/148'` subtree key across the dialog, which is
+ * strictly more key material for strictly longer than the single account
+ * keypair this split exists to avoid holding there. One extra
+ * `snap_getBip32Entropy` on an approved signature is the right trade.
+ *
+ * @param index - The account index resolution returned.
+ * @param expectedAddress - The address resolution returned, and the dialog
+ * showed.
+ * @returns The signing keypair. Callers must {@link wipeKeypair} it after
+ * their final signature.
+ * @throws An invalid-request error when the derived key is not that address.
+ */
+export async function deriveSigningKeypair(
+  index: number,
+  expectedAddress: string,
+): Promise<Keypair> {
+  const keypair = await deriveKeypair(index);
+  if (keypair.publicKey() !== expectedAddress) {
+    wipeKeypair(keypair);
     addressCache.clear();
     throw invalidRequest('Unknown address: this wallet does not hold it.');
   }
-  return { keypair, index };
+  return keypair;
 }
+
+/*
+ * There is deliberately no `resolveSigningKeypair` composing the two functions
+ * above. Every production caller has a confirmation dialog between the halves,
+ * which is the whole reason they are separate, so a combined helper would have
+ * no call site and would ship an uncalled export inside a shasum-sealed
+ * signing bundle. The tests compose it themselves where they need the
+ * end-to-end path.
+ */

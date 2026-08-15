@@ -3,11 +3,32 @@ import { SLIP10Node } from '@metamask/key-tree';
 import { Keypair } from '@stellar/stellar-sdk';
 
 import {
+  deriveSigningKeypair,
   getOwnedAccounts,
   resetAddressCache,
-  resolveSigningKeypair,
+  resolveSigningAccount,
   wipeKeypair,
 } from '.';
+
+/**
+ * Resolves an address straight to a signing keypair, the way the signing
+ * handlers do either side of their confirmation dialog.
+ *
+ * Composed here rather than exported from the module under test. Production
+ * splits these two halves precisely so that no account secret is live while a
+ * dialog is open, which leaves nothing calling the combined form; exporting it
+ * anyway would ship an uncalled function inside a shasum-sealed signing
+ * bundle. The tests below still want the end-to-end path, so they build it.
+ *
+ * @param requestedAddress - The SEP-43 `address` option, when one is named.
+ * @returns The signing keypair and its account index.
+ */
+async function resolveSigningKeypair(
+  requestedAddress?: string,
+): Promise<{ keypair: Keypair; index: number }> {
+  const { index, address } = await resolveSigningAccount(requestedAddress);
+  return { keypair: await deriveSigningKeypair(index, address), index };
+}
 
 /** Official SEP-0005 test vector 1 (no passphrase). */
 const SEP5_MNEMONIC =

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { SLIP10Node } from '@metamask/key-tree';
-import type { Transaction, xdr } from '@stellar/stellar-sdk';
+import type { Keypair, Transaction, xdr } from '@stellar/stellar-sdk';
 import {
   nativeToScVal,
   Networks,
@@ -18,9 +18,10 @@ import {
 import { getAccounts, setActiveAccount } from './accounts';
 import { setNetwork } from './network';
 import {
+  deriveSigningKeypair,
   getOwnedAccounts,
   resetAddressCache,
-  resolveSigningKeypair,
+  resolveSigningAccount,
 } from '../keys';
 import {
   MAX_TOKEN_READ_LOOKUPS,
@@ -68,6 +69,10 @@ let stored: unknown;
 let dialogs: unknown[];
 let dialogResponse: boolean;
 let fetchCalls: string[];
+/** When set, `snap_manageState` writes fail while reads keep working. */
+let writesFail: boolean;
+/** How many times the parent node was fetched, per {@link entropyFetches}. */
+let entropyFetches: number;
 
 /**
  * Builds a version-2 state object.
@@ -175,6 +180,26 @@ type RequestArgs = {
   params: { operation?: string; newState?: unknown };
 };
 
+/**
+ * Resolves an address straight to a signing keypair, the way the signing
+ * handlers do either side of their confirmation dialog.
+ *
+ * Composed here rather than exported from `../keys`: production splits the two
+ * halves so that no account secret is live while a dialog is open, which
+ * leaves nothing calling the combined form, and exporting it anyway would ship
+ * an uncalled function inside a shasum-sealed signing bundle. The bounded
+ * resolution tests below still want the end-to-end path.
+ *
+ * @param requestedAddress - The SEP-43 `address` option, when one is named.
+ * @returns The signing keypair and its account index.
+ */
+async function resolveSigningKeypair(
+  requestedAddress?: string,
+): Promise<{ keypair: Keypair; index: number }> {
+  const { index, address } = await resolveSigningAccount(requestedAddress);
+  return { keypair: await deriveSigningKeypair(index, address), index };
+}
+
 /** A persisted state object as it was handed to `snap_manageState`. */
 type StateWrite = {
   origins: Record<string, unknown>;
@@ -214,20 +239,20 @@ function captureStateWrites(): StateWrite[] {
  * Models a store the platform will not persist to. That is the condition under
  * which the entropy binding cannot be confirmed, and the snap has to choose
  * between honouring grants it can no longer attribute to a phrase and refusing
- * them. Declared at module scope for the same reason as
- * {@link captureStateWrites}: it wraps the harness conditionally.
+ * them.
+ *
+ * A flag the harness reads, rather than a wrapper around `snap.request`,
+ * because {@link restoreStateWrites} has to be able to undo it: a store that
+ * fails once and then recovers is the case the recovery test below turns on,
+ * and an unwrappable wrapper cannot express it.
  */
 function failStateWrites(): void {
-  const host = globalThis as unknown as {
-    snap: { request: (args: RequestArgs) => Promise<unknown> };
-  };
-  const real = host.snap.request;
-  host.snap.request = async (args: RequestArgs) => {
-    if (args.method === 'snap_manageState' && args.params.operation !== 'get') {
-      throw new Error('state unavailable');
-    }
-    return real(args);
-  };
+  writesFail = true;
+}
+
+/** Lets state writes succeed again, modelling a store that recovers. */
+function restoreStateWrites(): void {
+  writesFail = false;
 }
 
 describe('connection gate and account resolution', () => {
@@ -240,6 +265,8 @@ describe('connection gate and account resolution', () => {
     dialogs = [];
     dialogResponse = true;
     fetchCalls = [];
+    writesFail = false;
+    entropyFetches = 0;
     // The address cache, the entropy binding, the balance cache, the request
     // limits and the dialog throttle are all module state that outlives a
     // test otherwise.
@@ -259,9 +286,13 @@ describe('connection gate and account resolution', () => {
             if (args.params.operation === 'get') {
               return stored;
             }
+            if (writesFail) {
+              throw new Error('state unavailable');
+            }
             stored = args.params.newState;
             return null;
           case 'snap_getBip32Entropy':
+            entropyFetches += 1;
             return entropy.toJSON();
           case 'snap_dialog':
             dialogs.push(args.params.content);
@@ -479,6 +510,47 @@ describe('connection gate and account resolution', () => {
         'could not confirm which secret recovery phrase',
       );
       expect(dialogs).toStrictEqual([]);
+    });
+
+    it('recovers once the store can be written again', async () => {
+      /*
+       * The counterpart to the test above, and the one that was missing.
+       * Refusing while the binding is unconfirmed is only correct if the
+       * refusal ends when the condition does.
+       *
+       * It did not. `bindToEntropySource` clears its latch on failure so that
+       * "the next key use retries it", but `ensureEntropyBinding` reached the
+       * retry through `getWalletAddress()`, which reads the address cache
+       * first. And the cache is warm exactly here: the failing call clears it
+       * and then, by design, carries on deriving and writes the address
+       * straight back. So every later call was a cache hit, the parent node
+       * was never fetched again, the reconciliation never re-ran, and one
+       * transient write failure refused every connected-origin method for the
+       * rest of the execution context.
+       *
+       * The entropy-fetch count is asserted, not just the outcome: it is what
+       * distinguishes a real retry from a lucky pass, and it is what would
+       * catch a future change routing this back through the cache.
+       */
+      stored = stateV2({ origins: CONNECTED });
+      failStateWrites();
+
+      await expect(getAddress(ORIGIN)).rejects.toThrow(
+        'could not confirm which secret recovery phrase',
+      );
+      const afterRefusal = entropyFetches;
+
+      restoreStateWrites();
+
+      expect(await getAddress(ORIGIN)).toStrictEqual({ address: ADDRESS_0 });
+      // The retry has to cross the sandbox boundary again; that fetch is the
+      // only thing that runs the reconciliation.
+      expect(entropyFetches).toBeGreaterThan(afterRefusal);
+      // And the binding it established is now persisted, so the store can be
+      // attributed to the phrase being derived from.
+      expect(
+        (stored as { entropyFingerprint?: string }).entropyFingerprint,
+      ).toStrictEqual(expect.any(String));
     });
 
     it('keeps honouring a grant once the binding is confirmed', async () => {

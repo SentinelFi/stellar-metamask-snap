@@ -342,6 +342,8 @@ export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
 
 export type SignMessageDialogProps = {
   origin: string;
+  /** The active network, stated for parity with the other signing dialogs. */
+  network: NetworkName;
   address: string;
   /** The SEP-0005 index of the signing account. */
   accountIndex: number;
@@ -353,8 +355,19 @@ export type SignMessageDialogProps = {
 /**
  * SEP-53 message signing confirmation.
  *
- * @param props - Origin, signing address, and the message.
+ * The network banner needs a word, because a SEP-53 signature is the one
+ * signature this snap produces that is *not* bound to a network: the payload
+ * is `SHA-256("Stellar Signed Message:\n" + message)` and carries no network
+ * ID. That is exactly why the banner belongs here rather than being omitted as
+ * inapplicable. The signature proves control of an account, and a
+ * mainnet-facing verifier will accept that proof whatever network the wallet
+ * was set to when it was produced. Since the other three signing dialogs all
+ * state the network, its absence here read as "network is not a factor", which
+ * is true of the bytes and misleading about the consequences.
+ *
+ * @param props - Origin, network, signing address, and the message.
  * @param props.origin - The requesting dapp origin.
+ * @param props.network - The active network name.
  * @param props.address - The signing account's Stellar address.
  * @param props.accountIndex - The signing account's SEP-0005 index.
  * @param props.message - The message to sign.
@@ -364,6 +377,7 @@ export type SignMessageDialogProps = {
  */
 export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
   origin,
+  network,
   address,
   accountIndex,
   message,
@@ -377,6 +391,21 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
       be submitted as a transaction.
     </Text>
     {originCautionBanner(origin)}
+    {network === 'PUBLIC' ? (
+      <Banner title="Mainnet" severity="warning">
+        <Text>
+          This wallet is on the live Stellar network. A signed message is not
+          tied to any network, so this signature proves control of a mainnet
+          account.
+        </Text>
+      </Banner>
+    ) : (
+      <Banner title={network} severity="info">
+        <Text>
+          {`This wallet is on ${network}. A signed message is not tied to any network, so this signature proves control of the account shown below wherever it is presented.`}
+        </Text>
+      </Banner>
+    )}
     {hasHiddenCharacters ? (
       <Banner title="Hidden characters" severity="warning">
         <Text>
