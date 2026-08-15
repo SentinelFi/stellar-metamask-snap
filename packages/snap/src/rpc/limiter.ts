@@ -44,10 +44,16 @@ export const MAX_INFLIGHT_GLOBAL = 32;
  * dapp. Two properties make those slots cheap to hold. MetaMask serializes
  * snap dialogs, so a request that reaches `snap_dialog` while another dialog
  * is open stays in flight, queued, without the caller doing anything further;
- * and the manifest's `maxRequestTime` (the platform maximum) lets an
- * unresolved request occupy its slot for minutes. `signMessage` reaches its
- * dialog after only a key derivation, which makes it the cheapest way to sit
- * on a slot.
+ * and the manifest's `maxRequestTime` lets an unresolved request occupy its
+ * slot until it expires. `signMessage` reaches its dialog after only a key
+ * derivation, which makes it the cheapest way to sit on a slot.
+ *
+ * That window is a manifest choice, not a given. It was 120 s (already below
+ * the platform maximum of 180 s) and is now 60 s. The longest legitimate
+ * request is a signing call whose latency is dominated by the user reading a
+ * dialog, plus at most one 10-second simulation and a set of parallel 5-second
+ * Horizon lookups, so 60 s still leaves substantial headroom while halving how
+ * long an unanswered request can hold one of the slots this module rations.
  *
  * Splitting the ceiling by connection grant bounds that without needing to
  * tell rotated subdomains apart, because it does not try to: the reserved

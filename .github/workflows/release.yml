@@ -76,8 +76,19 @@ jobs:
           BUNDLE=packages/snap/dist/bundle.js
           ! grep -qE 'Math\.random|Math\[.random' "$BUNDLE"
 
-      - name: Audit runtime dependencies (all workspaces)
+      - name: Audit direct runtime dependencies (all workspaces)
         run: yarn npm audit --all --environment production
+
+      # The snap's transitive production graph, gated against the reviewed
+      # allowlist, including re-verification that every package the allowlist
+      # calls absent really is absent from the bundle about to be published.
+      # See the fuller rationale on the same step in ci.yml.
+      - name: Gate transitive production advisories against the allowlist
+        run: |
+          ( cd packages/snap && \
+            yarn npm audit --environment production --recursive --json ) \
+            > "$RUNNER_TEMP/audit.json" || true
+          node scripts/check-known-advisories.mjs "$RUNNER_TEMP/audit.json"
 
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build

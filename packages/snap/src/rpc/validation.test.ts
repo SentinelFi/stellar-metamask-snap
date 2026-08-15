@@ -3,6 +3,7 @@ import { SnapError } from '@metamask/snaps-sdk';
 
 import {
   AddTokenParams,
+  MAX_ADDRESS_LENGTH,
   MAX_AUTH_ENTRY_LENGTH,
   MAX_MESSAGE_LENGTH,
   MAX_NETWORK_PASSPHRASE_LENGTH,
@@ -129,6 +130,39 @@ describe('payload size bounds', () => {
     expect(
       validate({ message: 'm'.repeat(MAX_MESSAGE_LENGTH) }, SignMessageParams),
     ).toBeDefined();
+  });
+
+  it('bounds address-shaped fields structurally, before the strkey decoder', () => {
+    // Regression: `StellarAddress` and `SorobanContractAddress` were
+    // `refine(string(), ...)` with no `size()`. The refinement rejected an
+    // oversized value, so the bound described what survived validation, but
+    // not what validation processed: the whole string was materialized and
+    // handed to `StrKey` first. Every other dapp-controlled string in this
+    // module carries an explicit cap, and these are reachable on six methods.
+    const overlong = `G${'A'.repeat(MAX_ADDRESS_LENGTH)}`;
+    expect(overlong.length).toBeGreaterThan(MAX_ADDRESS_LENGTH);
+
+    // Asserted one struct at a time rather than in a loop: the params structs
+    // have different shapes, so a single array would widen them to a union
+    // that no longer type-checks against `validate`.
+    expect(() =>
+      validate({ address: overlong }, OptionalAddressParams),
+    ).toThrow(SnapError);
+    expect(() =>
+      validate({ xdr: 'AAAA', address: overlong }, SignTransactionParams),
+    ).toThrow(SnapError);
+    expect(() =>
+      validate({ message: 'hello', address: overlong }, SignMessageParams),
+    ).toThrow(SnapError);
+    expect(() =>
+      validate({ authEntry: 'AAAA', address: overlong }, SignAuthEntryParams),
+    ).toThrow(SnapError);
+    expect(() =>
+      validate(
+        { contractId: `C${'A'.repeat(MAX_ADDRESS_LENGTH)}` },
+        AddTokenParams,
+      ),
+    ).toThrow(SnapError);
   });
 
   it('rejects an oversized xdr with -3 before parsing', () => {

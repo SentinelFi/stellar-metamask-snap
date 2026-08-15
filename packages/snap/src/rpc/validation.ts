@@ -44,14 +44,33 @@ const boundedString = (max: number): Struct<string, null> =>
   size(string(), 1, max);
 
 /**
+ * Upper bound on address-shaped fields, applied *before* the strkey decoder
+ * runs.
+ *
+ * A strkey address is 56 characters, so this is generous rather than tight.
+ * It exists because `refine(string(), ...)` alone accepts a string of any
+ * length and only rejects it after the whole value has been materialized and
+ * handed to `StrKey`: the resulting bound describes what survives validation,
+ * not what validation processes. Every other dapp-controlled string in this
+ * module carries an explicit `size()`, and the address fields are reachable on
+ * `signTransaction`, `signMessage`, `signAuthEntry`, `fund`, `getBalances`,
+ * and `addToken`, so they get the same treatment rather than being the
+ * exception a future field is copied from.
+ */
+export const MAX_ADDRESS_LENGTH = 128;
+
+/**
  * A classic `G...` ed25519 account address. Callers interpolate addresses
  * into Horizon URL paths, so shape validation here doubles as an injection
  * guard.
  */
-export const StellarAddress = refine(string(), 'StellarAddress', (value) =>
-  StrKey.isValidEd25519PublicKey(value)
-    ? true
-    : 'Expected a Stellar account address (G...).',
+export const StellarAddress = refine(
+  size(string(), 1, MAX_ADDRESS_LENGTH),
+  'StellarAddress',
+  (value) =>
+    StrKey.isValidEd25519PublicKey(value)
+      ? true
+      : 'Expected a Stellar account address (G...).',
 );
 
 /**
@@ -61,7 +80,7 @@ export const StellarAddress = refine(string(), 'StellarAddress', (value) =>
  * field carries an implicit length bound instead of none.
  */
 export const SorobanContractAddress = refine(
-  string(),
+  size(string(), 1, MAX_ADDRESS_LENGTH),
   'SorobanContractAddress',
   (value) =>
     isContractId(value)

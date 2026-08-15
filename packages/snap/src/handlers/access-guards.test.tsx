@@ -170,6 +170,44 @@ function simulatedReturn(body: unknown): xdr.ScVal {
   return value;
 }
 
+type RequestArgs = {
+  method: string;
+  params: { operation?: string; newState?: unknown };
+};
+
+/** A persisted state object as it was handed to `snap_manageState`. */
+type StateWrite = {
+  origins: Record<string, unknown>;
+  entropyFingerprint?: string;
+};
+
+/**
+ * Wraps the harness `snap.request` so every state write is captured, not just
+ * the final one: write *ordering* is the property under test, so an
+ * intermediate write pairing a grant with a missing fingerprint has to be
+ * visible. `afterEach` deletes the global, so there is nothing to restore.
+ *
+ * Declared at module scope rather than inside the test because the method
+ * check below is a conditional, and `jest/no-conditional-in-test` (rightly)
+ * refuses those in a test body.
+ *
+ * @returns The array that accumulates each written state, in write order.
+ */
+function captureStateWrites(): StateWrite[] {
+  const writes: StateWrite[] = [];
+  const host = globalThis as unknown as {
+    snap: { request: (args: RequestArgs) => Promise<unknown> };
+  };
+  const real = host.snap.request;
+  host.snap.request = async (args: RequestArgs) => {
+    if (args.method === 'snap_manageState' && args.params.operation !== 'get') {
+      writes.push(args.params.newState as StateWrite);
+    }
+    return real(args);
+  };
+  return writes;
+}
+
 describe('connection gate and account resolution', () => {
   beforeEach(async () => {
     const entropy = await SLIP10Node.fromDerivationPath({
@@ -325,6 +363,44 @@ describe('connection gate and account resolution', () => {
         accounts: [{ index: 0, address: ADDRESS_0 }],
         activeIndex: 0,
       });
+    });
+  });
+
+  describe('entropy binding is recorded before any grant', () => {
+    /*
+     * The invariant `reconcileEntropyBinding` relies on when it adopts a
+     * fingerprint that is simply absent (see its doc comment in
+     * ../state/index.ts).
+     *
+     * Adoption assumes the store has never derived a key, so its contents
+     * cannot belong to some other secret recovery phrase. That holds only
+     * because every path that records a grant derives a key first, which
+     * writes the fingerprint. If a future change ever recorded a grant without
+     * a preceding derivation, adoption would start silently carrying one
+     * wallet's consent onto another's keys, and nothing else in the codebase
+     * would notice.
+     */
+
+    it('never writes a grant into a store with no fingerprint', async () => {
+      const writes = captureStateWrites();
+
+      // A completely fresh store: no fingerprint, no grants.
+      stored = stateV2();
+      await requestAccess(ORIGIN);
+
+      // The grant landed...
+      const grantWrites = writes.filter(
+        (write) => Object.keys(write.origins).length > 0,
+      );
+      expect(grantWrites.length).toBeGreaterThan(0);
+      // ...and no write along the way ever paired a grant with a missing
+      // fingerprint, which is the state adoption cannot tell apart from a
+      // legacy store.
+      expect(
+        grantWrites.every(
+          (write) => typeof write.entropyFingerprint === 'string',
+        ),
+      ).toBe(true);
     });
   });
 

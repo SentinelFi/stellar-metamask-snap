@@ -25,6 +25,7 @@ import {
   validate,
 } from '../rpc/validation';
 import { connectOrigin, getActiveNetwork, isOriginConnected } from '../state';
+import type { NetworkConfig } from '../state/networks';
 import { getHorizonLatestLedger, submitTransaction } from '../stellar/horizon';
 import { getLatestLedger, sendTransaction } from '../stellar/rpc';
 import {
@@ -52,6 +53,46 @@ import {
 
 /** SEP-53 signed-message prefix. */
 const SIGNED_MESSAGE_PREFIX = 'Stellar Signed Message:\n';
+
+/**
+ * Requires the caller to state which network it means, on the network where
+ * being wrong is expensive.
+ *
+ * `networkPassphrase` is optional in SEP-43, and when it is omitted there is
+ * nothing to mismatch: the envelope is parsed and hashed against whatever
+ * network the wallet happens to be on. The asymmetry is directional. A site
+ * intending PUBLIC while the wallet sits on TESTNET gets a signature that is
+ * worthless on mainnet, which is the safe direction. A site intending TESTNET
+ * while the wallet sits on PUBLIC gets a *mainnet-valid* signature, and no
+ * party has stated a network anywhere in the exchange.
+ *
+ * The mainnet banner in the review dialog used to be the only defence against
+ * that, and it is a weak one for this specific case: the user is not being
+ * asked to evaluate a claim the snap made, but to notice a network *they* set
+ * in an earlier session and that the site never mentioned. Nothing in the
+ * exchange creates the expectation that this is the request worth re-checking.
+ *
+ * Requiring the field only on PUBLIC keeps test-network ergonomics exactly as
+ * they were, so no development workflow changes, and costs a conformant
+ * mainnet site one field it necessarily already has: it built the envelope
+ * with that passphrase.
+ *
+ * @param network - The active network config.
+ * @param networkPassphrase - The passphrase the caller supplied, if any.
+ * @throws An invalid-request error when PUBLIC is active and none was given.
+ */
+function assertNetworkStated(
+  network: NetworkConfig,
+  networkPassphrase: string | undefined,
+): void {
+  if (network.name === 'PUBLIC' && networkPassphrase === undefined) {
+    throw invalidRequest(
+      'A network passphrase is required for signatures on PUBLIC. Send ' +
+        'networkPassphrase so the wallet can confirm that this site and the ' +
+        'wallet agree on the network before a mainnet signature is produced.',
+    );
+  }
+}
 
 /**
  * Records the durable connection grant an approved signature implies, without
@@ -132,6 +173,7 @@ export async function signTransaction(
   // connected sites of their safety checks (src/rpc/limiter.ts).
   const connected = await isOriginConnected(origin);
 
+  assertNetworkStated(network, request.networkPassphrase);
   if (
     request.networkPassphrase !== undefined &&
     request.networkPassphrase !== network.networkPassphrase
@@ -428,6 +470,7 @@ export async function signAuthEntry(
   // budget the ledger-height reads below draw on.
   const connected = await isOriginConnected(origin);
 
+  assertNetworkStated(network, request.networkPassphrase);
   if (
     request.networkPassphrase !== undefined &&
     request.networkPassphrase !== network.networkPassphrase

@@ -182,8 +182,10 @@ describe('home page connected sites', () => {
 describe('home page tracked tokens', () => {
   it('lists a tracked token and removes it via the Remove button', async () => {
     const { onHomePage } = await install({
-      version: 1,
+      version: 2,
       network: 'TESTNET',
+      activeAccount: 0,
+      accounts: [0],
       origins: {},
       tokens: {
         TESTNET: [
@@ -225,8 +227,10 @@ describe('addToken cap', () => {
     }));
 
     const { request } = await install({
-      version: 1,
+      version: 2,
       network: 'TESTNET',
+      activeAccount: 0,
+      accounts: [0],
       origins: { [ORIGIN]: { connectedAt: '2026-08-11T00:00:00Z' } },
       tokens: { TESTNET: filler },
     });

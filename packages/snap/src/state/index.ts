@@ -25,15 +25,23 @@ import { isContractId, sanitizeTokenMetadata } from '../stellar/token';
  *
  * | Version | Shape                                            | Status                   |
  * | ------- | ------------------------------------------------ | ------------------------ |
- * | 1       | `network`, `origins`, `tokens`                    | pre-release only         |
+ * | 1       | `network`, `origins`, `tokens`                    | removed (never published)|
  * | 2       | adds `activeAccount`, `accounts` (multi-account)  | current                  |
  *
  * Version 1 was never published: the snap had no npm release before
- * multi-account landed, so the only stores holding it are development and
- * local-test installs. The migration therefore protects developer wallets,
- * not users, and may be dropped once the first audited release has shipped
- * and no pre-release install is worth preserving. It is kept for now because
- * removing it would silently reset those wallets' grants and tracked tokens.
+ * multi-account landed, so the only stores that ever held it were development
+ * and local-test installs. Its migration was carried for a while so those
+ * wallets would not silently lose their grants and tracked tokens, and has now
+ * been removed ahead of the first published release. A version-1 store resets
+ * to defaults like any other unrecognized shape, which is correct: no user
+ * data has ever existed in that form.
+ *
+ * Keeping it would have been the more expensive choice. Every migration path
+ * is a way for a store to arrive in the current schema without passing through
+ * the invariants the current writers maintain, and the one that matters here
+ * is {@link SnapState.entropyFingerprint}: a migrated store carries grants but
+ * no fingerprint, which is exactly the state
+ * {@link reconcileEntropyBinding} cannot tell apart from a fresh wallet.
  * Design rationale: docs/MULTI-ACCOUNT.md section 5.6.
  */
 /** A tracked Soroban token (contract), scoped to a network. */
@@ -183,27 +191,6 @@ const SnapStateStruct = object({
 });
 
 /**
- * Structural schema for legacy version-1 state (pre-release; see the schema
- * history above), kept so a pre-multi-account wallet migrates in place
- * instead of resetting (which would drop its connection grants and tracked
- * tokens). Exact-match by design: a version-1 object carrying any other key,
- * including version-2 account fields, matches neither schema and resets.
- */
-const SnapStateV1Struct = object({
-  version: literal(1),
-  network: enums(NETWORK_NAMES),
-  origins: record(string(), GrantStruct),
-  tokens: optional(
-    record(
-      enums(NETWORK_NAMES),
-      array(
-        object({ contractId: string(), symbol: string(), decimals: number() }),
-      ),
-    ),
-  ),
-});
-
-/**
  * Builds a fresh default state.
  *
  * @returns The default state object.
@@ -324,9 +311,13 @@ function normalizeOrigins(origins: SnapState['origins']): SnapState['origins'] {
 /**
  * Validates raw stored state. The snap is the only writer, but the store can
  * still surprise: a downgrade after a future version bump, or corruption.
- * A valid version-1 object migrates in place (accounts default to `[0]`,
- * preserving grants and tokens); anything matching neither schema resets to
- * defaults rather than flowing unchecked into signing and display paths.
+ * Anything not matching the current schema resets to defaults rather than
+ * flowing unchecked into signing and display paths.
+ *
+ * There is deliberately no migration arm. The only prior schema (version 1)
+ * was never published, so resetting one loses nothing a user ever had, and a
+ * migration would produce the one shape the entropy binding cannot reason
+ * about: grants with no fingerprint (see the schema history above).
  *
  * @param stored - The raw value from `snap_manageState`.
  * @returns The validated state, or a fresh default state.
@@ -339,20 +330,6 @@ export function parseState(stored: unknown): SnapState {
       origins: normalizeOrigins(state.origins),
       tokens: normalizeTokens(state.tokens),
     });
-  }
-  if (is(stored, SnapStateV1Struct)) {
-    const legacy = stored as Omit<
-      SnapState,
-      'version' | 'activeAccount' | 'accounts'
-    > & { version: 1 };
-    return {
-      ...legacy,
-      version: 2,
-      activeAccount: 0,
-      accounts: [0],
-      origins: normalizeOrigins(legacy.origins),
-      tokens: normalizeTokens(legacy.tokens),
-    };
   }
   return defaultState();
 }
@@ -677,17 +654,36 @@ export async function connectOrigin(origin: string): Promise<void> {
  * built from, resetting those contents when the phrase has changed.
  *
  * Called from the key layer, which is the only place that can compute the
- * fingerprint. A store with no fingerprint recorded simply adopts the current
- * one: that is the upgrade path for wallets written before this field existed,
- * and it assumes continuity, which is correct because a vault restored from a
- * different phrase does not carry the old snap state forward anyway.
+ * fingerprint.
  *
- * A *mismatch* is different: the account registry and the grants describe key
- * material this wallet no longer has. Account indices would name unrelated
+ * A *mismatch* is the clear case: the account registry and the grants describe
+ * key material this wallet no longer has. Account indices would name unrelated
  * addresses, and a grant would extend consent given for one wallet to another.
  * Both are reset. The network preference and the tracked-token registry are
  * kept, since neither is derived from the phrase. The check cannot false
  * positive: the fingerprint is a deterministic function of the phrase.
+ *
+ * A store with *no* fingerprint adopts the current one, which assumes
+ * continuity. That assumption used to be the weak point: "fresh wallet" and
+ * "wallet whose phrase changed before this field existed" are indistinguishable
+ * from the store alone, so a legacy store's grants were adopted onto whatever
+ * phrase happened to be primary at first key use.
+ *
+ * What makes it sound now is an ordering invariant plus the absence of a
+ * migration. A grant is only ever written by {@link connectOrigin}, and every
+ * path reaching it (`requestAccess` and the three signing handlers) derives a
+ * key first, so writing a grant is necessarily preceded by recording a
+ * fingerprint. `parseState` no longer migrates any older schema either, so
+ * there is no longer a route by which grants arrive in a version-2 store
+ * without having passed through that ordering. "Grants present, fingerprint
+ * absent" is therefore not a state this version can produce, and adopting is
+ * only ever describing a store that has never derived a key.
+ *
+ * That invariant is what this branch rests on, so it is asserted rather than
+ * assumed: see the ordering test in `src/handlers/access-guards.test.tsx`. If a
+ * future change writes a grant without a preceding key derivation, or
+ * reintroduces a migration, this branch stops being safe and the mismatch arm
+ * below is the behaviour that would need extending to cover it.
  *
  * @param fingerprint - The current entropy fingerprint.
  * @returns True when a mismatch was found and the store was reset.

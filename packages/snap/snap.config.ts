@@ -27,6 +27,17 @@ const SECURE_RANDOM =
  * textual replacement would corrupt a string) surfaces at build time rather
  * than silently producing a new shasum. Update deliberately, never to make a
  * red build go green.
+ *
+ * Know what this does NOT reach. Both the rewrite and CI's companion grep match
+ * the literal text `Math.random`, so aliased access (`const M = Math;
+ * M.random()`) and destructuring (`const { random } = Math`) pass both
+ * untouched. Closing that would need real static analysis of the emitted
+ * bundle, which is not worth building here, because the mechanism is defence in
+ * depth rather than a live control: ed25519 signing is deterministic (RFC 8032),
+ * so no signature this snap produces depends on a random nonce, and no other
+ * code path uses randomness for a security decision. What this guards against is
+ * a future dependency introducing security-relevant randomness in the common
+ * form. Treat a clean count as evidence about that form only.
  */
 const EXPECTED_RANDOM_REWRITES = 7;
 

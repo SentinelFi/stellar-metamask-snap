@@ -1,0 +1,40 @@
+{
+  "$comment": [
+    "Allowlist for `scripts/check-known-advisories.mjs`, the gate over the snap's",
+    "TRANSITIVE production dependency graph. It is the machine-readable form of",
+    "the dependency table in docs/THREAT-MODEL.md section 5, so that table stops",
+    "being prose a reviewer has to remember to re-derive.",
+    "",
+    "Entries are keyed by MODULE, not by advisory ID, and that is deliberate. The",
+    "security property being asserted is 'this package does not reach the shipped",
+    "bundle', which is a property of the package. Keying by advisory ID would mean",
+    "a new axios CVE (there were 28 at the last count, and the number only goes up)",
+    "turns the build red without telling anyone anything new, which trains people",
+    "to edit the allowlist without thinking. Keying by module means a new advisory",
+    "in an ALREADY-UNREACHABLE package is silent, while an advisory in any package",
+    "not listed here fails the build and demands a decision.",
+    "",
+    "`absentFromBundle: true` is not a claim taken on trust: the script greps the",
+    "built dist/bundle.js and fails if the package turns out to be present after",
+    "all. A package that genuinely does ship must instead be listed with",
+    "`inBundle: true` and a written justification, which is the entry a reviewer",
+    "should always stop at."
+  ],
+  "modules": {
+    "axios": {
+      "absentFromBundle": true,
+      "via": "@stellar/stellar-sdk",
+      "reason": "The snap hand-rolls its fetch-based Horizon and Soroban RPC client (src/stellar/http.ts, horizon.ts, rpc.ts) and never imports the SDK's Horizon or webauth modules, so webpack tree-shakes the entire axios subtree out of the bundle."
+    },
+    "form-data": {
+      "absentFromBundle": true,
+      "via": "@stellar/stellar-sdk",
+      "reason": "Reached only through axios, which is itself absent. See the axios entry."
+    },
+    "follow-redirects": {
+      "absentFromBundle": true,
+      "via": "@stellar/stellar-sdk",
+      "reason": "Reached only through axios, which is itself absent. See the axios entry. Note the snap sets `redirect: 'error'` on every fetch it makes, so it does not follow redirects by any path."
+    }
+  }
+}

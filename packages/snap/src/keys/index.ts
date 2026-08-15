@@ -27,8 +27,20 @@ const addressCache = new Map<number, string>();
  */
 let contextFingerprint: string | null = null;
 
-/** Whether the persisted binding has been reconciled in this context. */
-let bindingReconciled = false;
+/**
+ * The in-flight (or settled) persisted-binding reconciliation for this
+ * execution context, or null when it has not run or last failed.
+ *
+ * A promise rather than a boolean, for two reasons. It latches on *settle*
+ * rather than on entry, so a transient state-write failure leaves the binding
+ * unreconciled and the next key use retries it: latching before the write
+ * would let one failure disable, for the rest of the context, the check that
+ * stops grants recorded under a previous secret recovery phrase from being
+ * honoured. And because the assignment is a plain read-modify-write with no
+ * `await` between the read and the write, concurrent callers share one
+ * reconciliation instead of racing several.
+ */
+let bindingReconciliation: Promise<void> | null = null;
 
 /**
  * Clears the memoized addresses and the entropy binding recorded for this
@@ -37,7 +49,7 @@ let bindingReconciled = false;
 export function resetAddressCache(): void {
   addressCache.clear();
   contextFingerprint = null;
-  bindingReconciled = false;
+  bindingReconciliation = null;
 }
 
 /**
@@ -94,22 +106,36 @@ async function bindToEntropySource(node: SLIP10Node): Promise<void> {
   // The persisted reconciliation costs a state read and is only meaningful
   // once per execution context, so it runs on the first key use and not on
   // every parent-node fetch.
-  if (!bindingReconciled) {
-    // Set before the await, not after: a store that cannot be written would
-    // otherwise retry this on every parent-node fetch for the rest of the
-    // context.
-    bindingReconciled = true;
-    // Best effort, for the same reason the signing handlers record their grant
-    // best effort: this is bookkeeping *about* the key material, and a store
-    // that cannot be written must not take key derivation down with it. That
-    // would turn a state-write failure into an inability to sign, which is
-    // strictly worse than a fingerprint recorded one context later. The
-    // in-context cache invalidation above does not depend on it.
-    const reset = await reconcileEntropyBinding(fingerprint).catch(() => false);
-    if (reset) {
+  // Best effort, for the same reason the signing handlers record their grant
+  // best effort: this is bookkeeping *about* the key material, and a store
+  // that cannot be written must not take key derivation down with it. That
+  // would turn a state-write failure into an inability to sign, which is
+  // strictly worse than a fingerprint recorded one context later. The
+  // in-context cache invalidation above does not depend on it.
+  bindingReconciliation ??= reconcileEntropyBinding(fingerprint).then(
+    (reset) => {
+      if (reset) {
+        addressCache.clear();
+      }
+      return undefined;
+    },
+    () => {
+      // Clear the latch so the next key use retries. Retrying is cheap:
+      // `lazyAccountParentNode` already collapses a request's parent-node
+      // fetches into one, so this costs at most one extra attempt per request,
+      // not one per derivation.
+      bindingReconciliation = null;
+      // Drop the cache as well. Nothing derived from the store is known-good
+      // for this fingerprint while the binding is unverified, and the display
+      // path (`getWalletAddress` and, through it, `requestAccess`,
+      // `getAddress`, `fund`, and the home page) reads addresses straight out
+      // of it. Key derivation itself is untouched, which is the property the
+      // best-effort treatment exists to protect.
       addressCache.clear();
-    }
-  }
+      return undefined;
+    },
+  );
+  await bindingReconciliation;
 }
 
 /**

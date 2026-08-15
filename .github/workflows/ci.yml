@@ -72,14 +72,38 @@ jobs:
           echo "Math.random references:      $(grep -o 'Math\.random' "$BUNDLE" | wc -l)"
           echo "crypto.getRandomValues uses: $(grep -o 'getRandomValues' "$BUNDLE" | wc -l)"
 
-      # Direct runtime dependencies must stay advisory-free, in every
+      # DIRECT runtime dependencies must stay advisory-free, in every
       # workspace: the snap is the signing surface, but the connector is the
       # dapp-facing trust boundary and the site is deployed, so none of them
-      # gets to ship a known advisory. The transitive graph is analyzed
-      # separately (docs/THREAT-MODEL.md §5): advisories there are checked
-      # against the built bundle, not gated here.
-      - name: Audit runtime dependencies (all workspaces)
+      # gets to ship a known advisory.
+      #
+      # Note the word "direct". Yarn Berry audits only the direct dependencies
+      # of the selected workspaces unless `--recursive` is passed, so this step
+      # says nothing about the transitive graph, which is where every
+      # production advisory this project has ever had actually lives. The step
+      # below is what covers that; this one is not a substitute for it.
+      - name: Audit direct runtime dependencies (all workspaces)
         run: yarn npm audit --all --environment production
+
+      # The snap's TRANSITIVE production graph, gated against a reviewed
+      # allowlist (audits/known-advisories.json).
+      #
+      # This is the check the step above cannot perform. It also verifies the
+      # claim the allowlist rests on, by grepping the built bundle for each
+      # package it says is absent, so "webpack tree-shakes it out" stops being
+      # prose in the threat model and becomes something CI re-derives on every
+      # run. It therefore has to come after the build.
+      #
+      # `|| true` catches the audit's non-zero exit when advisories exist; the
+      # script does the actual judging. An audit that failed to run leaves an
+      # unparseable report, which the script treats as a failure rather than as
+      # a clean result.
+      - name: Gate transitive production advisories against the allowlist
+        run: |
+          ( cd packages/snap && \
+            yarn npm audit --environment production --recursive --json ) \
+            > "$RUNNER_TEMP/audit.json" || true
+          node scripts/check-known-advisories.mjs "$RUNNER_TEMP/audit.json"
 
       # The gate above covers what ships. This step covers what *builds* it,
       # which nothing surfaced before: a compromised or vulnerable build

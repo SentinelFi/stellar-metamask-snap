@@ -704,8 +704,8 @@ describe('onUserInput add-account flow', () => {
   });
 });
 
-describe('state migration', () => {
-  it('upgrades a version-1 state in place, preserving grants', async () => {
+describe('no pre-version-2 state is accepted', () => {
+  it('resets a version-1 state instead of migrating it', async () => {
     const { request } = await install({
       version: 1,
       network: 'TESTNET',
@@ -713,11 +713,16 @@ describe('state migration', () => {
       tokens: {},
     });
 
-    // The origin grant survives the migration: getAddress stays silent.
+    // The migration was removed ahead of the first published release: version 1
+    // was never published, so no user store has ever held it. The grant does
+    // not survive, which is the point. Carrying it forward would produce a
+    // version-2 store with grants and no entropy fingerprint, and that is the
+    // one shape `reconcileEntropyBinding` cannot attribute to a secret
+    // recovery phrase (src/state/index.ts).
     const address = getResult<{ address: string }>(
       await request({ origin: ORIGIN, method: 'getAddress' }),
     );
-    expect(address.address).toBe(SEP5_ADDRESS_0);
+    expect(address.address).toBe('');
   }, 45000);
 });
 
@@ -747,21 +752,6 @@ describe('disclosure-versioned grants', () => {
         await request({ origin: ORIGIN, method: 'getAddress' }),
       ).address,
     ).toBe(SEP5_ADDRESS_0);
-  }, 45000);
-
-  it('refuses enumeration for a grant migrated from version 1', async () => {
-    const { request } = await install({
-      version: 1,
-      network: 'TESTNET',
-      origins: PRE_DISCLOSURE,
-      tokens: {},
-    });
-
-    const error = getError(
-      await request({ origin: ORIGIN, method: 'getAccounts' }),
-    );
-    expect(error.data?.code).toBe(-3);
-    expect(error.message).toContain('re-confirm');
   }, 45000);
 
   it('re-prompts a stale grant and restores enumeration on approval', async () => {

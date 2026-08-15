@@ -260,6 +260,52 @@ describe('signing handlers: fail-closed gates', () => {
       expect(dialogs).toHaveLength(0);
     });
 
+    it('requires the caller to state the network on PUBLIC', async () => {
+      // `networkPassphrase` is optional in SEP-43, and when it is omitted the
+      // envelope is hashed against whatever network the wallet happens to be
+      // on. A site intending TESTNET while the wallet sits on PUBLIC would
+      // otherwise receive a mainnet-valid signature with no network stated
+      // anywhere in the exchange. Required only on PUBLIC, so test-network
+      // ergonomics are untouched (every other test in this file omits it).
+      const publicTx = new TransactionBuilder(new Account(ADDRESS_0, '1'), {
+        fee: '100',
+        networkPassphrase: Networks.PUBLIC,
+      })
+        .addOperation(
+          Operation.payment({
+            destination: ADDRESS_1,
+            asset: Asset.native(),
+            amount: '1',
+          }),
+        )
+        .setTimeout(300)
+        .build();
+      stored = stateV2({ network: 'PUBLIC' });
+
+      await expect(
+        signTransaction(ORIGIN, { xdr: publicTx.toXDR() }),
+      ).rejects.toThrow('network passphrase is required');
+      expect(dialogs).toHaveLength(0);
+
+      // Stating it lets the request through to the dialog, so the guard bounds
+      // the omission rather than the network.
+      expect(
+        await signTransaction(ORIGIN, {
+          xdr: publicTx.toXDR(),
+          networkPassphrase: Networks.PUBLIC,
+        }),
+      ).toMatchObject({ signerAddress: ADDRESS_0 });
+      expect(dialogs).toHaveLength(1);
+    });
+
+    it('requires the caller to state the network on PUBLIC for signAuthEntry', async () => {
+      stored = stateV2({ network: 'PUBLIC', origins: CONNECTED });
+      await expect(
+        signAuthEntry(ORIGIN, { authEntry: 'AAAA' }),
+      ).rejects.toThrow('network passphrase is required');
+      expect(dialogs).toHaveLength(0);
+    });
+
     it('refuses XDR it cannot parse', async () => {
       await expect(
         signTransaction(ORIGIN, { xdr: 'bm90LXZhbGlkLXhkcg==' }),
