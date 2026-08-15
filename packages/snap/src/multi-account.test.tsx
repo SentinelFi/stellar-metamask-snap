@@ -444,6 +444,34 @@ describe('home page account management', () => {
  * the home page's interface ID). Exercise the handler directly against a
  * mocked `snap` global instead, with real SLIP-10 derivation.
  */
+/**
+ * Makes every state write fail, leaving reads working.
+ *
+ * Declared at module scope because the method check is a conditional, and
+ * `jest/no-conditional-in-test` (rightly) refuses those in a test body.
+ * `afterEach` deletes the global, so there is nothing to restore.
+ */
+function failStateWrites(): void {
+  const host = globalThis as unknown as {
+    snap: {
+      request: (args: {
+        method: string;
+        params: { operation?: string };
+      }) => Promise<unknown>;
+    };
+  };
+  const real = host.snap.request;
+  host.snap.request = async (args: {
+    method: string;
+    params: { operation?: string };
+  }) => {
+    if (args.method === 'snap_manageState' && args.params.operation !== 'get') {
+      throw new Error('state unavailable');
+    }
+    return real(args);
+  };
+}
+
 describe('onUserInput add-account flow', () => {
   let stored: unknown;
   let dialogs: unknown[];
@@ -524,6 +552,20 @@ describe('onUserInput add-account flow', () => {
       context: null,
     } as never);
   }
+
+  it('reports a failed interaction instead of throwing out of the handler', async () => {
+    // Disconnect is the simplest interaction that writes, so failing writes
+    // makes the state helper throw on a path with no other error handling.
+    failStateWrites();
+
+    // An escaping throw would surface as a bare platform error and skip the
+    // re-render, leaving the page showing state that may already have moved.
+    await click(`disconnect:${ORIGIN}`);
+
+    // The user was told, and the page was re-read rather than left stale.
+    expect(dialogs).toHaveLength(1);
+    expect(updates).toBe(1);
+  });
 
   it('reveals the next account after confirmation', async () => {
     await click('add-account');

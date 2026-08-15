@@ -2,7 +2,7 @@ import { SLIP10Node } from '@metamask/key-tree';
 import { hash, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
-import { invalidRequest } from '../rpc/errors';
+import { externalServiceError, invalidRequest } from '../rpc/errors';
 import type { SnapState } from '../state';
 import { getState, MAX_ACCOUNT_INDEX, reconcileEntropyBinding } from '../state';
 
@@ -43,6 +43,19 @@ let contextFingerprint: string | null = null;
 let bindingReconciliation: Promise<void> | null = null;
 
 /**
+ * Whether the persisted binding has been *confirmed* in this execution
+ * context, as opposed to merely attempted.
+ *
+ * Separate from {@link bindingReconciliation}, which latches on settle and so
+ * cannot distinguish "reconciled" from "tried and failed": the reconciliation
+ * is best effort on purpose, and its rejection arm deliberately lets key
+ * derivation continue. This flag is what records that the store's binding to
+ * the active secret recovery phrase is unconfirmed, so the callers for which
+ * that matters can refuse. See {@link ensureEntropyBinding}.
+ */
+let bindingVerified = false;
+
+/**
  * Clears the memoized addresses and the entropy binding recorded for this
  * execution context. Test hook.
  */
@@ -50,6 +63,7 @@ export function resetAddressCache(): void {
   addressCache.clear();
   contextFingerprint = null;
   bindingReconciliation = null;
+  bindingVerified = false;
 }
 
 /**
@@ -114,12 +128,19 @@ async function bindToEntropySource(node: SLIP10Node): Promise<void> {
   // in-context cache invalidation above does not depend on it.
   bindingReconciliation ??= reconcileEntropyBinding(fingerprint).then(
     (reset) => {
+      // The store's binding is now known to describe the phrase being derived
+      // from, which is the precondition every grant read depends on.
+      bindingVerified = true;
       if (reset) {
         addressCache.clear();
       }
       return undefined;
     },
     () => {
+      // Nothing is known about which phrase the stored grants belong to, and
+      // the rejection is swallowed below so derivation survives. Recording the
+      // failure is what lets the grant-gated callers refuse instead.
+      bindingVerified = false;
       // Clear the latch so the next key use retries. Retrying is cheap:
       // `lazyAccountParentNode` already collapses a request's parent-node
       // fetches into one, so this costs at most one extra attempt per request,
@@ -136,6 +157,53 @@ async function bindToEntropySource(node: SLIP10Node): Promise<void> {
     },
   );
   await bindingReconciliation;
+}
+
+/**
+ * Establishes the store's binding to the active secret recovery phrase, and
+ * refuses when it cannot be established. Callers that are about to read a
+ * connection grant must await this first.
+ *
+ * Two separate problems make it necessary.
+ *
+ * Ordering. {@link reconcileEntropyBinding} runs on first key use, so a handler
+ * that reads a grant *before* deriving anything reads it from a store whose
+ * phrase change has not been detected yet. `getAddress` was the sharpest case:
+ * it checked the grant, then derived, and the derivation is what discovers the
+ * mismatch and clears the grants, so the very call that revoked a grant still
+ * answered it with the new phrase's address. Establishing the binding first
+ * means a grant is only ever read from a reconciled store.
+ *
+ * Failure. Reconciliation is best effort where derivation is concerned, and
+ * deliberately so: a store that cannot be written must not take signing down
+ * with it (see {@link bindToEntropySource}). That reasoning does not carry over
+ * to grants. A grant describes a specific key set, so a failed reconciliation
+ * leaves the snap unable to say whether the recorded grants belong to the
+ * phrase it is now deriving from, and honouring them anyway is precisely the
+ * outcome the binding exists to prevent: consent given for one wallet extended
+ * to another. So this refuses, while key derivation and cold signing (which
+ * name no account and always show a dialog) keep working.
+ *
+ * Deriving the active account, rather than only fetching the parent node, is
+ * what keeps this from costing an extra `snap_getBip32Entropy`: it fills
+ * {@link addressCache}, so the address lookup every caller does immediately
+ * afterwards is a cache hit rather than a second crossing of the sandbox
+ * boundary with the parent key material. The flag then short-circuits every
+ * later call in the same execution context.
+ *
+ * @throws An external-service error when the binding cannot be confirmed.
+ */
+export async function ensureEntropyBinding(): Promise<void> {
+  if (!bindingVerified) {
+    await getWalletAddress();
+  }
+  if (!bindingVerified) {
+    throw externalServiceError(
+      'The wallet could not confirm which secret recovery phrase this snap ' +
+        'stored its data under, so connected-site permissions cannot be used ' +
+        'right now. Try again shortly.',
+    );
+  }
 }
 
 /**
@@ -198,6 +266,41 @@ async function deriveFromNode(
  */
 export async function deriveKeypair(index = 0): Promise<Keypair> {
   return deriveFromNode(await getAccountParentNode(), index);
+}
+
+/**
+ * Zeroes the account secret a keypair holds, once the signature it was derived
+ * for has been produced.
+ *
+ * {@link deriveFromNode} already zeroes the copy it makes, and that is safe
+ * because `Keypair.fromRawEd25519Seed` copies the buffer rather than retaining
+ * it. The same fact is why this is needed: the copy the keypair took is live,
+ * and nothing else drops it. Without this it stays reachable for the rest of
+ * the request, which for a submitting `signTransaction` includes a network
+ * round trip to a third-party endpoint.
+ *
+ * Two properties of the SDK this relies on, both verified against version
+ * 16.2.0 and both asserted in `src/keys/index.test.ts`. `rawSecretKey()`
+ * returns the live buffer rather than a copy, so filling it actually clears the
+ * keypair's own seed; and the public key is computed once in the constructor,
+ * so `publicKey()` keeps working afterwards. What does NOT keep working is
+ * signing, since the seed and the secret key are the same buffer: a keypair
+ * must be wiped only after its final use, which is why each call site sits
+ * after the last signature it produces rather than in a shared wrapper.
+ *
+ * Mitigation, not a guarantee, in exactly the sense {@link deriveFromNode}
+ * describes: a JavaScript runtime may have copied the bytes somewhere out of
+ * reach. It narrows the window.
+ *
+ * @param keypair - The keypair to wipe.
+ */
+export function wipeKeypair(keypair: Keypair): void {
+  try {
+    keypair.rawSecretKey().fill(0);
+  } catch {
+    // A keypair without a secret seed has nothing to wipe. Never let
+    // best-effort cleanup mask the outcome of the signature it follows.
+  }
 }
 
 /**

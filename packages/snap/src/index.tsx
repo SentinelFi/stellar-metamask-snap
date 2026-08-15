@@ -5,8 +5,8 @@ import type {
   OnUpdateHandler,
   OnUserInputHandler,
 } from '@metamask/snaps-sdk';
-import { UserInputEventType } from '@metamask/snaps-sdk';
-import { Box, Text } from '@metamask/snaps-sdk/jsx';
+import { SnapError, UserInputEventType } from '@metamask/snaps-sdk';
+import { Box, Heading, Text } from '@metamask/snaps-sdk/jsx';
 import { StrKey } from '@stellar/stellar-sdk';
 
 import {
@@ -56,9 +56,32 @@ export const onRpcRequest: OnRpcRequestHandler = async ({ origin, request }) =>
  * The snap home page (MetaMask menu → Snaps → Stellar Soroban): active
  * network, wallet address, and balances.
  *
+ * `homePage` already degrades the sections that depend on derivation or on the
+ * network, so reaching this catch means the state read itself failed and there
+ * is nothing left to render from. A minimal page is still better than a thrown
+ * error: the platform renders an escaping throw as a bare failure, and the
+ * dapp-facing error laundering in `rpc/router.ts` does not cover this surface,
+ * so an internal message could surface verbatim.
+ *
  * @returns The home page content.
  */
-export const onHomePage: OnHomePageHandler = async () => homePage();
+export const onHomePage: OnHomePageHandler = async () => {
+  try {
+    return await homePage();
+  } catch {
+    return {
+      content: (
+        <Box>
+          <Heading>Stellar Soroban</Heading>
+          <Text>
+            This page could not be loaded. Close it and open it again; if that
+            keeps happening, reload MetaMask.
+          </Text>
+        </Box>
+      ),
+    };
+  }
+};
 
 /**
  * One-time welcome dialog after installation.
@@ -286,6 +309,39 @@ async function applyUserInput(
 }
 
 /**
+ * Runs one home-page interaction, turning a failure into the same kind of
+ * dialog every other user-facing refusal in these flows uses.
+ *
+ * The paths that reach here throw for real reasons, not only exotic ones: both
+ * reveal helpers re-check under the state lock that the account set did not
+ * move while their dialog was open, and refuse when it did. Left uncaught,
+ * that surfaces as a bare platform error instead of the sentence explaining
+ * what to do, and skips the re-render, so a page whose state may already have
+ * changed keeps showing the old view.
+ *
+ * Always asks for a re-render. A throw says nothing about whether a write
+ * landed before it, and this page is where the user checks what is currently
+ * granted, so re-reading state is the answer that cannot be wrong.
+ *
+ * @param event - The user input event.
+ * @returns True when the page should be re-rendered.
+ */
+async function applyUserInputSafely(
+  event: Parameters<OnUserInputHandler>[0]['event'],
+): Promise<boolean> {
+  try {
+    return await applyUserInput(event);
+  } catch (error) {
+    await notify(
+      error instanceof SnapError
+        ? error.message
+        : 'Something went wrong. Close this page and try again.',
+    );
+    return true;
+  }
+}
+
+/**
  * Handle home-page interactions, re-rendering the page when state changed.
  *
  * @param args - The user input handler args.
@@ -293,7 +349,7 @@ async function applyUserInput(
  * @param args.event - The user input event.
  */
 export const onUserInput: OnUserInputHandler = async ({ id, event }) => {
-  if (!(await applyUserInput(event))) {
+  if (!(await applyUserInputSafely(event))) {
     return;
   }
   const { content } = await homePage();

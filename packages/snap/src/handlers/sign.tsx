@@ -10,7 +10,7 @@ import {
 import { Buffer } from 'buffer';
 
 import { assertConnected } from './account';
-import { resolveSigningKeypair } from '../keys';
+import { resolveSigningKeypair, wipeKeypair } from '../keys';
 import {
   externalServiceError,
   invalidRequest,
@@ -380,7 +380,14 @@ export async function signTransaction(
   // `recordGrantBestEffort`.
   await recordGrantBestEffort(origin);
 
-  tx.sign(keypair);
+  // Wiped immediately: this is the keypair's last use, and everything below
+  // works from the signed envelope. The submission path in particular is a
+  // network round trip that the secret has no reason to outlive.
+  try {
+    tx.sign(keypair);
+  } finally {
+    wipeKeypair(keypair);
+  }
   const signedTxXdr = tx.toXDR();
   const warningsField = warnings.length > 0 ? { warnings } : {};
 
@@ -672,12 +679,18 @@ export async function signAuthEntry(
 
   await recordGrantBestEffort(origin);
 
-  const signed = await authorizeEntry(
-    entry,
-    keypair,
-    validUntil,
-    network.networkPassphrase,
-  );
+  // `authorizeEntry` signs internally, so the wipe waits for it to settle.
+  let signed;
+  try {
+    signed = await authorizeEntry(
+      entry,
+      keypair,
+      validUntil,
+      network.networkPassphrase,
+    );
+  } finally {
+    wipeKeypair(keypair);
+  }
   return {
     signedAuthEntry: signed.toXDR('base64'),
     signerAddress,
@@ -733,7 +746,12 @@ export async function signMessage(
       Buffer.from(request.message, 'utf8'),
     ]),
   );
-  const signature = keypair.sign(payload);
+  let signature;
+  try {
+    signature = keypair.sign(payload);
+  } finally {
+    wipeKeypair(keypair);
+  }
 
   return { signedMessage: signature.toString('base64'), signerAddress };
 }

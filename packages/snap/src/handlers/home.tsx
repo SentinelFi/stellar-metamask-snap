@@ -69,6 +69,14 @@ export type HomePageProps = {
   origins: string[];
   /** Tokens tracked on the active network. */
   tokens: TrackedToken[];
+  /**
+   * Account addresses could not be derived, so the account section is empty
+   * for a reason that is not "you have no accounts". Stated rather than shown
+   * as an empty list, for the same reason `tokensUnavailable` exists on the
+   * RPC side: an absence the user cannot distinguish from a fact is worse than
+   * an error message.
+   */
+  accountsUnavailable?: boolean;
 };
 
 /**
@@ -83,6 +91,7 @@ export type HomePageProps = {
  * @param props.activeIndex - The active account's SEP-0005 index.
  * @param props.origins - Origins holding a connection grant.
  * @param props.tokens - Tokens tracked on the active network.
+ * @param props.accountsUnavailable - Account addresses could not be derived.
  * @returns The home page content.
  */
 const HomePage: SnapComponent<HomePageProps> = ({
@@ -93,6 +102,7 @@ const HomePage: SnapComponent<HomePageProps> = ({
   activeIndex,
   origins,
   tokens,
+  accountsUnavailable,
 }) => (
   <Box>
     <Heading>Stellar Soroban</Heading>
@@ -103,8 +113,18 @@ const HomePage: SnapComponent<HomePageProps> = ({
       <Row label="Account">
         <Text>{`Account ${activeIndex}`}</Text>
       </Row>
-      <Text>Address</Text>
-      <Copyable value={address} />
+      {accountsUnavailable ? (
+        <Text>
+          Your address could not be derived just now. The connected sites and
+          tracked tokens below are read from stored settings and can still be
+          managed; reopen this page to retry.
+        </Text>
+      ) : (
+        <Box>
+          <Text>Address</Text>
+          <Copyable value={address} />
+        </Box>
+      )}
     </Section>
     <Section>
       {summary === null ? (
@@ -214,7 +234,18 @@ export async function homePage() {
   // could in principle differ.
   const state = await getState();
   const network = NETWORKS[state.network];
-  const accounts = await getOwnedAccounts(state);
+  // Derivation crosses the sandbox boundary and can fail (a denied or
+  // unavailable entropy source). Letting that escape would take the whole page
+  // down, and this page is the only place a user can revoke a site's grant or
+  // stop tracking a token, neither of which needs a key. So the account section
+  // degrades on its own and the rest of the page still renders.
+  let accounts: AccountRow[] = [];
+  let accountsUnavailable = false;
+  try {
+    accounts = await getOwnedAccounts(state);
+  } catch {
+    accountsUnavailable = true;
+  }
   const activeIndex = state.activeAccount;
   const address =
     accounts.find((account) => account.index === activeIndex)?.address ?? '';
@@ -222,10 +253,14 @@ export async function homePage() {
   const tokens = state.tokens?.[network.name] ?? [];
 
   let summary: AccountSummary | null = null;
-  try {
-    summary = await getAccountSummary(network.horizonUrl, address);
-  } catch {
-    summary = null;
+  // Without an address there is nothing to look up, and Horizon would be asked
+  // for `/accounts/` instead.
+  if (address !== '') {
+    try {
+      summary = await getAccountSummary(network.horizonUrl, address);
+    } catch {
+      summary = null;
+    }
   }
 
   // Append tracked-token balances (best-effort).
@@ -274,6 +309,7 @@ export async function homePage() {
         activeIndex={activeIndex}
         origins={origins}
         tokens={tokens}
+        accountsUnavailable={accountsUnavailable}
       />
     ),
   };

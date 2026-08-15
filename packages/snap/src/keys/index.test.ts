@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { SLIP10Node } from '@metamask/key-tree';
 import { Keypair } from '@stellar/stellar-sdk';
 
-import { getOwnedAccounts, resetAddressCache, resolveSigningKeypair } from '.';
+import {
+  getOwnedAccounts,
+  resetAddressCache,
+  resolveSigningKeypair,
+  wipeKeypair,
+} from '.';
 
 /** Official SEP-0005 test vector 1 (no passphrase). */
 const SEP5_MNEMONIC =
@@ -175,6 +180,41 @@ describe('key derivation', () => {
       // Called on every home-page render and by fund/getBalances/getAccounts.
       await getOwnedAccounts();
       expect(entropyRequests).toBe(1);
+    });
+  });
+
+  describe('wipeKeypair', () => {
+    /*
+     * The signing handlers wipe a keypair after its final signature, which
+     * rests on two properties of the SDK rather than of this codebase. Both
+     * are asserted here so an SDK bump that changes either fails on this test
+     * rather than by quietly leaving the secret in memory (if `rawSecretKey`
+     * started returning a copy) or by breaking every signing path at once (if
+     * the public key stopped being precomputed).
+     */
+
+    it('zeroes the secret the keypair holds', async () => {
+      const { keypair } = await resolveSigningKeypair();
+      expect(keypair.rawSecretKey().some((byte) => byte !== 0)).toBe(true);
+
+      wipeKeypair(keypair);
+
+      expect(keypair.rawSecretKey().every((byte) => byte === 0)).toBe(true);
+    });
+
+    it('leaves the public key readable afterwards', async () => {
+      // The handlers report `signerAddress` from the keypair, and the wipe
+      // happens before that value is returned to the dapp.
+      const { keypair } = await resolveSigningKeypair();
+      wipeKeypair(keypair);
+
+      expect(keypair.publicKey()).toBe(SEP5_ADDRESS_0);
+    });
+
+    it('is safe on a keypair with no secret to wipe', () => {
+      const publicOnly = Keypair.fromPublicKey(SEP5_ADDRESS_0);
+
+      expect(() => wipeKeypair(publicOnly)).not.toThrow();
     });
   });
 });

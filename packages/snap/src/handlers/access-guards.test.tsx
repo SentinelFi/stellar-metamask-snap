@@ -208,6 +208,28 @@ function captureStateWrites(): StateWrite[] {
   return writes;
 }
 
+/**
+ * Makes every state write fail, leaving reads working.
+ *
+ * Models a store the platform will not persist to. That is the condition under
+ * which the entropy binding cannot be confirmed, and the snap has to choose
+ * between honouring grants it can no longer attribute to a phrase and refusing
+ * them. Declared at module scope for the same reason as
+ * {@link captureStateWrites}: it wraps the harness conditionally.
+ */
+function failStateWrites(): void {
+  const host = globalThis as unknown as {
+    snap: { request: (args: RequestArgs) => Promise<unknown> };
+  };
+  const real = host.snap.request;
+  host.snap.request = async (args: RequestArgs) => {
+    if (args.method === 'snap_manageState' && args.params.operation !== 'get') {
+      throw new Error('state unavailable');
+    }
+    return real(args);
+  };
+}
+
 describe('connection gate and account resolution', () => {
   beforeEach(async () => {
     const entropy = await SLIP10Node.fromDerivationPath({
@@ -401,6 +423,101 @@ describe('connection gate and account resolution', () => {
           (write) => typeof write.entropyFingerprint === 'string',
         ),
       ).toBe(true);
+    });
+  });
+
+  describe('the entropy binding is settled before a grant is honoured', () => {
+    /*
+     * `reconcileEntropyBinding` runs on first key use, so a handler that reads
+     * a grant before deriving anything reads a store whose phrase change has
+     * not been noticed yet. That made the reconciliation arrive too late to
+     * matter on exactly the paths it was protecting.
+     *
+     * Both cases below are one `await` each in the handlers, of the kind whose
+     * removal reads as a simplification: the tests pass either way unless the
+     * store disagrees with the phrase being derived from, which is the only
+     * situation the ordering exists for.
+     */
+
+    /** A fingerprint that is not the one the mocked entropy produces. */
+    const OTHER_PHRASE = 'fingerprint recorded under a different phrase';
+
+    it('getAddress discloses nothing for a grant from another phrase', async () => {
+      stored = stateV2({
+        origins: CONNECTED,
+        entropyFingerprint: OTHER_PHRASE,
+      });
+
+      // Deriving is what discovers the mismatch and clears the grants, so
+      // checking the grant first meant the very call that revoked it still
+      // answered with the new phrase's address.
+      expect(await getAddress(ORIGIN)).toStrictEqual({ address: '' });
+    });
+
+    it('refuses connected methods for a grant from another phrase', async () => {
+      stored = stateV2({
+        origins: CONNECTED,
+        entropyFingerprint: OTHER_PHRASE,
+      });
+
+      await expect(
+        setNetwork(ORIGIN, { network: 'FUTURENET' }),
+      ).rejects.toThrow('Origin is not connected');
+      // `setNetwork` derives nothing on its own, so without the explicit
+      // binding step nothing here would ever have detected the change.
+      expect(dialogs).toStrictEqual([]);
+    });
+
+    it('refuses connected methods when the binding cannot be confirmed', async () => {
+      // A store carrying grants but no fingerprint takes the adoption arm,
+      // which writes. Failing that write leaves the binding unconfirmed: the
+      // snap cannot say which phrase these grants belong to.
+      stored = stateV2({ origins: CONNECTED });
+      failStateWrites();
+
+      await expect(getBalances(ORIGIN, {})).rejects.toThrow(
+        'could not confirm which secret recovery phrase',
+      );
+      expect(dialogs).toStrictEqual([]);
+    });
+
+    it('keeps honouring a grant once the binding is confirmed', async () => {
+      // The counterweight to the three above: the fail-closed paths must not
+      // fire on an ordinary store, or they would be a denial of service.
+      stored = stateV2({ origins: CONNECTED });
+
+      expect(await getAddress(ORIGIN)).toStrictEqual({ address: ADDRESS_0 });
+      expect(await getBalances(ORIGIN, {})).toMatchObject({
+        address: ADDRESS_0,
+      });
+    });
+  });
+
+  describe('addToken pre-dialog contract reads are budgeted', () => {
+    it('refuses when the token-read budget cannot cover both reads', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      // One slot short of the two `readTokenMetadata` needs, which is what
+      // distinguishes claiming 2 from claiming 1 or none.
+      expect(takeTokenReadBudget(MAX_TOKEN_READ_LOOKUPS - 1)).toBe(true);
+
+      await expect(addToken(ORIGIN, { contractId: CONTRACT })).rejects.toThrow(
+        'Too many token contract reads',
+      );
+      // The reads happen before any dialog can gate them, so a refusal that
+      // prompted first would not be a refusal.
+      expect(dialogs).toStrictEqual([]);
+      expect(fetchCalls).toStrictEqual([]);
+    });
+
+    it('reads and prompts when the budget allows', async () => {
+      stored = stateV2({ origins: CONNECTED });
+
+      expect(await addToken(ORIGIN, { contractId: CONTRACT })).toStrictEqual({
+        contractId: CONTRACT,
+        symbol: 'TEST',
+        decimals: 7,
+      });
+      expect(dialogs).toHaveLength(1);
     });
   });
 

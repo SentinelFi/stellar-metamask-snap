@@ -1,4 +1,4 @@
-import { getWalletAddress } from '../keys';
+import { ensureEntropyBinding, getWalletAddress } from '../keys';
 import { userRejected } from '../rpc/errors';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
@@ -24,6 +24,11 @@ import { ConnectDialog } from '../ui/dialogs';
 export async function requestAccess(
   origin: string,
 ): Promise<{ address: string }> {
+  // Before the disclosure check below, not merely before the dialog: that check
+  // reads a stored grant, and a grant recorded under a different secret
+  // recovery phrase must be cleared before it can be honoured. The address
+  // lookup that follows is a cache hit, since this derives the active account.
+  await ensureEntropyBinding();
   const address = await getWalletAddress();
 
   if (await hasCurrentDisclosure(origin)) {
@@ -62,10 +67,26 @@ export async function requestAccess(
  * `getAddress` — Freighter semantics: silent, and returns an empty string
  * when the origin has no standing grant (no dialog, no fingerprinting).
  *
+ * The grant is read on either side of the entropy binding, mirroring
+ * `assertConnected`. This method is where the ordering mattered most: it used
+ * to check the grant and only then derive, and deriving is what discovers a
+ * changed secret recovery phrase and clears the grants recorded under the old
+ * one. So the single call that revoked a grant would still answer it, handing
+ * an origin an address for a wallet it had never been granted access to. The
+ * second read observes the reconciliation and returns an empty string instead.
+ *
+ * The cheap first read is what keeps an origin with no grant from costing a key
+ * derivation, preserving the property that an unconnected caller cannot drive
+ * one from here.
+ *
  * @param origin - The requesting dapp origin.
  * @returns The wallet address, or an empty string when not connected.
  */
 export async function getAddress(origin: string): Promise<{ address: string }> {
+  if (!(await isOriginConnected(origin))) {
+    return { address: '' };
+  }
+  await ensureEntropyBinding();
   if (!(await isOriginConnected(origin))) {
     return { address: '' };
   }

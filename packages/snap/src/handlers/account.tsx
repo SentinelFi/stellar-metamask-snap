@@ -1,4 +1,8 @@
-import { getOwnedAccounts, getWalletAddress } from '../keys';
+import {
+  ensureEntropyBinding,
+  getOwnedAccounts,
+  getWalletAddress,
+} from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
 import { takeTokenReadBudget } from '../rpc/limiter';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
@@ -43,14 +47,36 @@ export type AccountBalances = AccountSummary & {
 };
 
 /**
- * Guard for companion-dapp methods: the origin must hold a connection grant.
+ * Guard for companion-dapp methods: the origin must hold a connection grant
+ * belonging to the secret recovery phrase the wallet is currently deriving
+ * from.
+ *
+ * The grant is read twice, on purpose, and the order is the point. The first
+ * read is the cheap common case and keeps an origin with no grant at all from
+ * costing a key derivation, which is what an ungated caller would otherwise be
+ * able to drive. Only once a grant is found does the entropy binding get
+ * established, and the second read then observes whatever that reconciliation
+ * did: a grant recorded under a different phrase has been cleared by then, so
+ * this refuses rather than acting on consent given for another wallet. Several
+ * of the methods behind this gate derive nothing at all (`setNetwork`,
+ * `addToken`), and the ones that do derive only after passing it, so without
+ * the explicit call the reconciliation would run too late to matter here.
+ *
+ * {@link ensureEntropyBinding} throws when the binding cannot be confirmed,
+ * which surfaces as an external-service error rather than a refusal to connect.
+ * That distinction is deliberate: the origin's grant may well be valid, and the
+ * honest answer is that the wallet cannot currently tell.
  *
  * @param origin - The requesting dapp origin.
  */
 export async function assertConnected(origin: string): Promise<void> {
-  if (!(await isOriginConnected(origin))) {
-    throw invalidRequest('Origin is not connected. Call requestAccess first.');
+  if (await isOriginConnected(origin)) {
+    await ensureEntropyBinding();
+    if (await isOriginConnected(origin)) {
+      return;
+    }
   }
+  throw invalidRequest('Origin is not connected. Call requestAccess first.');
 }
 
 /**
@@ -290,6 +316,27 @@ export async function addToken(
     );
   }
 
+  // Two simulations run here, before any dialog can gate them, and a contract
+  // ID that names no token fails before one ever opens, so the dialog throttle
+  // never engages on this path. The per-origin rate limit above is not a bound
+  // either: every control keyed on `origin` resets per subdomain, which is the
+  // whole reason the global budgets exist (../rpc/limiter.ts). A standing grant
+  // is required to get here, so an attacker pays an approved dialog per origin,
+  // but that is equally true of `signAuthEntry`'s ledger reads, which claim the
+  // budget anyway on the grounds that it bounds total outbound work against
+  // shared community infrastructure rather than merely the unauthenticated
+  // share of it. Same rule here.
+  //
+  // The token-read pool rather than the pre-dialog one, for the reason given at
+  // `takeTokenReadBudget`: charging contract reads to the pre-dialog pool would
+  // let ordinary token traffic degrade the user's own signing dialogs to
+  // "checks were skipped". Denial is an error rather than a silent skip,
+  // because there is nothing to show the user without the metadata.
+  if (!takeTokenReadBudget(2)) {
+    throw invalidRequest(
+      'Too many token contract reads have run recently. Try again in a minute.',
+    );
+  }
   const metadata = await readTokenMetadata(network, request.contractId);
   if (!metadata) {
     throw invalidRequest(
