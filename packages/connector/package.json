@@ -32,7 +32,8 @@
     "lint:fix": "yarn lint:eslint --fix",
     "prepack": "node ../../scripts/check-publish-env.mjs",
     "test": "jest",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@jest/globals": "^29.5.0",

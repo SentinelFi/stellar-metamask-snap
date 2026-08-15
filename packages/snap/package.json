@@ -28,7 +28,8 @@
     "serve": "mm-snap serve",
     "start": "mm-snap watch",
     "test": "yarn build && jest",
-    "test:coverage": "yarn build && jest --coverage"
+    "test:coverage": "yarn build && jest --coverage",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@metamask/key-tree": "^10.1.1",

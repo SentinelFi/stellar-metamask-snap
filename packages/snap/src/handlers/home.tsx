@@ -18,7 +18,7 @@ import type { TrackedToken } from '../state';
 import { getState } from '../state';
 import type { NetworkName } from '../state/networks';
 import { NETWORKS } from '../state/networks';
-import type { AccountSummary } from '../stellar/horizon';
+import type { AccountSummary, HorizonBalance } from '../stellar/horizon';
 import { getAccountSummary } from '../stellar/horizon';
 import { readTokenBalance } from '../stellar/token';
 import {
@@ -240,7 +240,7 @@ export async function homePage() {
   if (summary?.funded) {
     const tokenBalances = (
       await Promise.all(
-        tokens.map(async (token) => {
+        tokens.map(async (token): Promise<HorizonBalance | null> => {
           const balance = await readTokenBalance(
             network,
             token.contractId,
@@ -252,12 +252,12 @@ export async function homePage() {
             : {
                 asset: formatTokenAsset(token.symbol, token.contractId),
                 balance,
+                type: 'soroban',
+                contractId: token.contractId,
               };
         }),
       )
-    ).filter(
-      (entry): entry is { asset: string; balance: string } => entry !== null,
-    );
+    ).filter((entry): entry is HorizonBalance => entry !== null);
     summary = {
       ...summary,
       balances: [...summary.balances, ...tokenBalances],

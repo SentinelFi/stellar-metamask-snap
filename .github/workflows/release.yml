@@ -93,6 +93,11 @@ jobs:
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
 
+      # After the connector build: the site resolves connector types from
+      # `dist/`. See the fuller note on the same step in ci.yml.
+      - name: Typecheck (all workspaces)
+        run: yarn typecheck
+
       - name: Snap tests (with coverage thresholds)
         run: yarn workspace stellar-soroban-snap test:coverage
 

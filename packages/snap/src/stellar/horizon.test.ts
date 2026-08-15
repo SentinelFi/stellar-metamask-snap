@@ -80,10 +80,34 @@ describe('getAccountSummary', () => {
       funded: true,
       sequence: '123456',
       balances: [
-        { asset: 'XLM', balance: '10.5000000' },
-        { asset: `USDC:${ISSUER}`, balance: '2.0000000' },
+        { asset: 'XLM', balance: '10.5000000', type: 'native' },
+        { asset: `USDC:${ISSUER}`, balance: '2.0000000', type: 'classic' },
       ],
     });
+  });
+
+  it('marks classic rows so they cannot be confused with token rows', async () => {
+    // Tracked Soroban tokens are appended to this same array in the same
+    // `NAME:IDENTIFIER` shape, with a symbol the token contract chooses. The
+    // `type` field is what keeps the two apart for a consumer that would
+    // otherwise split on ':' and display the first field. A classic row must
+    // never carry a contractId either, or the discriminator loses its meaning.
+    mockFetch(
+      mockResponse({
+        sequence: '1',
+        balances: [
+          {
+            asset_type: 'credit_alphanum4',
+            asset_code: 'USDC',
+            asset_issuer: ISSUER,
+            balance: '2.0000000',
+          },
+        ],
+      }),
+    );
+    const [row] = (await getAccountSummary(HORIZON, ADDRESS)).balances;
+    expect(row?.type).toBe('classic');
+    expect(row?.contractId).toBeUndefined();
   });
 
   it('treats 404 as an unfunded account, not an error', async () => {

@@ -133,7 +133,7 @@ describe('funding and balances', () => {
       address: ADDRESS,
       funded: true,
       sequence: '123',
-      balances: [{ asset: 'XLM', balance: '10.0000000' }],
+      balances: [{ asset: 'XLM', balance: '10.0000000', type: 'native' }],
     };
     expect(isBalancesResult(base)).toBe(true);
     expect(isBalancesResult({ ...base, sequence: null })).toBe(true);
@@ -142,6 +142,62 @@ describe('funding and balances', () => {
     expect(isBalancesResult({ ...base, balances: [{ asset: 'XLM' }] })).toBe(
       false,
     );
+  });
+
+  it('requires every balance row to declare its kind', () => {
+    // `type` is what tells a classic `CODE:ISSUER` row apart from a Soroban
+    // `SYMBOL:CONTRACT_ID` one, where the symbol is chosen by the token
+    // contract. Admitting rows without it would let callers keep splitting
+    // `asset` on ':' and displaying an attacker-chosen symbol as though it
+    // were an issued asset code, which is the confusion the field exists to
+    // remove. So a row missing it, or carrying an unknown kind, is refused.
+    const row = (balance: Record<string, unknown>) => ({
+      address: ADDRESS,
+      funded: true,
+      sequence: '123',
+      balances: [balance],
+    });
+    expect(isBalancesResult(row({ asset: 'XLM', balance: '1' }))).toBe(false);
+    expect(
+      isBalancesResult(row({ asset: 'XLM', balance: '1', type: 'lumens' })),
+    ).toBe(false);
+  });
+
+  it('ties contractId to soroban rows in both directions', () => {
+    // A token row without its contract would force the caller back to parsing
+    // the display string, and a classic row carrying one would make the
+    // discriminator meaningless.
+    const row = (balance: Record<string, unknown>) => ({
+      address: ADDRESS,
+      funded: true,
+      sequence: '123',
+      balances: [balance],
+    });
+    expect(
+      isBalancesResult(
+        row({
+          asset: 'USDC:CABC',
+          balance: '1',
+          type: 'soroban',
+          contractId: 'CABC',
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isBalancesResult(
+        row({ asset: 'USDC:CABC', balance: '1', type: 'soroban' }),
+      ),
+    ).toBe(false);
+    expect(
+      isBalancesResult(
+        row({
+          asset: 'USDC:GABC',
+          balance: '1',
+          type: 'classic',
+          contractId: 'CABC',
+        }),
+      ),
+    ).toBe(false);
   });
 });
 

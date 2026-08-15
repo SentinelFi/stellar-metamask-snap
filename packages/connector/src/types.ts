@@ -96,10 +96,32 @@ export type SignMessageResult = {
   signerAddress: string;
 };
 
+/**
+ * What kind of asset a balance row describes.
+ *
+ * Branch on this rather than parsing {@link BalanceLine.asset}. Classic assets
+ * render as `CODE:ISSUER` and tracked Soroban tokens as `SYMBOL:CONTRACT_ID`,
+ * so the two are the same shape. A token's symbol is reported by the contract
+ * and chosen by whoever wrote it, which means a contract the user was
+ * persuaded to track can present itself as `USDC` and a caller splitting on
+ * `:` will display exactly that. The only difference in the string is the
+ * leading character of the second field.
+ */
+export type BalanceKind = 'native' | 'classic' | 'soroban';
+
 export type BalanceLine = {
-  /** `'XLM'` for the native asset, otherwise `CODE:ISSUER`. */
+  /**
+   * `'XLM'` for the native asset, `CODE:ISSUER` for a classic asset, and
+   * `SYMBOL:CONTRACT_ID` for a tracked Soroban token. This is a display
+   * string, not an identity: use {@link BalanceLine.type} to tell the cases
+   * apart and {@link BalanceLine.contractId} to identify a token.
+   */
   asset: string;
   balance: string;
+  /** Which kind of asset this row describes. */
+  type: BalanceKind;
+  /** The token contract, present only when `type` is `'soroban'`. */
+  contractId?: string;
 };
 
 export type BalancesResult = {

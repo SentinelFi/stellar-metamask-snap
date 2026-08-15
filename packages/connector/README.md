@@ -49,6 +49,22 @@ await snap.signTransaction(xdr, { address: accounts[1].address });
 
 Requesting an address the wallet does not hold returns `-3`.
 
+### Reading balances
+
+`getBalances()` returns the account's classic Horizon balances plus any Soroban tokens the user tracks, in one array. Branch on `type`, never on the `asset` string:
+
+```ts
+const { balances } = await snap.getBalances();
+
+const xlm = balances.find((line) => line.type === 'native')?.balance ?? '0';
+const tokens = balances.filter((line) => line.type === 'soroban');
+// tokens[0].contractId identifies the contract; tokens[0].asset is display only
+```
+
+`asset` is a display string: `XLM` for the native asset, `CODE:ISSUER` for a classic asset, and `SYMBOL:CONTRACT_ID` for a tracked token. The last two are the same shape, and a token's symbol is reported by its contract, so a contract the user was persuaded to track can call itself `USDC`. Code that splits `asset` on `:` and shows the first field will display exactly that. `type` and `contractId` are what make the distinction available without parsing.
+
+`tokensUnavailable: true` means the wallet's global token-read budget was exhausted and the token rows are missing, not that the account holds none of them. The classic balances are complete either way.
+
 ## 2. Freighter-compatible facade
 
 Same method names and `{ ...result, error? }` convention as `@stellar/freighter-api` — a near drop-in swap:

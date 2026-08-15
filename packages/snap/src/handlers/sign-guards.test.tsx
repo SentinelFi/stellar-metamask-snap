@@ -490,6 +490,98 @@ describe('signing handlers: fail-closed gates', () => {
       expect(dialogs).toHaveLength(0);
     });
 
+    /**
+     * Installs a fetch stub that lets each ledger source be answered or failed
+     * independently, so the cross-check can be tested for what it does when
+     * only one of them replies.
+     *
+     * @param options - Which sources answer.
+     * @param options.horizon - Ledger sequence from Horizon's root endpoint,
+     * or null to fail the request.
+     * @param options.rpc - Ledger sequence from `getLatestLedger`, or null to
+     * fail the request.
+     */
+    function stubLedgerSources({
+      horizon,
+      rpc,
+    }: {
+      horizon: number | null;
+      rpc: number | null;
+    }) {
+      (globalThis as { fetch?: unknown }).fetch = async (
+        url: string,
+        init?: { method?: string },
+      ) => {
+        await Promise.resolve();
+        const isRpc = init?.method === 'POST';
+        const sequence = isRpc ? rpc : horizon;
+        if (sequence === null) {
+          throw new Error(`source unavailable: ${String(url)}`);
+        }
+        const payload = Buffer.from(
+          JSON.stringify(
+            isRpc
+              ? { jsonrpc: '2.0', id: 1, result: { sequence } }
+              : // eslint-disable-next-line @typescript-eslint/naming-convention
+                { core_latest_ledger: sequence },
+          ),
+          'utf8',
+        );
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          arrayBuffer: async () => payload,
+        };
+      };
+    }
+
+    it('refuses on PUBLIC when only one ledger source answers', async () => {
+      // The lifetime bound is `Math.min` over the sources that replied, and a
+      // minimum over one value is that value. So a single source that
+      // overstates the ledger height sets the authorization's real lifetime by
+      // itself while the dialog reports a duration computed from the same
+      // inflated number: "expires in ~5 min" over an entry that stays valid for
+      // as long as the source cares to claim. On PUBLIC the Soroban RPC is a
+      // third-party gateway and Horizon answering 429 under load is enough to
+      // reach this state, so both sources are required there.
+      stored = stateV2({ network: 'PUBLIC', origins: CONNECTED });
+      stubLedgerSources({ horizon: 100_000, rpc: null });
+      await expect(
+        signAuthEntry(ORIGIN, {
+          authEntry: encode(addressAuthEntry(ADDRESS_0)),
+          networkPassphrase: Networks.PUBLIC,
+        }),
+      ).rejects.toThrow('Only one of the two ledger sources');
+      expect(dialogs).toHaveLength(0);
+    });
+
+    it('signs on PUBLIC when both ledger sources agree', async () => {
+      // The counterpart to the test above: the refusal must be caused by the
+      // missing second source, not by something else on the PUBLIC path.
+      stored = stateV2({ network: 'PUBLIC', origins: CONNECTED });
+      stubLedgerSources({ horizon: 100_000, rpc: 100_001 });
+      const result = await signAuthEntry(ORIGIN, {
+        authEntry: encode(addressAuthEntry(ADDRESS_0)),
+        networkPassphrase: Networks.PUBLIC,
+      });
+      expect(result.signerAddress).toBe(ADDRESS_0);
+      expect(dialogs).toHaveLength(1);
+    });
+
+    it('accepts a single ledger source on a test network', async () => {
+      // Both test-network endpoints are SDF, and a test-network signature is
+      // not worth trading development ergonomics for. The stricter rule is
+      // scoped to PUBLIC, mirroring `assertNetworkStated`.
+      stored = stateV2({ origins: CONNECTED });
+      stubLedgerSources({ horizon: null, rpc: 100_000 });
+      const result = await signAuthEntry(ORIGIN, {
+        authEntry: encode(addressAuthEntry(ADDRESS_0)),
+      });
+      expect(result.signerAddress).toBe(ADDRESS_0);
+      expect(dialogs).toHaveLength(1);
+    });
+
     it('claims the global pre-dialog budget for its ledger lookups', async () => {
       // The finding this guards: these two ledger reads are pre-dialog network
       // work on a surface callable without a connection grant, and they drew on

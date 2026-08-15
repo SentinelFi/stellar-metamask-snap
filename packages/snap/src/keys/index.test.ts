@@ -69,6 +69,27 @@ describe('key derivation', () => {
     delete (globalThis as { snap?: unknown }).snap;
   });
 
+  describe('derived keys survive the seed being wiped', () => {
+    it('still signs after deriveFromNode zeroes its seed copy', async () => {
+      // `deriveFromNode` clears the Buffer it hands to
+      // `Keypair.fromRawEd25519Seed`, so one fewer copy of the account secret
+      // is left reachable than the function creates. That is only safe while
+      // the SDK copies the seed rather than retaining the buffer. If a future
+      // version starts retaining it, every signature would be produced from
+      // 32 zero bytes: the address would be wrong and this assertion fails,
+      // instead of the wipe being quietly removed or, worse, kept while
+      // signing breaks somewhere far from here.
+      const { keypair } = await resolveSigningKeypair(SEP5_ADDRESS_1);
+      expect(keypair.publicKey()).toBe(SEP5_ADDRESS_1);
+      const message = Buffer.from('seed-wipe canary', 'utf8');
+      expect(keypair.verify(message, keypair.sign(message))).toBe(true);
+      // The all-zero seed is what a retained-and-wiped buffer would produce.
+      expect(keypair.publicKey()).not.toBe(
+        Keypair.fromRawEd25519Seed(Buffer.alloc(32, 0)).publicKey(),
+      );
+    });
+  });
+
   describe('resolveSigningKeypair', () => {
     it('returns the active account when no address is requested', async () => {
       stored = { ...(stored as object), activeAccount: 2 };

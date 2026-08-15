@@ -233,7 +233,7 @@ describe('StellarSnap', () => {
         address: ADDRESS,
         funded: true,
         sequence: '1',
-        balances: [{ asset: 'XLM', balance: '10.0000000' }],
+        balances: [{ asset: 'XLM', balance: '10.0000000', type: 'native' }],
       },
       addToken: { contractId: 'CABC', symbol: 'USDC', decimals: 7 },
       signAuthEntry: { signedAuthEntry: 'AAAA', signerAddress: ADDRESS },

@@ -121,6 +121,22 @@ jobs:
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
 
+      # The root tsconfig turns on `strict`, `noUncheckedIndexedAccess`, and
+      # `exactOptionalPropertyTypes`, but nothing in this workflow used to run
+      # the compiler over the snap or the site: `mm-snap build` transpiles
+      # through SWC and `gatsby build` through Babel, and typed linting reports
+      # lint rules rather than type errors. Only the connector was type-checked,
+      # as a side effect of building with tsc, so a type error in the signing
+      # surface could land green. This step is what makes those compiler options
+      # a gate rather than documentation.
+      #
+      # It runs *after* the connector build, not next to the lint step, because
+      # the site imports the connector as a workspace package and resolves its
+      # types from `dist/`. Type-checking the site against a stale or absent
+      # connector build would report errors that say nothing about this commit.
+      - name: Typecheck (all workspaces)
+        run: yarn typecheck
+
       # Run with coverage so the per-module thresholds in jest.config.js gate
       # the build. They exist because the fail-closed signing guards are each
       # a single `if` whose deletion is invisible in review; the threshold on

@@ -20,11 +20,26 @@
  * not one per advisory. Reading that output suggests a handful of issues when
  * the JSON reports dozens. This script reads the JSON.
  *
+ * A third trap, and the reason this script's bundle check looks the way it
+ * does. The obvious way to verify "this package does not ship" is to search the
+ * bundle for the package name, which is what this script did originally. That
+ * check has no power: `mm-snap build` emits a minified bundle in which package
+ * names do not survive. On the 0.1.0 bundle the strings `stellar-base` and
+ * `@noble` are both absent while both packages demonstrably ship, so a zero-hit
+ * result proved nothing and would have kept passing on the day a dependency
+ * bump pulled axios in. The check now searches for `bundleMarkers`, string
+ * literals from each package's runtime code, and it first proves it can find
+ * anything at all by requiring the allowlist's `positiveControls` (markers from
+ * packages that certainly do ship) to be present. A missing positive control
+ * means the technique itself has stopped working, which is reported as a
+ * failure rather than as a clean run.
+ *
  * Usage:
  *   node scripts/check-known-advisories.mjs <audit.json>
  *
- * Exits non-zero when a vulnerable module is not on the allowlist, or when a
- * module the allowlist claims is absent from the bundle turns out to be in it.
+ * Exits non-zero when a vulnerable module is not on the allowlist, when a
+ * module the allowlist claims is absent from the bundle turns out to be in it,
+ * or when the bundle search can no longer be shown to work.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -100,14 +115,59 @@ for (const [name, entry] of found) {
   }
 }
 
-// 2. Every "absent from the bundle" claim must actually hold. This is the
-//    check that keeps the allowlist honest as dependencies and bundling
-//    behaviour change underneath it.
+// 2. The bundle search must be shown to work before any absence result from it
+//    is believed. Minification strips package names and can strip or rewrite
+//    other text too, so a search that finds nothing is only evidence when the
+//    same search reliably finds things that are certainly there.
+const positiveControls = allowlist.positiveControls ?? [];
+if (positiveControls.length === 0) {
+  failures.push(
+    `NO POSITIVE CONTROL  ${ALLOWLIST} defines no \`positiveControls\`, so the ` +
+      `absence checks below cannot be shown to have any power.\n` +
+      `                     Add at least one marker from a package that ` +
+      `certainly ships (key derivation or stellar-base are the obvious ones).`,
+  );
+}
+for (const control of positiveControls) {
+  if (!bundle.includes(control.marker)) {
+    failures.push(
+      `CONTROL LOST  the positive control "${control.marker}" (from ` +
+        `${control.from}) is NOT present in ${BUNDLE}.\n` +
+        `              That package certainly ships, so the bundle search has ` +
+        `stopped working: minification, bundling, or the dependency itself has ` +
+        `changed. Every "absent from the bundle" result below is therefore ` +
+        `unproven, and this script refuses to report them as clean.\n` +
+        `              Re-derive the markers against the current bundle before ` +
+        `trusting any advisory disposition that rests on them.`,
+    );
+  }
+}
+
+// 3. Every "absent from the bundle" claim must actually hold, checked through
+//    markers rather than the package name. This is what keeps the allowlist
+//    honest as dependencies and bundling behaviour change underneath it.
 for (const [name, entry] of Object.entries(allowed)) {
-  if (entry.absentFromBundle && bundle.includes(name)) {
+  if (!entry.absentFromBundle) {
+    continue;
+  }
+  const markers = entry.bundleMarkers ?? [];
+  if (markers.length === 0) {
+    failures.push(
+      `NO MARKERS  ${ALLOWLIST} claims "${name}" is absent from the bundle but ` +
+        `gives no \`bundleMarkers\` to check it with.\n` +
+        `            An unverifiable absence claim is the thing this script ` +
+        `exists to prevent. Add string literals from the package's runtime ` +
+        `code (error messages, header names, protocol constants); identifiers ` +
+        `and file paths do not survive minification.`,
+    );
+    continue;
+  }
+  const present = markers.filter((marker) => bundle.includes(marker));
+  if (present.length > 0) {
     failures.push(
       `CLAIM BROKEN  ${ALLOWLIST} states "${name}" is absent from the bundle, ` +
-        `but it appears in ${BUNDLE}.\n` +
+        `but ${present.length} of its markers appear in ${BUNDLE}:\n` +
+        `${present.map((marker) => `                "${marker}"`).join('\n')}\n` +
         `              The advisory disposition rests on that absence, so it no ` +
         `longer holds. Either restore the tree-shaking that kept it out, or ` +
         `re-assess the advisory against code that now ships and record the ` +
@@ -116,7 +176,7 @@ for (const [name, entry] of Object.entries(allowed)) {
   }
 }
 
-// 3. A module that genuinely ships must carry a written justification. This
+// 4. A module that genuinely ships must carry a written justification. This
 //    arm exists so `inBundle` can never be used as a quiet escape hatch.
 for (const [name, entry] of Object.entries(allowed)) {
   if (entry.inBundle && !entry.reason) {
@@ -138,7 +198,7 @@ const shipping = Object.entries(allowed)
   .map(([name]) => name);
 const verifiedAbsent = Object.entries(allowed)
   .filter(([, entry]) => entry.absentFromBundle)
-  .map(([name]) => name);
+  .map(([name, entry]) => `${name} (${entry.bundleMarkers.length} markers)`);
 const perModule = [...found]
   .map(
     ([name, entry]) => `  ${name}: ${entry.count} (highest: ${entry.severity})`,
@@ -148,6 +208,8 @@ const perModule = [...found]
 process.stdout.write(
   `Transitive production advisories: ${total} across ${found.size} module(s), all reviewed in ${ALLOWLIST}.\n` +
     `${perModule}\n\n` +
+    `Bundle search proven live by ${positiveControls.length} positive control(s): ` +
+    `${positiveControls.map((control) => control.from).join(', ')}\n` +
     `Verified absent from ${BUNDLE}: ${verifiedAbsent.join(', ') || 'none'}\n` +
     `Vulnerable packages shipping in the bundle: ${shipping.join(', ') || 'none'}\n`,
 );

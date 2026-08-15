@@ -324,9 +324,13 @@ const Index = () => {
         try {
           const summary = await snapClient.getBalances();
           funded = summary.funded;
+          // Matched on `type`, not on the display string. A tracked Soroban
+          // token renders as `SYMBOL:CONTRACT_ID` with a symbol its contract
+          // chooses, so asset names are not identities; this is the idiom the
+          // connector's `BalanceKind` exists to make available.
           xlm = summary.funded
-            ? (summary.balances.find((line) => line.asset === 'XLM')?.balance ??
-              '0')
+            ? (summary.balances.find((line) => line.type === 'native')
+                ?.balance ?? '0')
             : '0';
         } catch {
           // No grant yet — balance stays unknown.

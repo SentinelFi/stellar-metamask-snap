@@ -14,26 +14,75 @@
     "in an ALREADY-UNREACHABLE package is silent, while an advisory in any package",
     "not listed here fails the build and demands a decision.",
     "",
-    "`absentFromBundle: true` is not a claim taken on trust: the script greps the",
-    "built dist/bundle.js and fails if the package turns out to be present after",
-    "all. A package that genuinely does ship must instead be listed with",
-    "`inBundle: true` and a written justification, which is the entry a reviewer",
-    "should always stop at."
+    "`absentFromBundle: true` is not a claim taken on trust: the script searches",
+    "the built dist/bundle.js for that package's `bundleMarkers` and fails if any",
+    "of them turns up. A package that genuinely does ship must instead be listed",
+    "with `inBundle: true` and a written justification, which is the entry a",
+    "reviewer should always stop at.",
+    "",
+    "WHY MARKERS RATHER THAN PACKAGE NAMES. The obvious check is to search the",
+    "bundle for the package name, and that is what this file's gate used to do. It",
+    "cannot work: `mm-snap build` emits a minified bundle in which package names do",
+    "not survive. Measured on the 0.1.0 bundle, the strings `stellar-base` and",
+    "`@noble` are both absent while both packages demonstrably ship. A zero-hit",
+    "result therefore carried no information, and the gate would have passed",
+    "unchanged on the day a dependency bump started pulling axios into the bundle.",
+    "",
+    "A marker must be a STRING LITERAL from the package's runtime code (an error",
+    "message, a header name, a protocol constant). Identifiers, class names, and",
+    "file paths are renamed or stripped by minification; string literals are not.",
+    "Prefer several markers per package so a single upstream reword cannot silently",
+    "disarm the check, and re-derive them whenever the parent dependency crosses a",
+    "major version.",
+    "",
+    "WHY POSITIVE CONTROLS. Markers only prove absence if the search would have",
+    "found them had they been there. `positiveControls` are markers from packages",
+    "that certainly DO ship; the script requires every one of them to be found. If",
+    "one goes missing, the bundling or minification behaviour has changed in a way",
+    "that may also have disarmed the absence checks, so the script fails rather",
+    "than reporting a clean result it can no longer justify. This is what keeps the",
+    "gate honest about its own power."
+  ],
+  "positiveControls": [
+    {
+      "marker": "Asset code is invalid",
+      "from": "@stellar/stellar-sdk (stellar-base)",
+      "reason": "The Asset constructor's validation message. stellar-base is the core of what this snap bundles, so if this string is missing the bundle is not what this script thinks it is."
+    },
+    {
+      "marker": "Invalid private key: Value is not a valid",
+      "from": "@metamask/key-tree",
+      "reason": "SLIP10Node's private-key assertion. Key derivation is the one subsystem that cannot possibly have been tree-shaken out of a signing snap."
+    }
   ],
   "modules": {
     "axios": {
       "absentFromBundle": true,
       "via": "@stellar/stellar-sdk",
+      "bundleMarkers": [
+        "Request failed with status code",
+        "maxContentLength size of",
+        "XSRF-TOKEN"
+      ],
       "reason": "The snap hand-rolls its fetch-based Horizon and Soroban RPC client (src/stellar/http.ts, horizon.ts, rpc.ts) and never imports the SDK's Horizon or webauth modules, so webpack tree-shakes the entire axios subtree out of the bundle."
     },
     "form-data": {
       "absentFromBundle": true,
       "via": "@stellar/stellar-sdk",
-      "reason": "Reached only through axios, which is itself absent. See the axios entry."
+      "bundleMarkers": [
+        "FormData boundary must be a string",
+        "multipart/form-data; boundary="
+      ],
+      "reason": "Reached only through axios, which is itself absent. See the axios entry. The snap's own submission path posts application/x-www-form-urlencoded via URLSearchParams and constructs no multipart body."
     },
     "follow-redirects": {
       "absentFromBundle": true,
       "via": "@stellar/stellar-sdk",
+      "bundleMarkers": [
+        "ERR_FR_TOO_MANY_REDIRECTS",
+        "Maximum number of redirects exceeded",
+        "Redirected request failed"
+      ],
       "reason": "Reached only through axios, which is itself absent. See the axios entry. Note the snap sets `redirect: 'error'` on every fetch it makes, so it does not follow redirects by any path."
     }
   }

@@ -639,7 +639,25 @@ describe('connection gate and account resolution', () => {
       expect(result.balances).toContainEqual({
         asset: `TEST:${CONTRACT}`,
         balance: '1',
+        type: 'soroban',
+        contractId: CONTRACT,
       });
+    });
+
+    it('marks token rows so a symbol cannot pose as a classic asset code', async () => {
+      // A token's symbol is reported by its contract, so a contract the user
+      // was persuaded to track can call itself anything. `TEST:C...` and a
+      // classic `TEST:G...` differ only in one character of the second field,
+      // which a consumer splitting on ':' will not notice. The `type` field
+      // and the separate `contractId` are what make the distinction available
+      // without parsing the display string.
+      const result = await getBalances(ORIGIN, {});
+      const classic = result.balances.filter((row) => row.type !== 'soroban');
+      const tokens = result.balances.filter((row) => row.type === 'soroban');
+      expect(classic).not.toHaveLength(0);
+      expect(tokens).toHaveLength(1);
+      expect(tokens[0]?.contractId).toBe(CONTRACT);
+      expect(classic.every((row) => row.contractId === undefined)).toBe(true);
     });
 
     it('marks the omission instead of silently dropping token rows', async () => {
@@ -650,7 +668,7 @@ describe('connection gate and account resolution', () => {
       const result = await getBalances(ORIGIN, {});
       expect(result.tokensUnavailable).toBe(true);
       expect(result.balances).toStrictEqual([
-        { asset: 'XLM', balance: '100.0000000' },
+        { asset: 'XLM', balance: '100.0000000', type: 'native' },
       ]);
       // The classic Horizon lookup still ran; only the fan-out was skipped.
       expect(fetchCalls.some((url) => url.includes('/accounts/'))).toBe(true);

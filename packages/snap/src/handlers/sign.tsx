@@ -561,6 +561,20 @@ export async function signAuthEntry(
   // minimum means a lying source can only shorten a lifetime (at worst a
   // spurious "expired" rejection), never extend one.
   //
+  // That last property is what {@link requiredLedgerSources} enforces, and it
+  // is worth being precise about why it needs enforcing at all. A minimum over
+  // one value is that value. So "take the minimum of the sources we can reach"
+  // silently becomes "trust whichever source answered" the moment the other
+  // one does not, and the case where that happens is not exotic: Horizon
+  // answering 429 under load is enough. The result would be a mainnet
+  // authorization whose real lifetime is set entirely by the gateway, with a
+  // dialog confidently reporting a duration computed from the same inflated
+  // number. Requiring both sources on PUBLIC restores the property the
+  // paragraph above claims. Test networks keep the single-source behaviour:
+  // there both endpoints are SDF, and a test-network signature is not worth
+  // trading development ergonomics for. This mirrors `assertNetworkStated`
+  // above, which likewise tightens only where being wrong is expensive.
+  //
   // Both reads are pre-dialog network work. They sit behind a connection
   // grant, unlike the `signTransaction` safety lookups: an address-credential
   // entry always names its authorizing account, and naming an account is
@@ -578,7 +592,9 @@ export async function signAuthEntry(
   // signature's lifetime, and this module already refuses to sign when the
   // height cannot be verified. Denial therefore takes the same fail-closed
   // path as an unreachable endpoint.
+  const requiredLedgerSources = network.name === 'PUBLIC' ? 2 : 1;
   let latestLedger: number | null = null;
+  let answeredSources = 0;
   const budgeted = takePredialogBudget(connected, 2);
   if (budgeted) {
     const [rpcLedger, horizonLedger] = await Promise.all([
@@ -588,7 +604,11 @@ export async function signAuthEntry(
     const ledgerSources = [rpcLedger, horizonLedger].filter(
       (sequence): sequence is number => sequence !== null,
     );
-    latestLedger = ledgerSources.length > 0 ? Math.min(...ledgerSources) : null;
+    answeredSources = ledgerSources.length;
+    latestLedger =
+      answeredSources >= requiredLedgerSources
+        ? Math.min(...ledgerSources)
+        : null;
   }
 
   const bounded = boundAuthExpiration(
@@ -604,8 +624,19 @@ export async function signAuthEntry(
         'This authorization would stay valid for too long. Ask the site for a shorter expiration.',
       );
     }
-    // Same fail-closed outcome either way; the message distinguishes an
-    // unreachable endpoint from a budget the caller can simply wait out.
+    // Same fail-closed outcome in every case; the message distinguishes the
+    // three ways of getting here, because the caller's remedy differs.
+    if (budgeted && answeredSources > 0) {
+      // Only reachable on PUBLIC: one source answered and the other did not,
+      // so there is a height but nothing to check it against.
+      throw externalServiceError(
+        'Only one of the two ledger sources could be reached, so the ' +
+          'authorization expiry could not be cross-checked. A single endpoint ' +
+          'that overstates the ledger height would make this authorization ' +
+          'outlive what the dialog shows, so it is refused on PUBLIC rather ' +
+          'than signed against an unverified height. Try again shortly.',
+      );
+    }
     throw externalServiceError(
       budgeted
         ? 'Could not reach the Stellar RPC to verify the authorization expiry. Try again later.'

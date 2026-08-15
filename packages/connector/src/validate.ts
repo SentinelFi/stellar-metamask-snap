@@ -187,6 +187,32 @@ export const isFundResult = (value: unknown): value is FundResult =>
   isRecord(value) && value.funded === true && isString(value.address);
 
 /**
+ * Validates one balance row.
+ *
+ * `type` is required, not optional. It is the field that tells a classic
+ * `CODE:ISSUER` row apart from a Soroban `SYMBOL:CONTRACT_ID` one, and a
+ * validator that admitted rows without it would let callers keep writing the
+ * `asset.split(':')` code the field exists to retire, silently, against a
+ * symbol the token contract chose. `contractId` is required exactly when the
+ * row is a token, for the same reason.
+ *
+ * @param value - The raw row.
+ * @returns True when the shape matches.
+ */
+const isBalanceLine = (value: unknown): boolean => {
+  if (!isRecord(value) || !isString(value.asset) || !isString(value.balance)) {
+    return false;
+  }
+  if (value.type === 'soroban') {
+    return isString(value.contractId);
+  }
+  return (
+    (value.type === 'native' || value.type === 'classic') &&
+    value.contractId === undefined
+  );
+};
+
+/**
  * Validates a `getBalances` result.
  *
  * @param value - The raw response.
@@ -198,10 +224,7 @@ export const isBalancesResult = (value: unknown): value is BalancesResult =>
   typeof value.funded === 'boolean' &&
   (value.sequence === null || isString(value.sequence)) &&
   Array.isArray(value.balances) &&
-  value.balances.every(
-    (entry) =>
-      isRecord(entry) && isString(entry.asset) && isString(entry.balance),
-  ) &&
+  value.balances.every(isBalanceLine) &&
   // Absent or exactly `true`. Admitting `false` would give the flag two
   // spellings for "token rows are present" and invite `!tokensUnavailable`
   // checks that read the wrong one.

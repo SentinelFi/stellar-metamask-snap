@@ -163,7 +163,26 @@ async function deriveFromNode(
     throw new Error('Failed to derive a private key.');
   }
 
-  return Keypair.fromRawEd25519Seed(Buffer.from(child.privateKeyBytes));
+  // The copy is zeroed once the keypair holds its own seed, so this function
+  // leaves one fewer reachable copy of the account's secret behind than it
+  // creates. `Keypair.fromRawEd25519Seed` copies rather than retaining the
+  // buffer (verified against @stellar/stellar-sdk 16.2.0: signing and
+  // `rawSecretKey()` are unaffected by clearing it afterwards), so this is
+  // safe; a future SDK that started retaining it would break signing loudly in
+  // the SEP-0005 vector tests rather than silently.
+  //
+  // Deliberately NOT zeroed: `child.privateKeyBytes` itself. That is the
+  // SLIP10Node's own field, not a copy handed out, so clearing it would corrupt
+  // the node for any later derivation from the same parent. And this is
+  // mitigation, not a guarantee: the parent node still holds the subtree key
+  // for the lifetime of the request, and a JavaScript runtime may have copied
+  // any of it out of reach. It narrows the window; it does not close it.
+  const seed = Buffer.from(child.privateKeyBytes);
+  try {
+    return Keypair.fromRawEd25519Seed(seed);
+  } finally {
+    seed.fill(0);
+  }
 }
 
 /**

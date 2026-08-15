@@ -16,10 +16,41 @@ import { discardBody, readJsonBounded } from './http';
 import { externalServiceError } from '../rpc/errors';
 import { sanitizeInlineText } from '../ui/format';
 
+/**
+ * What kind of asset a balance row describes.
+ *
+ * This exists because {@link HorizonBalance.asset} cannot carry the
+ * distinction. Classic assets render as `CODE:ISSUER`, and tracked Soroban
+ * tokens are appended to the same array in the same shape
+ * (`SYMBOL:CONTRACT_ID`, see `handlers/account.tsx`), so a consumer splitting
+ * on `:` and displaying the first field, the obvious reading of that
+ * convention, shows a contract-reported symbol as though it were an issued
+ * asset code. The symbol is chosen by whoever wrote the contract, so `USDC`
+ * from a contract the user was merely persuaded to track is indistinguishable
+ * from `USDC` issued on the ledger; only the leading character of the second
+ * field differs, and no display layer is obliged to notice that.
+ *
+ * The snap's own home page already avoids this by rendering tokens through
+ * `formatTokenAsset` (symbol plus truncated contract) rather than the
+ * colon form. This field carries the same distinction across the RPC boundary,
+ * so a dapp does not have to reverse-engineer it from the string.
+ */
+export type BalanceKind = 'native' | 'classic' | 'soroban';
+
 export type HorizonBalance = {
   /** `'XLM'` for the native asset, otherwise `CODE:ISSUER`. */
   asset: string;
   balance: string;
+  /**
+   * Which kind of asset this row describes. Consumers that render an asset
+   * name should branch on this rather than parsing {@link HorizonBalance.asset}.
+   */
+  type: BalanceKind;
+  /**
+   * The token contract, present only on `soroban` rows. Carried separately so
+   * a consumer never has to recover it by splitting the display string.
+   */
+  contractId?: string;
 };
 
 export type AccountSummary = {
@@ -146,13 +177,15 @@ export async function getAccountSummary(
   return {
     funded: true,
     sequence: body.sequence,
-    balances: body.balances.slice(0, MAX_DISPLAY_BALANCES).map((entry) => ({
-      asset:
-        entry.asset_type === 'native'
-          ? 'XLM'
-          : `${entry.asset_code ?? '?'}:${entry.asset_issuer ?? '?'}`,
-      balance: entry.balance,
-    })),
+    balances: body.balances.slice(0, MAX_DISPLAY_BALANCES).map((entry) =>
+      entry.asset_type === 'native'
+        ? { asset: 'XLM', balance: entry.balance, type: 'native' as const }
+        : {
+            asset: `${entry.asset_code ?? '?'}:${entry.asset_issuer ?? '?'}`,
+            balance: entry.balance,
+            type: 'classic' as const,
+          },
+    ),
   };
 }
 

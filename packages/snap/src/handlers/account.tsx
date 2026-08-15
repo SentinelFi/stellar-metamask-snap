@@ -178,9 +178,18 @@ async function readBalances(
               address,
               token.decimals,
             );
+            // `type` and `contractId` are what keep this row distinguishable
+            // from a classic `CODE:ISSUER` row. The symbol is contract-reported
+            // and attacker-chosen within its charset, so the display string
+            // alone cannot be trusted to identify the asset (see `BalanceKind`).
             return balance === null
               ? null
-              : { asset: `${token.symbol}:${token.contractId}`, balance };
+              : {
+                  asset: `${token.symbol}:${token.contractId}`,
+                  balance,
+                  type: 'soroban' as const,
+                  contractId: token.contractId,
+                };
           }),
         )
       ).filter((entry): entry is HorizonBalance => entry !== null)

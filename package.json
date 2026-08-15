@@ -25,7 +25,8 @@
     "lint:misc": "prettier '**/*.json' '**/*.md' '**/*.yml' '!.yarnrc.yml' --ignore-path .gitignore --no-error-on-unmatched-pattern",
     "setup:hooks": "git config core.hooksPath .githooks",
     "start": "yarn workspaces foreach --parallel --interlaced --verbose run start",
-    "test": "yarn workspace stellar-soroban-snap run test && yarn workspace stellar-soroban-snap-connector run test"
+    "test": "yarn workspace stellar-soroban-snap run test && yarn workspace stellar-soroban-snap-connector run test",
+    "typecheck": "yarn workspaces foreach --parallel --verbose run typecheck"
   },
   "resolutions": {
     "@metamask/superstruct": "^3.4.1",
