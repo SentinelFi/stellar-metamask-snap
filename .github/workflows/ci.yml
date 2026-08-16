@@ -150,6 +150,16 @@ jobs:
       - name: Connector tests (with coverage thresholds)
         run: yarn workspace stellar-soroban-snap-connector test:coverage
 
+      # The docs site is rendered from the repository's markdown, and the
+      # renderer additionally asserts that every public method of the
+      # connector's client appears in docs/CONNECTOR-API.md. Running it here
+      # means a method added without a documentation entry fails on the pull
+      # request, rather than publishing a reference that quietly describes a
+      # smaller API than the one that ships. The deploy workflow only runs on
+      # main, so without this step nothing would check it beforehand.
+      - name: Build documentation site
+        run: yarn build:docs
+
       # SBOM for the release attestation trail (docs/RELEASE.md retains it
       # with the tag). Generated on every run so the artifact of a release
       # build is always present. syft reads yarn.lock directly, so it works

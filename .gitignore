@@ -3,6 +3,7 @@ Thumbs.db
 Desktop.ini
 dist/
 build/
+docs-site/
 coverage/
 .cache/
 public/

@@ -106,6 +106,10 @@ The companion dapp ([packages/site](packages/site)) is a working Stellar wallet 
 
 ## Documentation
 
+The curated pages build into a static site with `yarn build:docs`, rendered from the markdown in this repository. The site is a renderer, not a copy: every page in it is one of the files below, so there is no second place for the documentation to drift into. Publishing is a deliberate step rather than an automatic one: [.github/workflows/docs.yml](.github/workflows/docs.yml) deploys to GitHub Pages when run from the Actions tab, and the comment at the top of it says what to enable first.
+
+- [docs/CONNECTOR-API.md](docs/CONNECTOR-API.md): the SEP-0043 client dapps integrate against
+- [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md): assets, trust boundaries, mechanisms, and accepted residual risk
 - [CHANGELOG.md](CHANGELOG.md): release history
 - [docs/RELEASE.md](docs/RELEASE.md): how a release is cut, and the four files that carry the version
 - [docs/MENTAL-MAP.md](docs/MENTAL-MAP.md): architecture, key decisions, and risk map

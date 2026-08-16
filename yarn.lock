@@ -18303,6 +18303,7 @@ __metadata:
     eslint-plugin-n: ^17.10.3
     eslint-plugin-prettier: ^5.2.1
     eslint-plugin-promise: ^7.1.0
+    marked: ^12.0.1
     prettier: ^3.3.3
     prettier-plugin-packagejson: ^2.2.18
     sharp: ^0.35.0
