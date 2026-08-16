@@ -1,73 +1,55 @@
 import type { ComponentProps } from 'react';
 import styled from 'styled-components';
 
+import { Button as BaseButton, LinkButton as BaseLink } from './Form';
 import { ReactComponent as FlaskFox } from '../assets/flask_fox.svg';
 import { useMetaMask, useRequestSnap } from '../hooks';
 import { isExpectedSnapVersion, shouldDisplayReconnectButton } from '../utils';
 
-const Link = styled.a`
-  display: flex;
-  align-self: flex-start;
-  align-items: center;
-  justify-content: center;
-  font-size: ${(props) => props.theme.fontSizes.small};
-  border-radius: ${(props) => props.theme.radii.button};
-  border: 1px solid ${(props) => props.theme.colors.background?.inverse};
-  background-color: ${(props) => props.theme.colors.background?.inverse};
-  color: ${(props) => props.theme.colors.text?.inverse};
-  text-decoration: none;
-  font-weight: bold;
-  padding: 1rem;
-  cursor: pointer;
-  transition: all 0.2s ease-in-out;
+/*
+ * These carry their own appearance rather than inheriting a blanket `button`
+ * rule from the global style. The global rule now sets only typography and
+ * cursor, so that a secondary or destructive control elsewhere on the page
+ * can look different from the one that signs.
+ */
 
-  &:hover {
-    background-color: transparent;
-    border: 1px solid ${(props) => props.theme.colors.background?.inverse};
-    color: ${(props) => props.theme.colors.text?.default};
-  }
-
-  ${({ theme }) => theme.mediaQueries.small} {
-    width: 100%;
-    box-sizing: border-box;
-  }
+const Link = styled(BaseLink)`
+  max-width: 100%;
 `;
 
-const Button = styled.button`
-  display: flex;
-  align-self: flex-start;
-  align-items: center;
-  justify-content: center;
-  margin-top: auto;
+const Button = styled(BaseButton)`
   ${({ theme }) => theme.mediaQueries.small} {
     width: 100%;
+  }
+
+  & svg {
+    width: 2rem;
+    height: 2rem;
   }
 `;
 
 const ButtonText = styled.span`
-  margin-left: 1rem;
+  white-space: nowrap;
 `;
 
 const ConnectedContainer = styled.div`
-  display: flex;
-  align-self: flex-start;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  font-size: ${(props) => props.theme.fontSizes.small};
-  border-radius: ${(props) => props.theme.radii.button};
-  border: 1px solid ${(props) => props.theme.colors.background?.inverse};
-  background-color: ${(props) => props.theme.colors.background?.inverse};
-  color: ${(props) => props.theme.colors.text?.inverse};
-  font-weight: bold;
-  padding: 1.2rem;
+  gap: 0.8rem;
+  font-size: ${(props) => props.theme.fontSizes.tiny};
+  font-weight: 600;
+  border-radius: ${(props) => props.theme.radii.pill};
+  border: 1px solid ${(props) => props.theme.colors.border?.default};
+  background-color: ${(props) => props.theme.colors.background?.alternative};
+  color: ${(props) => props.theme.colors.text?.default};
+  padding: 0.6rem 1.2rem;
 `;
 
 const ConnectedIndicator = styled.div`
-  content: ' ';
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background-color: green;
+  background-color: ${({ theme }) => theme.colors.success?.default};
 `;
 
 export const InstallFlaskButton = () => (

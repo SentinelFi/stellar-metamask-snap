@@ -102,6 +102,8 @@ The snap test script builds first, on purpose. `snaps-jest` runs the snap the wa
 
 `yarn start` serves the snap at `localhost:8080` and the companion dapp at `localhost:8000` for installation into MetaMask Flask.
 
+The companion dapp ([packages/site](packages/site)) is a working Stellar wallet built entirely on the connector: balances (classic and tracked Soroban tokens), payments including account creation, trustline management, and account history read from Horizon, plus a bench that calls every SEP-43 method directly and shows the raw response. It is the manual test surface for the connector, so a change to either package should be exercised there. Its typeface, Titillium Web, is self-hosted under [packages/site/static/fonts](packages/site/static/fonts) with its SIL Open Font License 1.1 text alongside it; the site loads no remote resource of any kind, which is what lets its Content-Security-Policy name only the Horizon hosts it reads.
+
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md): release history

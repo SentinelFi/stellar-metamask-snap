@@ -3,7 +3,7 @@ import { createContext, useState } from 'react';
 import { ThemeProvider } from 'styled-components';
 
 import { dark, light } from './config/theme';
-import { MetaMaskProvider } from './hooks';
+import { MetaMaskProvider, WalletProvider } from './hooks';
 import { getThemePreference, setLocalStorage } from './utils';
 
 export type RootProps = {
@@ -30,7 +30,9 @@ export const Root: FunctionComponent<RootProps> = ({ children }) => {
   return (
     <ToggleThemeContext.Provider value={toggleTheme}>
       <ThemeProvider theme={darkTheme ? dark : light}>
-        <MetaMaskProvider>{children}</MetaMaskProvider>
+        <MetaMaskProvider>
+          <WalletProvider>{children}</WalletProvider>
+        </MetaMaskProvider>
       </ThemeProvider>
     </ToggleThemeContext.Provider>
   );
