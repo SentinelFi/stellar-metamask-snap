@@ -36,6 +36,8 @@ const SimulationStruct = type({
   results: optional(
     array(type({ xdr: optional(string()), auth: optional(array(string())) })),
   ),
+  /** Base64 `DiagnosticEvent` XDR: the token movements the call would make. */
+  events: optional(array(string())),
   restorePreamble: optional(
     type({ transactionData: string(), minResourceFee: string() }),
   ),

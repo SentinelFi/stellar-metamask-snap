@@ -2,8 +2,11 @@ import type { OperationRecord, Transaction } from '@stellar/stellar-sdk';
 import { Address, Asset, hash, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import type { BalanceChangeSummary } from './events';
+import { summarizeBalanceChanges } from './events';
 import { simulateTransaction } from './rpc';
 import { takePredialogBudget } from '../rpc/limiter';
+import type { TrackedToken } from '../state';
 import {
   escapeHiddenCharacters,
   sanitizeInlineText,
@@ -903,9 +906,30 @@ export type SimulationSummary =
       authSigners: string[];
       /** Archived ledger entries must be restored before submission. */
       restoreRequired: boolean;
+      /**
+       * Net token movements the simulation reported for the signing account.
+       * Absent when no account was supplied to key them against.
+       */
+      balanceChanges?: BalanceChangeSummary;
       latestLedger?: number;
     }
   | { ok: false; error: string };
+
+/** What the balance-change summary needs to name and scale an asset. */
+export type SimulationContext = {
+  /**
+   * Whether the requesting origin holds a standing connection grant; decides
+   * which share of the global pre-dialog budget this simulation draws on.
+   * Defaults to false, the conservative side.
+   */
+  connected?: boolean;
+  /** The account whose balance changes are summarized (the signing key). */
+  account?: string;
+  /** Active network passphrase, which SAC address derivation is bound to. */
+  networkPassphrase?: string;
+  /** Tokens tracked for the active network, for symbols and decimals. */
+  tokens?: TrackedToken[];
+};
 
 /**
  * Runs a display-verification simulation. Never throws — the dialog renders
@@ -914,16 +938,16 @@ export type SimulationSummary =
  *
  * @param rpcUrl - The Soroban RPC endpoint for the active network.
  * @param transactionXdr - The transaction envelope XDR.
- * @param connected - Whether the requesting origin holds a standing connection
- * grant; decides which share of the global pre-dialog budget this simulation
- * draws on. Defaults to false, the conservative side.
+ * @param context - Connection state and the account/network/token context the
+ * balance-change summary is keyed against.
  * @returns A summary for the review dialog.
  */
 export async function simulateForDisplay(
   rpcUrl: string,
   transactionXdr: string,
-  connected = false,
+  context: SimulationContext = {},
 ): Promise<SimulationSummary> {
+  const { connected = false, account, networkPassphrase, tokens } = context;
   // This simulation runs before any dialog exists and is reachable without a
   // connection grant, so it shares the global pre-dialog budget with the
   // Horizon safety lookups. Denial renders the existing "Simulation
@@ -987,11 +1011,25 @@ export async function simulateForDisplay(
     }
   }
 
+  // The events are what makes a contract call legible: the function name and
+  // its arguments are the inputs the user authorizes, not the effects. Keyed
+  // to the signing account, so the row a user reads is their own balance.
+  const balanceChanges =
+    account && networkPassphrase
+      ? summarizeBalanceChanges(
+          response.events,
+          account,
+          networkPassphrase,
+          tokens,
+        )
+      : undefined;
+
   return {
     ok: true,
     minResourceFee: response.minResourceFee ?? '0',
     authSigners,
     restoreRequired: Boolean(response.restorePreamble),
+    ...(balanceChanges === undefined ? {} : { balanceChanges }),
     ...(response.latestLedger === undefined
       ? {}
       : { latestLedger: response.latestLedger }),

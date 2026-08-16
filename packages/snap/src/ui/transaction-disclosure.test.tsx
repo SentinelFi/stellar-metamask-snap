@@ -9,6 +9,7 @@ import {
 } from '@stellar/stellar-sdk';
 
 import { buildSignTransactionDialog } from './transaction';
+import type { BalanceChangeSummary } from '../stellar/events';
 
 /*
  * Disclosure tests for the transaction review dialog: the properties that
@@ -231,5 +232,69 @@ describe('dialog invariants preserved by the disclosure changes', () => {
     expect(content).toContain('Mainnet');
     expect(content).toContain('This signature never expires');
     expect(content).toContain('Submitted via');
+  });
+});
+
+describe('balance-change disclosure', () => {
+  /**
+   * Renders a dialog carrying a successful simulation with the given
+   * balance-change summary.
+   *
+   * @param balanceChanges - The summary to render, or undefined for a
+   * simulation that had no account to key changes against.
+   * @returns The serialized dialog.
+   */
+  function renderChanges(balanceChanges?: BalanceChangeSummary) {
+    return render({
+      simulation: {
+        ok: true,
+        minResourceFee: '1000',
+        authSigners: [],
+        restoreRequired: false,
+        ...(balanceChanges ? { balanceChanges } : {}),
+      },
+    });
+  }
+
+  it('shows what leaves the account, marked as a caution', () => {
+    const content = renderChanges({
+      changes: [{ asset: 'XLM', amount: '-1.5', rawUnits: false }],
+      partial: false,
+    });
+    expect(content).toContain('Balance changes for the signing account');
+    expect(content).toContain('-1.5');
+    // The outgoing row carries the warning variant: what the call takes is
+    // the part of a contract invocation a user most needs to see.
+    expect(content).toContain('"variant":"warning"');
+  });
+
+  it('states explicitly that no movements were reported', () => {
+    // An absent section reads as "not applicable", which is the same defect
+    // as rendering an unavailable fee estimate as zero.
+    const content = renderChanges({ changes: [], partial: false });
+    expect(content).toContain('reported no token movements');
+    expect(content).toContain('not a guarantee');
+  });
+
+  it('warns when the summary lost an event', () => {
+    const content = renderChanges({
+      changes: [{ asset: 'XLM', amount: '-1', rawUnits: false }],
+      partial: true,
+    });
+    expect(content).toContain('Movements may be missing');
+  });
+
+  it('marks an amount whose precision is unknown', () => {
+    const content = renderChanges({
+      changes: [{ asset: 'Token CDLZ…CYSC', amount: '-1000', rawUnits: true }],
+      partial: false,
+    });
+    expect(content).toContain('smallest unit');
+  });
+
+  it('omits the block entirely when nothing was keyed against an account', () => {
+    const content = renderChanges();
+    expect(content).toContain('Estimated resource fee');
+    expect(content).not.toContain('Balance changes');
   });
 });

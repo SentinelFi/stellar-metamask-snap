@@ -32,6 +32,7 @@ import {
   stroopsToXlm,
 } from './format';
 import type { NetworkName } from '../state/networks';
+import type { BalanceChangeSummary } from '../stellar/events';
 import type { SimulationSummary } from '../stellar/soroban';
 import {
   decodeHostFunction,
@@ -809,6 +810,72 @@ function renderFootprint(
 }
 
 /**
+ * Renders the net token movements the simulation reported for the signing
+ * account.
+ *
+ * This is the part of a contract call a user can actually judge. The decoded
+ * invocation above shows a function name and its arguments, which are the
+ * inputs the call is authorized with, not its effects: `swap(a, b, 100, 95)`
+ * does not say whose balance moves or by how much, and a hostile contract may
+ * name its drain function anything at all.
+ *
+ * Two absences are deliberately made explicit. An empty list renders a line
+ * saying so rather than nothing, because a missing section reads as "not
+ * applicable" (the same defect as a fee estimate rendered as zero). And a
+ * summary that lost an event renders a banner, because a list the user
+ * believes is complete is worse than no list at all.
+ *
+ * @param summary - The balance-change summary, when one was computed.
+ * @returns The balance-change block, or null when there is nothing to key it
+ * against.
+ */
+function renderBalanceChanges(
+  summary: BalanceChangeSummary | undefined,
+): GenericSnapElement | null {
+  if (!summary) {
+    return null;
+  }
+  return (
+    <Box>
+      <Text>Balance changes for the signing account</Text>
+      {summary.partial ? (
+        <Banner title="Movements may be missing" severity="warning">
+          <Text>
+            Part of the simulation could not be read, so this list may be
+            incomplete. Treat it as a hint, not a full accounting.
+          </Text>
+        </Banner>
+      ) : null}
+      {summary.changes.length === 0 ? (
+        <Text>
+          The simulation reported no token movements for this account. A
+          contract can move balances without reporting them, so this is not a
+          guarantee.
+        </Text>
+      ) : (
+        <Box>
+          {summary.changes.map((change) => (
+            <Row
+              // The label is either a snap-derived asset name or a truncated
+              // contract address; both are safe, but the amount is formatted
+              // from contract-reported numbers and is sanitized on principle.
+              label={sanitizeInlineText(change.asset)}
+              variant={change.amount.startsWith('-') ? 'warning' : 'default'}
+            >
+              <Text>
+                {change.rawUnits
+                  ? `${change.amount} (smallest unit)`
+                  : change.amount}
+              </Text>
+            </Row>
+          ))}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/**
  * Renders the display-verification simulation results for a Soroban
  * transaction.
  *
@@ -845,6 +912,7 @@ function renderSimulation(
       <Text>
         <Bold>Simulation</Bold>
       </Text>
+      {renderBalanceChanges(simulation.balanceChanges)}
       <Row label="Estimated resource fee">
         <Text>{`${stroopsToXlm(simulation.minResourceFee)} XLM`}</Text>
       </Row>

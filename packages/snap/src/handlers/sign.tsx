@@ -28,7 +28,12 @@ import {
   SignTransactionParams,
   validate,
 } from '../rpc/validation';
-import { connectOrigin, getActiveNetwork, isOriginConnected } from '../state';
+import {
+  connectOrigin,
+  getActiveNetwork,
+  getTokens,
+  isOriginConnected,
+} from '../state';
 import type { NetworkConfig } from '../state/networks';
 import { getHorizonLatestLedger, submitTransaction } from '../stellar/horizon';
 import { getLatestLedger, sendTransaction } from '../stellar/rpc';
@@ -320,11 +325,16 @@ export async function signTransaction(
     // Simulate the operation-bearing envelope (the inner tx for a fee bump).
     const sorobanXdr =
       tx instanceof Transaction ? request.xdr : innerTx.toXDR();
-    simulation = await simulateForDisplay(
-      network.sorobanRpcUrl,
-      sorobanXdr,
+    // Tracked tokens are read from state, not from the network: they supply
+    // the symbol and decimals for balance rows on contracts that are not
+    // Stellar Asset Contracts, and their metadata was already validated when
+    // the user added them. No extra RPC round trip enters the dialog path.
+    simulation = await simulateForDisplay(network.sorobanRpcUrl, sorobanXdr, {
       connected,
-    );
+      account: signerAddress,
+      networkPassphrase: network.networkPassphrase,
+      tokens: await getTokens(network.name),
+    });
   }
 
   // Classic transactions get best-effort safety checks (unfunded
