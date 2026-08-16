@@ -4,7 +4,7 @@
 
 Three things are worth knowing before the method list, because they explain most of the design.
 
-**The snap version is pinned, not ranged.** `DEFAULT_SNAP_VERSION` is an exact `x.y.z`, and a range is rejected at construction. A range would let an install resolve to a release that was never audited, which is the one thing the pin exists to prevent. `isInstalled()` reports an installed-but-different version as *not installed*, because every call made against it would run code other than the release the pin names.
+**The snap version is pinned, not ranged.** `DEFAULT_SNAP_VERSION` is an exact `x.y.z`, and a range is rejected at construction. A range would let an install resolve to a release that was never audited, which is the one thing the pin exists to prevent. `isInstalled()` reports an installed-but-different version as _not installed_, because every call made against it would run code other than the release the pin names.
 
 **Results are validated, not assumed.** Every typed method checks the shape of what comes back across the provider boundary before returning it. The untyped escape hatch, `invoke()`, returns `unknown` on purpose: it has not done that work, and its caller has to.
 
@@ -35,12 +35,12 @@ The provider is discovered through EIP-6963 when you do not supply one. Concurre
 
 ## `new StellarSnap(options?)`
 
-| Option | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `snapId` | `string` | `npm:stellar-soroban-snap` | Must be an `npm:` or `local:` ID. Use `local:http://localhost:8080` in development. |
-| `version` | `string` | the audited release | Exact `x.y.z` only. Ranges are rejected at construction. |
-| `provider` | `Eip1193Provider` | auto-detected | Supply one to skip EIP-6963 discovery. |
-| `discoveryTimeoutMs` | `number` | provider default | How long auto-detection waits for announcements. |
+| Option               | Type              | Default                    | Notes                                                                               |
+| -------------------- | ----------------- | -------------------------- | ----------------------------------------------------------------------------------- |
+| `snapId`             | `string`          | `npm:stellar-soroban-snap` | Must be an `npm:` or `local:` ID. Use `local:http://localhost:8080` in development. |
+| `version`            | `string`          | the audited release        | Exact `x.y.z` only. Ranges are rejected at construction.                            |
+| `provider`           | `Eip1193Provider` | auto-detected              | Supply one to skip EIP-6963 discovery.                                              |
+| `discoveryTimeoutMs` | `number`          | provider default           | How long auto-detection waits for announcements.                                    |
 
 Exported alongside it: `DEFAULT_SNAP_ID` and `DEFAULT_SNAP_VERSION`, so a dapp can display or verify what it is about to install.
 
@@ -113,15 +113,15 @@ type SignTransactionOptions = {
 type SignTransactionResultWithWarnings = {
   signedTxXdr: string;
   signerAddress: string;
-  hash?: string;    // present when submitted
-  status?: string;  // Soroban RPC acceptance status
+  hash?: string; // present when submitted
+  status?: string; // Soroban RPC acceptance status
   warnings?: string[];
 };
 ```
 
 The wallet decodes the review dialog from the XDR you pass, not from anything the dapp says about it. `warnings` carries the advisory safety checks the wallet surfaced (unfunded destination, memo-required, multisig weight); they are shown in its dialog too, but a dapp that repeats them helps a user who has already dismissed it.
 
-With `submit: true` the wallet broadcasts and verifies the returned hash against the envelope it signed. If submission fails *after* signing, the thrown `StellarSnapError` carries `data.signedTxXdr` so you can retry or poll yourself: the signature exists, and losing it would be the worse failure.
+With `submit: true` the wallet broadcasts and verifies the returned hash against the envelope it signed. If submission fails _after_ signing, the thrown `StellarSnapError` carries `data.signedTxXdr` so you can retry or poll yourself: the signature exists, and losing it would be the worse failure.
 
 ### `signAuthEntry(authEntry: string, options?): Promise<SignAuthEntryResult>`
 
@@ -145,7 +145,7 @@ type BalancesResult = {
 };
 
 type BalanceLine = {
-  asset: string;      // 'XLM' | 'CODE:ISSUER' | 'SYMBOL:CONTRACT_ID'
+  asset: string; // 'XLM' | 'CODE:ISSUER' | 'SYMBOL:CONTRACT_ID'
   balance: string;
   type: 'native' | 'classic' | 'soroban';
   contractId?: string;
@@ -168,9 +168,9 @@ Funds the account from friendbot. Test networks only, and only the wallet's own 
 
 ```ts
 class StellarSnapError extends Error {
-  code: number;              // SEP-0043
+  code: number; // SEP-0043
   data?: {
-    signedTxXdr?: string;    // present on submit-after-sign failures
+    signedTxXdr?: string; // present on submit-after-sign failures
     signerAddress?: string;
     hash?: string;
     status?: string;
@@ -178,12 +178,12 @@ class StellarSnapError extends Error {
 }
 ```
 
-| Code | Name | Meaning |
-| --- | --- | --- |
-| `-1` | `internal` | The wallet failed in a way it will not describe further. |
-| `-2` | `externalService` | Horizon or the Soroban RPC could not be reached or answered badly. |
-| `-3` | `invalidRequest` | The request was malformed, or the wallet refuses to display it faithfully. |
-| `-4` | `userRejected` | The user declined a dialog. Do not retry automatically. |
+| Code | Name              | Meaning                                                                    |
+| ---- | ----------------- | -------------------------------------------------------------------------- |
+| `-1` | `internal`        | The wallet failed in a way it will not describe further.                   |
+| `-2` | `externalService` | Horizon or the Soroban RPC could not be reached or answered badly.         |
+| `-3` | `invalidRequest`  | The request was malformed, or the wallet refuses to display it faithfully. |
+| `-4` | `userRejected`    | The user declined a dialog. Do not retry automatically.                    |
 
 MetaMask's own EIP-1193 connect rejection (`4001`) is normalized to `-4`, so one branch covers both.
 
