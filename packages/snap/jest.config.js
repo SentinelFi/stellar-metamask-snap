@@ -73,7 +73,19 @@ module.exports = {
     'src/stellar/http.ts': { branches: 95, lines: 95 },
     'src/stellar/rpc.ts': { branches: 90, lines: 96 },
     'src/stellar/safety.ts': { branches: 78, lines: 95 },
-    'src/stellar/soroban.ts': { branches: 63, lines: 80 },
+    // The balance-change decoder: what a Soroban dialog says a contract call
+    // does to the user's own balances. Its failure modes are display-integrity
+    // failures (a movement dropped, one attributed to the wrong account, an
+    // asset name accepted from a contract that cannot prove it), and each is a
+    // branch rather than a line, which is why the branch number is the one
+    // that matters here.
+    'src/stellar/events.ts': { branches: 78, lines: 88 },
+    // Raised from 63/80 once `simulateForDisplay` gained direct tests. It is
+    // reachable in production only behind a signing request and a live
+    // endpoint, so nothing else exercises its failure paths, and every field
+    // it returns is endpoint-controlled text rendered to someone deciding
+    // whether to sign.
+    'src/stellar/soroban.ts': { branches: 75, lines: 86 },
     'src/ui/format.ts': { branches: 83, lines: 95 },
     'src/ui/transaction.tsx': { branches: 65, lines: 75 },
   },
