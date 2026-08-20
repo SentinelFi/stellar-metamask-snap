@@ -7,7 +7,7 @@ import type {
 } from '@metamask/snaps-sdk';
 import { SnapError, UserInputEventType } from '@metamask/snaps-sdk';
 import { Box, Heading, Text } from '@metamask/snaps-sdk/jsx';
-import { StrKey } from '@stellar/stellar-sdk';
+import { StrKey } from '@stellar/stellar-sdk/base';
 
 import {
   ADD_ACCOUNT_BUTTON,

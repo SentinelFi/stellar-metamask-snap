@@ -1,5 +1,9 @@
-import type { SnapComponent } from '@metamask/snaps-sdk/jsx';
+import type {
+  GenericSnapElement,
+  SnapComponent,
+} from '@metamask/snaps-sdk/jsx';
 import {
+  Banner,
   Bold,
   Box,
   Button,
@@ -14,8 +18,8 @@ import {
 } from '@metamask/snaps-sdk/jsx';
 
 import { getOwnedAccounts } from '../keys';
-import type { TrackedToken } from '../state';
-import { getState } from '../state';
+import type { StoreResetReason, TrackedToken } from '../state';
+import { clearResetNotice, getState } from '../state';
 import type { NetworkName } from '../state/networks';
 import { NETWORKS } from '../state/networks';
 import type { AccountSummary, HorizonBalance } from '../stellar/horizon';
@@ -77,7 +81,31 @@ export type HomePageProps = {
    * an error message.
    */
   accountsUnavailable?: boolean;
+  /**
+   * Stored settings were rebuilt from defaults since the page was last
+   * shown. Shown once, so a user whose grants vanished and whose network
+   * went back to TESTNET learns why rather than discovering it piecemeal.
+   */
+  resetNotice: StoreResetReason | null;
 };
+
+/**
+ * The one-time notice explaining a store reset, in the user's terms.
+ *
+ * @param reason - Why the store was rebuilt.
+ * @returns The banner.
+ */
+function resetNoticeBanner(reason: StoreResetReason): GenericSnapElement {
+  return (
+    <Banner title="Stored settings were reset" severity="warning">
+      <Text>
+        {reason === 'phrase-changed'
+          ? 'The primary Secret Recovery Phrase in MetaMask changed, so the accounts and connected sites recorded for the previous phrase were cleared. Tracked tokens and the network preference were kept.'
+          : 'The stored settings could not be read, so they were rebuilt from defaults: connected sites were cleared, the account list was reset, and the network is TESTNET. Reconnect sites and re-add accounts as needed.'}
+      </Text>
+    </Banner>
+  );
+}
 
 /**
  * The snap home page (MetaMask menu → Snaps → Stellar Soroban): active
@@ -92,6 +120,7 @@ export type HomePageProps = {
  * @param props.origins - Origins holding a connection grant.
  * @param props.tokens - Tokens tracked on the active network.
  * @param props.accountsUnavailable - Account addresses could not be derived.
+ * @param props.resetNotice - Stored settings were rebuilt from defaults.
  * @returns The home page content.
  */
 const HomePage: SnapComponent<HomePageProps> = ({
@@ -103,9 +132,11 @@ const HomePage: SnapComponent<HomePageProps> = ({
   origins,
   tokens,
   accountsUnavailable,
+  resetNotice,
 }) => (
   <Box>
     <Heading>Stellar Soroban</Heading>
+    {resetNotice === null ? null : resetNoticeBanner(resetNotice)}
     <Section>
       <Row label="Network">
         <Text>{network}</Text>
@@ -299,6 +330,14 @@ export async function homePage() {
     };
   }
 
+  // The notice is one-time: it is cleared as soon as a render has carried it.
+  // Best effort, after the content is assembled, so a failed write can
+  // neither take the page down nor suppress the notice it was meant to
+  // acknowledge (the next render would simply show it again).
+  if (state.resetNotice !== undefined) {
+    await clearResetNotice().catch(() => undefined);
+  }
+
   return {
     content: (
       <HomePage
@@ -310,6 +349,7 @@ export async function homePage() {
         origins={origins}
         tokens={tokens}
         accountsUnavailable={accountsUnavailable}
+        resetNotice={state.resetNotice ?? null}
       />
     ),
   };

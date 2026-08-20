@@ -1,4 +1,4 @@
-import type { OperationRecord, Transaction } from '@stellar/stellar-sdk';
+import type { OperationRecord, Transaction } from '@stellar/stellar-sdk/base';
 
 import { getAccountChecks } from './horizon';
 import { takePredialogBudget } from '../rpc/limiter';
@@ -66,10 +66,11 @@ function operationThreshold(operation: OperationRecord): ThresholdLevel {
  * review dialog: unfunded or memo-requiring destinations (including account
  * merges), unfunded source accounts (per effective operation source, not only
  * the transaction source), and insufficient signature weight measured against
- * the highest threshold the operations actually require. Degrades silently
- * when Horizon is unreachable — warnings are advisory display aids, never
- * blockers — but always says so when a lookup budget forced it to skip
- * accounts, so partial coverage is never mistaken for a clean check.
+ * the highest threshold the operations actually require. Warnings are
+ * advisory display aids, never blockers, so an unreachable Horizon does not
+ * block signing; but every account a lookup did not cover, whether because a
+ * budget forced a skip or because Horizon failed, is disclosed as unchecked,
+ * so partial coverage is never mistaken for a clean check.
  *
  * @param tx - The parsed classic transaction (not seq-0; for a fee bump,
  * its inner transaction).
@@ -204,6 +205,21 @@ export async function collectSafetyWarnings(
     ),
   ]);
 
+  // A lookup that returned nothing (Horizon error status, timeout, or a body
+  // that failed validation) is a check that did not run, not a check that
+  // passed. Count those accounts and say so, in the same voice as the other
+  // skips above: without this line a Horizon outage produces zero warnings,
+  // which reads exactly like a transaction that was checked and found clean.
+  const uncheckedAccounts = [
+    ...destinationChecks.filter((checks) => checks === null),
+    ...sourceChecks.filter((checks) => checks === null),
+  ].length;
+  if (uncheckedAccounts > 0) {
+    warnings.push(
+      `${SKIPPED_PREFIX} Horizon could not be reached or returned an unusable response, so ${uncheckedAccounts} account(s) in this transaction were NOT checked for existence, memo requirements (SEP-29), or signature weight. Review them carefully.`,
+    );
+  }
+
   destinations.forEach((destination, index) => {
     const checks = destinationChecks[index];
     if (!checks) {
@@ -254,8 +270,9 @@ export async function collectSafetyWarnings(
  * the account the wallet's signature actually authorizes. Checks existence
  * and the wallet key's weight against the fee source's low threshold (the
  * level a fee-bump signature must meet). Best-effort like
- * {@link collectSafetyWarnings}: degrades silently when Horizon is
- * unreachable, and skips muxed (`M...`) fee sources it cannot look up.
+ * {@link collectSafetyWarnings}: never blocks signing, but discloses a
+ * failed Horizon lookup or a muxed (`M...`) fee source it cannot look up as
+ * an unchecked account rather than staying silent.
  *
  * @param feeSource - The fee-bump envelope's fee source account.
  * @param network - The active network config.
@@ -290,7 +307,14 @@ export async function collectFeeSourceWarnings(
   }
   const checks = await getAccountChecks(network.horizonUrl, feeSource);
   if (!checks) {
-    return [];
+    // Same rule as the per-account checks above: a lookup that failed is a
+    // check that did not run, and the account it concerns is the one the
+    // wallet's signature authorizes.
+    return [
+      `${SKIPPED_PREFIX} Horizon could not be reached or returned an unusable response, so the fee source ${truncate(
+        feeSource,
+      )} was NOT checked for existence or signature weight. Review it carefully.`,
+    ];
   }
   if (!checks.exists) {
     return [

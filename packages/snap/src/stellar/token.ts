@@ -6,7 +6,7 @@ import {
   StrKey,
   TransactionBuilder,
   xdr,
-} from '@stellar/stellar-sdk';
+} from '@stellar/stellar-sdk/base';
 import { Buffer } from 'buffer';
 
 import { simulateTransaction } from './rpc';
@@ -195,14 +195,60 @@ export async function readTokenBalance(
   if (raw === null || raw === undefined) {
     return null;
   }
-  // i128 decodes to a bigint (or number for small values).
-  let value: bigint;
-  try {
-    value = BigInt(raw as bigint | number | string);
-  } catch {
+  // i128 decodes to a bigint (or number for small values). Anything else is
+  // a contract returning a shape `balance()` does not have, and the
+  // conversion must not paper over it: `BigInt(true)` is `1n`, so a contract
+  // returning a boolean would otherwise display as one smallest unit.
+  const value = toBalanceBigInt(raw);
+  if (value === null) {
     return null;
   }
   return formatTokenAmount(value, decimals);
+}
+
+/**
+ * Narrows a decoded contract return value to the integer a token balance is
+ * allowed to be: a bigint, a safe integer number, or a string of digits with
+ * an optional sign. Everything else (booleans, floats, objects, strings that
+ * merely coerce) is rejected rather than coerced.
+ *
+ * @param raw - The natively decoded return value.
+ * @returns The balance as a bigint, or null when the value is not one.
+ */
+function toBalanceBigInt(raw: unknown): bigint | null {
+  if (typeof raw === 'bigint') {
+    return raw;
+  }
+  if (typeof raw === 'number') {
+    return Number.isSafeInteger(raw) ? BigInt(raw) : null;
+  }
+  if (typeof raw === 'string' && /^-?[0-9]+$/u.test(raw)) {
+    return BigInt(raw);
+  }
+  return null;
+}
+
+/**
+ * Reads a token's self-reported `name()` via simulation, best effort.
+ *
+ * The name is as forgeable as the symbol and is never displayed as such. Its
+ * one use is as a claim that can be verified: a Stellar Asset Contract names
+ * itself `CODE:ISSUER` (or `native`), and the snap can derive which contract
+ * address that asset's SAC has, so a matching name proves the contract is
+ * that asset. See `verifiedStellarAssetIdentity` in `./events`.
+ *
+ * @param network - The active network config.
+ * @param contractId - The token contract address.
+ * @returns The name when it is a short plain string, otherwise null.
+ */
+export async function readTokenName(
+  network: NetworkConfig,
+  contractId: string,
+): Promise<string | null> {
+  const name = await readContract(network, contractId, 'name', []);
+  // A SAC name is `CODE:ISSUER` (at most 12 + 1 + 56 characters); anything
+  // longer cannot be one and is not worth carrying further.
+  return typeof name === 'string' && name.length <= 80 ? name : null;
 }
 
 /**

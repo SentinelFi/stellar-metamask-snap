@@ -48,15 +48,26 @@ const snapPackage = require('../snap/package.json');
  */
 const EXPECTED_SNAP_ORIGIN = `npm:${snapPackage.name}`;
 
-/** An exact semver release. Ranges (`^1.2.3`, `~1.2`, `latest`) are refused. */
-const EXACT_VERSION =
-  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+/**
+ * An exact semver release: `major.minor.patch` and nothing else. Ranges
+ * (`^1.2.3`, `~1.2`, `latest`) are refused, and so are prerelease and build
+ * suffixes (`1.2.3-beta.1`, `1.2.3+build`): the pin names an audited release,
+ * and a prerelease is not one.
+ *
+ * This must stay identical to `EXACT_SEMVER` in
+ * `packages/connector/src/snap.ts`. The value accepted here is handed to the
+ * connector's constructor at runtime (`WalletContext`), which rejects
+ * anything outside its own rule with a `TypeError`; a value that passed the
+ * build but failed there would crash the page on load, so the two rules are
+ * the same rule.
+ */
+const EXACT_VERSION = /^\d+\.\d+\.\d+$/u;
 
 /**
  * Reads the build's `.env.<environment>` file, the same file Gatsby loads
  * when it assembles the client environment.
  *
- * @returns {{ envFile: string, parsed: Record<string, string>, snapOrigin: string, snapVersion: string, allowLocal: boolean }}
+ * @returns {{ configEnv: string, envFile: string, parsed: Record<string, string>, snapOrigin: string, snapVersion: string, allowLocal: boolean, devBench: boolean }}
  * The resolved release configuration.
  */
 function readReleaseConfig() {
@@ -71,14 +82,21 @@ function readReleaseConfig() {
     : {};
   const allowLocal =
     (parsed.ALLOW_LOCAL_SNAP ?? process.env.ALLOW_LOCAL_SNAP) === 'true';
+  // Read from both places Gatsby embeds client variables from: the env file
+  // (every key) and the process environment (`GATSBY_`-prefixed keys). A
+  // stray variable on a build host is exactly the case this has to catch.
+  const devBench =
+    (parsed.GATSBY_DEV_BENCH ?? process.env.GATSBY_DEV_BENCH) === 'true';
   /* eslint-enable n/no-process-env, n/no-sync */
 
   return {
+    configEnv,
     envFile,
     parsed,
     snapOrigin: parsed.GATSBY_SNAP_ORIGIN ?? '',
     snapVersion: parsed.GATSBY_SNAP_VERSION ?? '',
     allowLocal,
+    devBench,
   };
 }
 
@@ -100,10 +118,42 @@ function readReleaseConfig() {
  * @param {object} args.reporter - Gatsby reporter.
  */
 module.exports.onPreBuild = ({ reporter }) => {
-  const { envFile, snapOrigin, snapVersion, allowLocal } = readReleaseConfig();
+  const { configEnv, envFile, snapOrigin, snapVersion, allowLocal, devBench } =
+    readReleaseConfig();
 
   if (allowLocal) {
+    // The bypass exists for development builds and is refused outright for a
+    // production one. `gatsby build` always runs with NODE_ENV=production,
+    // so "a development build" has to be declared, and Gatsby's own way of
+    // declaring it is GATSBY_ACTIVE_ENV (which also selects the env file the
+    // client bundle is assembled from). Without that declaration a build
+    // host with ALLOW_LOCAL_SNAP left in its environment would otherwise
+    // produce an artifact bound to an unverified, possibly localhost, snap
+    // and ship it with nothing worse than a warning in a log nobody reads.
+    if (configEnv === 'production') {
+      reporter.panic(
+        `ALLOW_LOCAL_SNAP=true is not permitted for a production build. ` +
+          `A release build must be bound to the audited snap release; unset ` +
+          `ALLOW_LOCAL_SNAP, or, for a local development build, declare it ` +
+          `as one with GATSBY_ACTIVE_ENV=development (the build then reads ` +
+          `.env.development and is not a deployable artifact).`,
+      );
+    }
     return;
+  }
+
+  // The connector bench (raw SEP-43 method buttons with the JSON response,
+  // including signed envelopes, shown verbatim) is a development surface. It
+  // is rendered only when GATSBY_DEV_BENCH is exactly "true", and a release
+  // build refuses that value from either source Gatsby would embed it from,
+  // so the bench cannot reach a deployed page through a stray variable.
+  if (devBench) {
+    reporter.panic(
+      `GATSBY_DEV_BENCH=true is not permitted for a release build: the ` +
+        `connector bench is a development surface and must not ship. Unset ` +
+        `it (in ${envFile} and in the environment), or build a development ` +
+        `artifact with ALLOW_LOCAL_SNAP=true and GATSBY_ACTIVE_ENV=development.`,
+    );
   }
 
   // Exact identity, not merely an "npm:" prefix: a prefix check would accept
@@ -113,7 +163,8 @@ module.exports.onPreBuild = ({ reporter }) => {
       `Production builds must install the audited snap release. ` +
         `GATSBY_SNAP_ORIGIN must be exactly "${EXPECTED_SNAP_ORIGIN}", ` +
         `but ${envFile} has "${snapOrigin}". Set it to the audited snap ID, ` +
-        `or set ALLOW_LOCAL_SNAP=true to explicitly allow a local build.`,
+        `or build a development artifact with ALLOW_LOCAL_SNAP=true and ` +
+        `GATSBY_ACTIVE_ENV=development.`,
     );
   }
 
@@ -330,8 +381,10 @@ module.exports.onPostBuild = ({ reporter }) => {
   writeScriptHashes(reporter);
 
   if (allowLocal) {
-    // The bypass exists for local development builds only. Make it loud:
-    // an artifact built this way carries no verified snap identity and may
+    // The bypass exists for local development builds only, and onPreBuild
+    // has already refused it for a production build, so this branch is only
+    // reached for a build declared as development. Still make it loud: an
+    // artifact built this way carries no verified snap identity and may
     // request the localhost development snap from every visitor.
     reporter.warn(
       `ALLOW_LOCAL_SNAP=true: release verification was SKIPPED. ` +

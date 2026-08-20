@@ -77,18 +77,43 @@ const EXPLORER_SEGMENT: Record<NetworkName, string | null> = {
 };
 
 /**
+ * A Stellar transaction hash: exactly 32 bytes as hex. Anything else is not
+ * a hash and must not be put into a URL path as one.
+ */
+const TRANSACTION_HASH = /^[0-9a-f]{64}$/iu;
+
+/**
+ * Whether a value has the shape of a transaction hash.
+ *
+ * @param value - The candidate.
+ * @returns True for 64 hex characters.
+ */
+export function isTransactionHash(value: string): boolean {
+  return TRANSACTION_HASH.test(value);
+}
+
+/**
  * A stellar.expert link for a transaction hash.
+ *
+ * The hash is interpolated into a URL path, and the values that reach here
+ * from the activity table come from Horizon, an endpoint this page does not
+ * control. A string that is not a 64-hex hash therefore gets no link at all:
+ * the origin is fixed, so the worst case is steering the path or query of
+ * the explorer URL, but a link labelled as "this transaction" that opens
+ * something else is still a link the user should never be offered. The
+ * caller renders the raw value as text in that case.
  *
  * @param network - The active network.
  * @param hash - The transaction hash.
- * @returns The URL, or null when the network has no explorer.
+ * @returns The URL, or null when the network has no explorer or the value is
+ * not a well-formed hash.
  */
 export function explorerTxUrl(
   network: NetworkName,
   hash: string,
 ): string | null {
   const segment = EXPLORER_SEGMENT[network];
-  return segment
+  return segment && isTransactionHash(hash)
     ? `https://stellar.expert/explorer/${segment}/tx/${hash}`
     : null;
 }

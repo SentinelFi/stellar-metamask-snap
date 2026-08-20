@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { createFreighterApi } from './freighter';
 import { StellarSnapKitModule } from './kit-module';
@@ -7,7 +7,94 @@ import type { Eip1193Provider } from './types';
 import { StellarSnapError } from './types';
 
 const SNAP_ID = 'npm:stellar-soroban-snap';
+const LOCAL_SNAP_ID = 'local:http://localhost:8080';
 const ADDRESS = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
+
+type RecordedRequest = { method: string; params?: unknown };
+
+/**
+ * The subset of recorded provider requests with a given method, in order.
+ * Tests that assert on the payload of an invocation use this rather than a
+ * fixed index, because an `npm:` client reads `wallet_getSnaps` once before
+ * its first invocation and the position of the invocation depends on it.
+ *
+ * @param requests - The recorded request list.
+ * @param method - The provider method to keep.
+ * @returns The matching requests.
+ */
+function ofMethod(
+  requests: RecordedRequest[],
+  method: string,
+): RecordedRequest[] {
+  return requests.filter((request) => request.method === method);
+}
+
+/**
+ * Builds a provider that answers every `wallet_*` read with a snaps map
+ * naming one installed version, so the pin and the reported install can be
+ * made to agree or disagree from a single argument, and that answers
+ * `wallet_invokeSnap` from a method table.
+ *
+ * @param installedVersion - The version reported under `snapId`, or null to
+ * report the snap as not installed at all.
+ * @param snapId - The snap ID the map names.
+ * @param handlers - Map of snap method name to result.
+ * @returns The mock provider and the recorded request list.
+ */
+function providerReporting(
+  installedVersion: string | null,
+  snapId = SNAP_ID,
+  handlers: Record<string, unknown> = { getAddress: { address: ADDRESS } },
+) {
+  const requests: RecordedRequest[] = [];
+  const snaps =
+    installedVersion === null
+      ? {}
+      : { [snapId]: { version: installedVersion } };
+  const provider: Eip1193Provider = {
+    request: jest.fn(async (args: RecordedRequest) => {
+      requests.push(args);
+      if (args.method === 'wallet_invokeSnap') {
+        const inner = (args.params as { request: { method: string } }).request;
+        const handler = handlers[inner.method];
+        if (handler === undefined) {
+          throw new Error(`Unhandled snap method: ${inner.method}`);
+        }
+        return handler;
+      }
+      return snaps;
+    }) as Eip1193Provider['request'],
+  };
+  return { provider, requests };
+}
+
+/**
+ * Like {@link providerReporting}, but the reported version can be changed
+ * between calls, to model a user updating the snap mid-session.
+ *
+ * @returns The mock provider, the recorded request list, and a setter for
+ * the reported version.
+ */
+function providerWithMutableVersion() {
+  const requests: RecordedRequest[] = [];
+  let installed = '0.1.0';
+  const provider: Eip1193Provider = {
+    request: jest.fn(async (args: RecordedRequest) => {
+      requests.push(args);
+      if (args.method === 'wallet_invokeSnap') {
+        return { address: ADDRESS };
+      }
+      return { [SNAP_ID]: { version: installed } };
+    }) as Eip1193Provider['request'],
+  };
+  return {
+    provider,
+    requests,
+    setInstalled: (version: string) => {
+      installed = version;
+    },
+  };
+}
 
 /**
  * Builds a mock EIP-1193 provider that records requests and answers snap
@@ -67,10 +154,12 @@ describe('StellarSnap', () => {
     const snap = new StellarSnap({ provider });
 
     expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
-    expect(requests[0]).toStrictEqual({
-      method: 'wallet_invokeSnap',
-      params: { snapId: SNAP_ID, request: { method: 'getAddress' } },
-    });
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toStrictEqual([
+      {
+        method: 'wallet_invokeSnap',
+        params: { snapId: SNAP_ID, request: { method: 'getAddress' } },
+      },
+    ]);
   });
 
   it('passes SEP-43 option bags through signTransaction', async () => {
@@ -83,20 +172,101 @@ describe('StellarSnap', () => {
       networkPassphrase: 'Test SDF Network ; September 2015',
       submit: true,
     });
-    expect(requests[0]).toStrictEqual({
-      method: 'wallet_invokeSnap',
-      params: {
-        snapId: SNAP_ID,
-        request: {
-          method: 'signTransaction',
-          params: {
-            xdr: 'AAAA',
-            networkPassphrase: 'Test SDF Network ; September 2015',
-            submit: true,
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toStrictEqual([
+      {
+        method: 'wallet_invokeSnap',
+        params: {
+          snapId: SNAP_ID,
+          request: {
+            method: 'signTransaction',
+            params: {
+              xdr: 'AAAA',
+              networkPassphrase: 'Test SDF Network ; September 2015',
+              submit: true,
+            },
           },
         },
       },
+    ]);
+  });
+
+  it('passes networkPassphrase through signMessage', async () => {
+    // SEP-43 defines the option for signMessage too; a conformant caller
+    // must be able to pass it and have the wallet compare it.
+    const { provider, requests } = mockProvider({
+      signMessage: { signedMessage: 'sig', signerAddress: ADDRESS },
     });
+    const snap = new StellarSnap({ provider });
+
+    await snap.signMessage('hello', {
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      address: ADDRESS,
+    });
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toStrictEqual([
+      {
+        method: 'wallet_invokeSnap',
+        params: {
+          snapId: SNAP_ID,
+          request: {
+            method: 'signMessage',
+            params: {
+              networkPassphrase: 'Test SDF Network ; September 2015',
+              address: ADDRESS,
+              message: 'hello',
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it('refuses submitUrl client-side without contacting the wallet', async () => {
+    // The snap submits only to its own allowlisted endpoints. A caller
+    // naming another one must get a clear refusal, not a generic invalid
+    // request from the snap, and never a silent drop that leaves it
+    // believing its endpoint was used.
+    const { provider, requests } = mockProvider({
+      signTransaction: { signedTxXdr: 'xdr', signerAddress: ADDRESS },
+    });
+    const snap = new StellarSnap({ provider });
+
+    await expect(
+      snap.signTransaction('AAAA', {
+        submit: true,
+        submitUrl: 'https://horizon.example',
+      }),
+    ).rejects.toMatchObject({
+      code: -3,
+      message: expect.stringContaining('submitUrl'),
+    });
+    expect(requests).toHaveLength(0);
+  });
+
+  it('lets the positional payload win over a same-named option key', async () => {
+    // Option bags are forwarded from other layers; one carrying `xdr`,
+    // `authEntry`, or `message` must not replace what the caller passed by
+    // position. The option types do not declare those keys, so the test
+    // smuggles them in the way a loosely typed caller would.
+    const { provider, requests } = mockProvider({
+      signTransaction: { signedTxXdr: 'xdr', signerAddress: ADDRESS },
+      signAuthEntry: { signedAuthEntry: 'AAAA', signerAddress: ADDRESS },
+      signMessage: { signedMessage: 'sig', signerAddress: ADDRESS },
+    });
+    const snap = new StellarSnap({ provider });
+
+    await snap.signTransaction('REAL', { xdr: 'FAKE' } as never);
+    await snap.signAuthEntry('REAL', { authEntry: 'FAKE' } as never);
+    await snap.signMessage('REAL', { message: 'FAKE' } as never);
+    const sent = ofMethod(requests, 'wallet_invokeSnap').map(
+      (request) =>
+        (request.params as { request: { params: Record<string, unknown> } })
+          .request.params,
+    );
+    expect(sent).toStrictEqual([
+      { xdr: 'REAL' },
+      { authEntry: 'REAL' },
+      { message: 'REAL' },
+    ]);
   });
 
   it('normalizes snap errors into StellarSnapError with SEP-43 codes', async () => {
@@ -162,6 +332,13 @@ describe('StellarSnap', () => {
       method: 'wallet_requestSnaps',
       params: { [SNAP_ID]: { version: '0.1.0' } },
     });
+    // connect() already verified the installed version from the
+    // wallet_requestSnaps result, so the following requestAccess invocation
+    // does not read wallet_getSnaps again.
+    expect(requests.map((request) => request.method)).toStrictEqual([
+      'wallet_requestSnaps',
+      'wallet_invokeSnap',
+    ]);
   });
 
   it('isInstalled checks wallet_getSnaps for the snap ID', async () => {
@@ -282,6 +459,150 @@ describe('StellarSnap', () => {
     const snap = new StellarSnap({ provider });
 
     await expect(snap.signMessage('hi')).rejects.toMatchObject({ code: -1 });
+  });
+});
+
+describe('StellarSnap version check on invocation', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('refuses a typed call when a different version is installed', async () => {
+    // The pin was previously verified only by connect(); a dapp that reads
+    // getAddress() first (the common "connect only if empty" pattern) would
+    // otherwise run against whatever release is installed under the ID.
+    const { provider, requests } = providerReporting('0.0.9');
+    const snap = new StellarSnap({ provider });
+
+    await expect(snap.getAddress()).rejects.toMatchObject({
+      code: -3,
+      message: expect.stringContaining('0.0.9'),
+    });
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(0);
+  });
+
+  it('refuses the raw invoke path on a mismatch too', async () => {
+    const { provider, requests } = providerReporting('0.0.9');
+    const snap = new StellarSnap({ provider });
+
+    await expect(snap.invoke('getAddress')).rejects.toMatchObject({
+      code: -3,
+    });
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(0);
+  });
+
+  it('reads wallet_getSnaps once when the version matches', async () => {
+    const { provider, requests } = providerReporting('0.1.0');
+    const snap = new StellarSnap({ provider });
+
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(3);
+  });
+
+  it('shares one wallet_getSnaps read between concurrent first calls', async () => {
+    // A page typically fires several reads together on load; they must not
+    // each pay for (and race) their own verification.
+    const { provider, requests } = providerReporting('0.1.0');
+    const snap = new StellarSnap({ provider });
+
+    await Promise.all([
+      snap.getAddress(),
+      snap.getAddress(),
+      snap.invoke('getAddress'),
+    ]);
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(3);
+  });
+
+  it('re-checks after a mismatch rather than remembering it', async () => {
+    // The user may update the snap between calls; a refused call must not
+    // poison the client for the rest of the session.
+    const { provider, requests, setInstalled } = providerWithMutableVersion();
+    const snap = new StellarSnap({ provider });
+
+    setInstalled('0.0.9');
+    await expect(snap.getAddress()).rejects.toMatchObject({ code: -3 });
+    setInstalled('0.1.0');
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
+  });
+
+  it('skips the check for local development snaps', async () => {
+    const { provider, requests } = providerReporting(
+      '0.1.0-local',
+      LOCAL_SNAP_ID,
+    );
+    const snap = new StellarSnap({ provider, snapId: LOCAL_SNAP_ID });
+
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(0);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
+  });
+
+  it('lets MetaMask answer when the snap is not installed at all', async () => {
+    // Absence is not a version mismatch: MetaMask refuses the invocation
+    // itself, exactly as it did before the check existed, so a dapp's
+    // pre-install handling is unchanged.
+    const { provider, requests } = providerReporting(null);
+    const snap = new StellarSnap({ provider });
+
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
+  });
+
+  it('treats a verified isInstalled() as the check', async () => {
+    const { provider, requests } = providerReporting('0.1.0');
+    const snap = new StellarSnap({ provider });
+
+    expect(await snap.isInstalled()).toBe(true);
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
+  });
+
+  it('covers the Freighter facade and the Wallets Kit module', async () => {
+    // Both reach the typed methods without connect(): isAllowed() and
+    // getAddress({ skipRequestAccess: true }) are the documented silent
+    // paths, and both must refuse a mismatched install.
+    const facade = createFreighterApi({
+      provider: providerReporting('0.0.9').provider,
+    });
+    expect(await facade.isAllowed()).toStrictEqual({ isAllowed: false });
+    expect((await facade.getAddress()).error?.code).toBe(-3);
+
+    const module = new StellarSnapKitModule({
+      provider: providerReporting('0.0.9').provider,
+    });
+    await expect(
+      module.getAddress({ skipRequestAccess: true }),
+    ).rejects.toMatchObject({ code: -3 });
+  });
+
+  it('warns when an npm snap ID other than the published one is used', () => {
+    // Any npm: ID passes the shape check (a fork under test is legitimate)
+    // but the guarantees documented for this connector describe the
+    // published snap, so a substituted ID must be visible in the console.
+    const warn = jest
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    const { provider } = providerReporting('0.1.0');
+
+    expect(() => new StellarSnap({ provider })).not.toThrow();
+    expect(
+      () => new StellarSnap({ provider, snapId: LOCAL_SNAP_ID }),
+    ).not.toThrow();
+    expect(warn).not.toHaveBeenCalled();
+
+    expect(
+      () =>
+        new StellarSnap({ provider, snapId: 'npm:stellar-soroban-snap-fork' }),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('npm:stellar-soroban-snap-fork');
   });
 });
 

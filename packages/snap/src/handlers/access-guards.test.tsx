@@ -1,7 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
 import { SLIP10Node } from '@metamask/key-tree';
 import type { Keypair, Transaction, xdr } from '@stellar/stellar-sdk';
 import {
+  Asset,
   nativeToScVal,
   Networks,
   TransactionBuilder,
@@ -253,6 +261,63 @@ function failStateWrites(): void {
 /** Lets state writes succeed again, modelling a store that recovers. */
 function restoreStateWrites(): void {
   writesFail = false;
+}
+
+/**
+ * Yields event-loop turns until the probe reports true, so a test can hold
+ * one in-flight call at a known point (e.g. "its fetch has started") while it
+ * drives a second call past it. Each iteration yields a macrotask, not a bare
+ * microtask: a microtask-only spin would starve timers and I/O and hang the
+ * worker if any awaited step needs them. Declared at module scope because the
+ * loop is a conditional, which `jest/no-conditional-in-test` refuses in a
+ * test body; a probe that never turns true is caught by the test timeout.
+ *
+ * @param probe - Returns true once the awaited condition holds.
+ */
+async function waitUntil(probe: () => boolean): Promise<void> {
+  while (!probe()) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+/** The fetch shape the harness installs on `globalThis`. */
+type HarnessFetch = (url: string, init?: unknown) => Promise<unknown>;
+
+/**
+ * Wraps the harness fetch so the *first* call hangs until the test rejects it
+ * and every later call is served normally. Models a lookup that outlives the
+ * balance cache's TTL: the Horizon timeout is twice the window, so a slow
+ * failure rejecting after a fresh entry replaced it is a real schedule, and
+ * the eviction-identity test below needs to reproduce it deterministically.
+ *
+ * Declared at module scope because the first-call branch is a conditional,
+ * which `jest/no-conditional-in-test` refuses in a test body.
+ *
+ * @param healthy - The harness fetch to serve every call after the first.
+ * @returns The wrapping fetch, a call counter, and the first call's rejecter.
+ */
+function hangFirstFetch(healthy: HarnessFetch): {
+  fetch: HarnessFetch;
+  calls: () => number;
+  rejectFirst: (error: Error) => void;
+} {
+  let count = 0;
+  let rejectPending: (error: Error) => void = () => undefined;
+  const pending = new Promise((_resolve, reject) => {
+    rejectPending = reject;
+  });
+  // The test rejects `pending` deliberately and asserts on the caller's
+  // failure; this handler only keeps the fixture's own reference from
+  // surfacing as an unhandled rejection.
+  pending.catch(() => undefined);
+  return {
+    fetch: async (url, init) => {
+      count += 1;
+      return count === 1 ? pending : healthy(url, init);
+    },
+    calls: () => count,
+    rejectFirst: (error) => rejectPending(error),
+  };
 }
 
 describe('connection gate and account resolution', () => {
@@ -568,8 +633,9 @@ describe('connection gate and account resolution', () => {
   describe('addToken pre-dialog contract reads are budgeted', () => {
     it('refuses when the token-read budget cannot cover both reads', async () => {
       stored = stateV2({ origins: CONNECTED });
-      // One slot short of the two `readTokenMetadata` needs, which is what
-      // distinguishes claiming 2 from claiming 1 or none.
+      // One slot short of the reads `addToken` needs (symbol, decimals,
+      // name), which is what distinguishes claiming them together from
+      // claiming fewer or none.
       expect(takeTokenReadBudget(MAX_TOKEN_READ_LOOKUPS - 1)).toBe(true);
 
       await expect(addToken(ORIGIN, { contractId: CONTRACT })).rejects.toThrow(
@@ -589,6 +655,92 @@ describe('connection gate and account resolution', () => {
         symbol: 'TEST',
         decimals: 7,
       });
+      expect(dialogs).toHaveLength(1);
+    });
+
+    it('presents the symbol as self-reported for an ordinary contract', async () => {
+      // Any contract may call itself anything; the dialog must say so rather
+      // than present the symbol as a fact, and the contract address is the
+      // only identity it can vouch for.
+      stored = stateV2({ origins: CONNECTED });
+      await addToken(ORIGIN, { contractId: CONTRACT });
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).toContain('Symbol (self-reported)');
+      expect(dialog).toContain('is not verified');
+      expect(dialog).not.toContain('Stellar asset (verified)');
+    });
+
+    it('names the classic asset when the contract is its Stellar Asset Contract', async () => {
+      // The name a contract reports is as forgeable as its symbol, but a
+      // `CODE:ISSUER` name is a checkable claim: the SAC address for that
+      // asset is derived, and only the contract at that address gets the
+      // verified label.
+      stored = stateV2({ origins: CONNECTED });
+      const asset = new Asset('TEST', ADDRESS_0);
+      const sac = asset.contractId(Networks.TESTNET);
+      TOKEN_READS.name = nativeToScVal(`TEST:${ADDRESS_0}`, { type: 'string' });
+      try {
+        await addToken(ORIGIN, { contractId: sac });
+      } finally {
+        delete TOKEN_READS.name;
+      }
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).toContain('Stellar asset (verified)');
+      expect(dialog).toContain(`TEST:${ADDRESS_0}`);
+      expect(dialog).not.toContain('is not verified');
+    });
+
+    it('does not verify a contract that merely claims an asset name', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      TOKEN_READS.name = nativeToScVal(`TEST:${ADDRESS_0}`, { type: 'string' });
+      try {
+        await addToken(ORIGIN, { contractId: CONTRACT });
+      } finally {
+        delete TOKEN_READS.name;
+      }
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).not.toContain('Stellar asset (verified)');
+      expect(dialog).toContain('is not verified');
+    });
+
+    it('refuses a verified SAC whose reported decimals are not 7', async () => {
+      // A Stellar Asset Contract's decimals are fixed at 7 by the protocol,
+      // and the value is read by simulation, so a different answer for a
+      // contract the snap has verified to BE that asset's SAC can only come
+      // from a lying endpoint. `decimals` is the one endpoint answer that
+      // persists into state and scales every later balance render, so it
+      // must be refused before any dialog can bless it as "verified".
+      stored = stateV2({ origins: CONNECTED });
+      const asset = new Asset('TEST', ADDRESS_0);
+      const sac = asset.contractId(Networks.TESTNET);
+      TOKEN_READS.name = nativeToScVal(`TEST:${ADDRESS_0}`, { type: 'string' });
+      TOKEN_READS.decimals = nativeToScVal(6, { type: 'u32' });
+      try {
+        await expect(addToken(ORIGIN, { contractId: sac })).rejects.toThrow(
+          'inconsistent with this verified Stellar asset contract',
+        );
+      } finally {
+        delete TOKEN_READS.name;
+        TOKEN_READS.decimals = nativeToScVal(7, { type: 'u32' });
+      }
+      expect(dialogs).toHaveLength(0);
+    });
+
+    it('accepts non-7 decimals from a contract that is not a verified SAC', async () => {
+      // The positive control for the refusal above: an arbitrary SEP-41
+      // token's decimals are its own business, and the check must be scoped
+      // to contracts whose decimals the snap can actually derive.
+      stored = stateV2({ origins: CONNECTED });
+      TOKEN_READS.decimals = nativeToScVal(6, { type: 'u32' });
+      try {
+        expect(await addToken(ORIGIN, { contractId: CONTRACT })).toStrictEqual({
+          contractId: CONTRACT,
+          symbol: 'TEST',
+          decimals: 6,
+        });
+      } finally {
+        TOKEN_READS.decimals = nativeToScVal(7, { type: 'u32' });
+      }
       expect(dialogs).toHaveLength(1);
     });
   });
@@ -872,6 +1024,52 @@ describe('connection gate and account resolution', () => {
       // A zero-token wallet must not burn a slot per call, or a polling dapp
       // would drain a budget it never uses.
       expect(takeTokenReadBudget(MAX_TOKEN_READ_LOOKUPS)).toBe(true);
+    });
+  });
+
+  describe('balance coalescing cache', () => {
+    it('a slow failure does not evict the fresh entry that replaced it', async () => {
+      // A lookup can outlive its own 5-second TTL: the Horizon timeout alone
+      // is 10 seconds. When it finally rejects, a fresh entry may already sit
+      // under the same key, and the failure eviction must recognize that the
+      // entry is no longer its own. Deleting by key alone evicted the live
+      // entry, so the next call re-ran the whole fan-out for a lookup that
+      // had already succeeded.
+      stored = stateV2({ origins: CONNECTED });
+      const host = globalThis as { fetch?: unknown };
+      const healthyFetch = host.fetch as HarnessFetch;
+      const { fetch, calls, rejectFirst } = hangFirstFetch(healthyFetch);
+      host.fetch = fetch;
+
+      let now = 0;
+      const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        const first = getBalances(ORIGIN, {});
+        first.catch(() => undefined);
+        // Hold the first call at its in-flight fetch before starting the
+        // second, so the two cannot race for the mock's first-call branch.
+        await waitUntil(() => calls() === 1);
+
+        // Past the TTL: the pending entry is stale, so this installs a fresh
+        // entry under the same key, served by the healthy fetch.
+        now = 6000;
+        expect(await getBalances(ORIGIN, {})).toMatchObject({
+          address: ADDRESS_0,
+        });
+
+        rejectFirst(new Error('network down'));
+        await expect(first).rejects.toThrow('Could not reach Horizon');
+
+        // The fresh entry is still within its own window and must be served
+        // from cache: a third fan-out would mean the stale failure evicted it.
+        expect(await getBalances(ORIGIN, {})).toMatchObject({
+          address: ADDRESS_0,
+        });
+        expect(calls()).toBe(2);
+      } finally {
+        clock.mockRestore();
+        host.fetch = healthyFetch;
+      }
     });
   });
 

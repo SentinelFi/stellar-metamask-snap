@@ -10,26 +10,36 @@ import {
   Section,
   Text,
 } from '@metamask/snaps-sdk/jsx';
+import {
+  AuthClawbackEnabledFlag,
+  AuthImmutableFlag,
+  AuthRequiredFlag,
+  AuthRevocableFlag,
+  extractBaseAddress,
+  SignerKey,
+  Transaction,
+} from '@stellar/stellar-sdk/base';
 import type {
   FeeBumpTransaction,
   OperationRecord,
   Asset,
-} from '@stellar/stellar-sdk';
-import { SignerKey, Transaction } from '@stellar/stellar-sdk';
+  xdr,
+} from '@stellar/stellar-sdk/base';
 import { Buffer } from 'buffer';
 
 import { ConnectionGrantNotice, originCautionBanner } from './dialogs';
 import {
   bytesToDisplay,
+  isHexDisplay,
   isLossyInline,
   displayOrigin,
   escapeHiddenCharacters,
   formatAsset,
   formatAssetFull,
   formatLiquidityPool,
-  formatMemo,
   sanitizeInlineText,
   stroopsToXlm,
+  truncate,
 } from './format';
 import type { NetworkName } from '../state/networks';
 import type { BalanceChangeSummary } from '../stellar/events';
@@ -56,10 +66,168 @@ export const SUPPORTED_OPERATION_TYPES = new Set([
   'manageData',
   'setOptions',
   'accountMerge',
+  'manageSellOffer',
+  'manageBuyOffer',
+  'createPassiveSellOffer',
+  'createClaimableBalance',
+  'claimClaimableBalance',
+  'liquidityPoolDeposit',
+  'liquidityPoolWithdraw',
   'invokeHostFunction',
   'extendFootprintTtl',
   'restoreFootprint',
 ]);
+
+/** Nesting allowed in a claim predicate before rendering refuses it. */
+const MAX_CLAIM_PREDICATE_DEPTH = 8;
+
+/**
+ * Renders a claimable-balance claim predicate in words, faithfully and in
+ * full. Throws on an unknown predicate variant or on nesting beyond
+ * {@link MAX_CLAIM_PREDICATE_DEPTH}, so callers fail closed rather than show
+ * a condition that is not the one signed; {@link findUndisplayableOperation}
+ * runs the same rendering before any dialog is built.
+ *
+ * @param predicate - The predicate to render.
+ * @param depth - Current nesting depth.
+ * @returns The rendered condition.
+ */
+function describeClaimPredicate(
+  predicate: xdr.ClaimPredicate,
+  depth = 0,
+): string {
+  if (depth >= MAX_CLAIM_PREDICATE_DEPTH) {
+    throw new Error('claim predicate nested too deeply to display');
+  }
+  // Exhaustive over the known variants; the default arm throws so a variant
+  // added by a future SDK fails closed rather than rendering a placeholder.
+  switch (predicate.switch().name) {
+    case 'claimPredicateUnconditional':
+      return 'unconditional';
+    case 'claimPredicateAnd':
+      return `(${predicate
+        .andPredicates()
+        .map((inner) => describeClaimPredicate(inner, depth + 1))
+        .join(' AND ')})`;
+    case 'claimPredicateOr':
+      return `(${predicate
+        .orPredicates()
+        .map((inner) => describeClaimPredicate(inner, depth + 1))
+        .join(' OR ')})`;
+    case 'claimPredicateNot': {
+      const inner = predicate.notPredicate();
+      if (!inner) {
+        throw new Error('claim predicate NOT without an operand');
+      }
+      return `NOT ${describeClaimPredicate(inner, depth + 1)}`;
+    }
+    case 'claimPredicateBeforeAbsoluteTime': {
+      const seconds = predicate.absBefore().toString();
+      return `before unix time ${formatTimeBound(seconds) ?? seconds}`;
+    }
+    case 'claimPredicateBeforeRelativeTime':
+      return `within ${predicate.relBefore().toString()} seconds of the balance being created`;
+    default:
+      throw new Error(`unsupported claim predicate ${predicate.switch().name}`);
+  }
+}
+
+/**
+ * Finds an operation whose details the dialog cannot render in full, among
+ * the operation types that are otherwise supported. Today that is a
+ * claimable balance whose claim predicates use an unknown variant or nest
+ * beyond the rendering bound. Mirrors the host-function and footprint
+ * checks: the signing path refuses before any dialog is built, so no
+ * operation reaches the user with a condition it cannot state.
+ *
+ * @param tx - The operation-bearing transaction.
+ * @returns A reason the transaction cannot be reviewed, or null.
+ */
+export function findUndisplayableOperation(tx: Transaction): string | null {
+  for (const operation of tx.operations) {
+    if (operation.type !== 'createClaimableBalance') {
+      continue;
+    }
+    for (const claimant of operation.claimants) {
+      try {
+        describeClaimPredicate(claimant.predicate);
+      } catch {
+        return 'a claimable balance whose claim conditions the snap cannot display in full';
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Renders an offer or pool price exactly as the protocol stores it: the
+ * rational `n/d`, with a decimal reading alongside. The SDK decodes prices to
+ * a decimal string that a non-terminating ratio cannot represent, so the raw
+ * XDR price is preferred whenever the operation could be re-read; the decoded
+ * string is the fallback.
+ *
+ * @param raw - The raw XDR price, when available.
+ * @param decoded - The SDK-decoded decimal price.
+ * @returns The display string.
+ */
+function formatPrice(raw: xdr.Price | null, decoded: string): string {
+  if (!raw) {
+    return decoded;
+  }
+  const numerator = BigInt(raw.n());
+  const denominator = BigInt(raw.d());
+  if (numerator <= 0n || denominator <= 0n) {
+    // Not a price the network would accept; shown as stored, not hidden.
+    return `${numerator}/${denominator} (invalid price)`;
+  }
+  const scale = 10_000_000n;
+  const scaled = (numerator * scale) / denominator;
+  const exact = scaled * denominator === numerator * scale;
+  const whole = scaled / scale;
+  const fraction = (scaled % scale)
+    .toString()
+    .padStart(7, '0')
+    .replace(/0+$/u, '');
+  const decimal = fraction ? `${whole}.${fraction}` : `${whole}`;
+  return `${numerator}/${denominator} (${exact ? '=' : 'about'} ${decimal})`;
+}
+
+/**
+ * Reads the raw price of an offer or pool-deposit operation.
+ *
+ * @param raw - The raw XDR operation, when available.
+ * @param field - Which price to read.
+ * @returns The raw price, or null when unavailable.
+ */
+function rawPrice(
+  raw: xdr.Operation | undefined,
+  field: 'price' | 'minPrice' | 'maxPrice',
+): xdr.Price | null {
+  try {
+    if (!raw) {
+      return null;
+    }
+    const body = raw.body();
+    // Deliberately non-exhaustive: only the operations carrying a price.
+    // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check
+    switch (body.switch().name) {
+      case 'manageSellOffer':
+        return body.manageSellOfferOp().price();
+      case 'manageBuyOffer':
+        return body.manageBuyOfferOp().price();
+      case 'createPassiveSellOffer':
+        return body.createPassiveSellOfferOp().price();
+      case 'liquidityPoolDeposit':
+        return field === 'maxPrice'
+          ? body.liquidityPoolDepositOp().maxPrice()
+          : body.liquidityPoolDepositOp().minPrice();
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Warns when the inline preview of any of the given untrusted strings
@@ -86,6 +254,252 @@ function lossyTextBanner(
         exactly, such as line breaks, tabs, or invisible marks. They are
         collapsed above but remain in what you sign. Compare the exact value
         shown below it.
+      </Text>
+    </Banner>
+  );
+}
+
+/**
+ * Warns when a field that is nominally text had to be shown as hex because
+ * its signed bytes are not clean, printable text.
+ *
+ * The SDK decodes several string fields with an ASCII decoder that drops the
+ * high bit of every byte, so `e3 ef ee e6 e9 e7` decodes to the clean word
+ * `config`, and a preview built from that decoded string passes every hidden
+ * character check while differing from what is signed. The fields this
+ * concerns are therefore rendered from the raw XDR bytes instead, and this
+ * banner explains the hex form when that is what the bytes come out as.
+ *
+ * @param label - What the field is, for the banner title.
+ * @param display - The {@link bytesToDisplay} rendering of the field.
+ * @returns A warning banner, or null when the field rendered as text.
+ */
+function rawBytesNotice(
+  label: string,
+  display: string,
+): GenericSnapElement | null {
+  if (!isHexDisplay(display)) {
+    return null;
+  }
+  return (
+    <Banner title={`${label} is not plain text`} severity="warning">
+      <Text>
+        The signed bytes of this field are not clean, printable text, so they
+        are shown in full as hexadecimal rather than as text that could read
+        differently from what you sign.
+      </Text>
+    </Banner>
+  );
+}
+
+/**
+ * The raw XDR operations of a transaction, in order, for the fields whose
+ * SDK-decoded form is lossy (see {@link rawBytesNotice}).
+ *
+ * @param tx - The parsed transaction.
+ * @returns The raw operations, or null when the envelope cannot be re-read.
+ */
+function rawOperations(tx: Transaction): xdr.Operation[] | null {
+  try {
+    const envelope = tx.toEnvelope();
+    // A `Transaction` is always a v0 or v1 envelope; the remaining envelope
+    // types are fee bumps and non-transaction payloads, which never reach
+    // this function.
+    // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check
+    switch (envelope.switch().name) {
+      case 'envelopeTypeTxV0':
+        return envelope.v0().tx().operations();
+      case 'envelopeTypeTx':
+        return envelope.v1().tx().operations();
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The raw `dataName` bytes of a `manageData` operation.
+ *
+ * @param raw - The raw XDR operation, when available.
+ * @returns The key bytes, or null when the raw operation is not available
+ * or is not a `manageData` operation.
+ */
+function rawManageDataKey(raw: xdr.Operation | undefined): Buffer | null {
+  try {
+    return raw ? Buffer.from(raw.body().manageDataOp().dataName()) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The raw `homeDomain` bytes of a `setOptions` operation.
+ *
+ * @param raw - The raw XDR operation, when available.
+ * @returns The home-domain bytes, null when the operation sets none, or
+ * undefined when the raw operation is not available.
+ */
+function rawHomeDomain(
+  raw: xdr.Operation | undefined,
+): Buffer | null | undefined {
+  try {
+    if (!raw) {
+      return undefined;
+    }
+    const domain = raw.body().setOptionsOp().homeDomain();
+    return domain === null || domain === undefined ? null : Buffer.from(domain);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The display form of a `setOptions` home domain: rendered from the raw
+ * bytes when the raw operation is available, and from the SDK's decoded
+ * string otherwise.
+ *
+ * @param raw - The raw XDR operation, when available.
+ * @param decoded - The SDK-decoded home domain, when the operation sets one.
+ * @returns The {@link bytesToDisplay} rendering, or undefined when the
+ * operation does not set a home domain.
+ */
+function homeDomainDisplay(
+  raw: xdr.Operation | undefined,
+  decoded: string | undefined,
+): string | undefined {
+  const rawDomain = rawHomeDomain(raw);
+  if (rawDomain === undefined) {
+    return decoded === undefined
+      ? undefined
+      : bytesToDisplay(Buffer.from(decoded, 'utf8'));
+  }
+  return rawDomain === null ? undefined : bytesToDisplay(rawDomain);
+}
+
+/**
+ * Whether a decoded amount string is zero. The SDK renders amounts as fixed
+ * seven-decimal strings (`0.0000000`), so a literal comparison with `'0'`
+ * never matches a real envelope.
+ *
+ * @param amount - The decoded amount.
+ * @returns True when the amount is zero.
+ */
+function isZeroAmount(amount: string): boolean {
+  return /^0+(?:\.0+)?$/u.test(amount);
+}
+
+/** The protocol's account flags, each a distinct power of two. */
+const ACCOUNT_FLAG_NAMES: readonly (readonly [number, string])[] = [
+  [AuthRequiredFlag, 'AUTH_REQUIRED'],
+  [AuthRevocableFlag, 'AUTH_REVOCABLE'],
+  [AuthImmutableFlag, 'AUTH_IMMUTABLE'],
+  [AuthClawbackEnabledFlag, 'AUTH_CLAWBACK_ENABLED'],
+];
+
+/**
+ * Account flags by bit, named as the protocol names them. Unknown bits are
+ * shown as numbers so a future flag is never silently dropped.
+ *
+ * @param flags - The flag bitmask.
+ * @returns The decoded display string, e.g. `4 (AUTH_IMMUTABLE)`.
+ */
+function describeAccountFlags(flags: number): string {
+  const names: string[] = [];
+  let remaining = flags;
+  for (const [bit, name] of ACCOUNT_FLAG_NAMES) {
+    if (hasFlag(flags, bit)) {
+      names.push(name);
+      remaining -= bit;
+    }
+  }
+  if (remaining !== 0) {
+    names.push(`unknown flag ${remaining}`);
+  }
+  return names.length > 0 ? `${flags} (${names.join(', ')})` : String(flags);
+}
+
+/**
+ * Whether a flag bit is set in a bitmask. Arithmetic rather than bitwise so
+ * the lint rule against bitwise operators (which exists to catch a mistyped
+ * `&&`) need not be waived: for a power-of-two `bit`, the bit is set exactly
+ * when the quotient of `flags` by `bit` is odd.
+ *
+ * @param flags - The bitmask.
+ * @param bit - A single power-of-two flag value.
+ * @returns True when the flag is set.
+ */
+function hasFlag(flags: number, bit: number): boolean {
+  return Math.floor(flags / bit) % 2 === 1;
+}
+
+/**
+ * The classic `G...` account behind an address, unwrapping a muxed `M...`
+ * address to the account it routes to. Comparison of "who this is for"
+ * against the signing key must happen at the account level: a muxed source
+ * is the signer's own account when its base matches.
+ *
+ * @param address - A `G...` or `M...` address.
+ * @returns The base account address, or the input when it is neither.
+ */
+function baseAccount(address: string): string {
+  try {
+    return extractBaseAddress(address);
+  } catch {
+    return address;
+  }
+}
+
+/**
+ * Calls out when the transaction is not for the signing account.
+ *
+ * The `Source` and `Signing with` fields are both shown in full, but nothing
+ * else tells the user that they differ, and two 56-character strings are not
+ * something a person diffs by eye. The case that matters is co-signature
+ * harvesting: a site asks a user who is a signer on a shared or multisig
+ * account to sign an envelope sourced from that account, and the user reads
+ * it as their own transaction. The advisory weight check catches some of
+ * this for classic transactions when Horizon answers; this banner does not
+ * depend on either.
+ *
+ * @param tx - The parsed transaction.
+ * @param signingAddress - The wallet key that will sign.
+ * @returns A warning banner, or null when every source is the signer.
+ */
+function sourceMismatchBanner(
+  tx: Transaction,
+  signingAddress: string,
+): GenericSnapElement | null {
+  const signer = baseAccount(signingAddress);
+  const lines: string[] = [];
+  if (baseAccount(tx.source) !== signer) {
+    lines.push(
+      `The transaction source is ${truncate(tx.source)}, not the signing account.`,
+    );
+  }
+  const others = tx.operations
+    .map((operation, index) => ({ index, source: operation.source }))
+    .filter(
+      ({ source }) => source !== undefined && baseAccount(source) !== signer,
+    )
+    .map(({ index }) => index + 1);
+  if (others.length > 0) {
+    lines.push(
+      `Operation${others.length === 1 ? '' : 's'} ${others.join(
+        ', ',
+      )} ${others.length === 1 ? 'acts' : 'act'} for a source account other than the signing account.`,
+    );
+  }
+  if (lines.length === 0) {
+    return null;
+  }
+  return (
+    <Banner title="Not the signing account's transaction" severity="warning">
+      <Text>
+        {`${lines.join(
+          ' ',
+        )} Your signature would authorize actions on another account. Compare the full Source and Signing with values before approving.`}
       </Text>
     </Banner>
   );
@@ -202,11 +616,14 @@ function renderOperationSource(
  *
  * @param operation - The parsed operation.
  * @param index - Zero-based position in the transaction.
+ * @param raw - The operation's raw XDR form, when the envelope could be
+ * re-read; used for the fields whose decoded form is lossy.
  * @returns The operation section.
  */
 function renderOperationBody(
   operation: OperationRecord,
   index: number,
+  raw: xdr.Operation | undefined,
 ): GenericSnapElement {
   const title = `Operation ${index + 1}`;
 
@@ -244,7 +661,10 @@ function renderOperationBody(
       );
 
     case 'changeTrust': {
-      const removing = operation.limit === '0';
+      // The SDK decodes a zero limit as `0.0000000`, so the comparison must
+      // be numeric: a literal `'0'` never matched a real envelope and the
+      // removal branch below was unreachable.
+      const removing = isZeroAmount(operation.limit);
       const poolLines = formatLiquidityPool(operation.line);
       return (
         <Section>
@@ -322,8 +742,17 @@ function renderOperationBody(
       );
 
     case 'manageData': {
-      // The value is raw bytes: render it losslessly (clean UTF-8 text or
-      // full hex) in a Copyable so display and signed bytes cannot diverge.
+      // Both fields are raw bytes on the wire. The value was always rendered
+      // losslessly (clean UTF-8 text or full hex) in a Copyable; the key is
+      // now rendered the same way, from the raw XDR rather than from the
+      // SDK's decoded string, because that decoder is ASCII and drops the
+      // high bit of every byte: a key of non-ASCII bytes decoded to a clean
+      // ASCII word that passed every hidden-character check while differing
+      // from what is signed. The raw bytes are unavailable only if the
+      // envelope could not be re-read, in which case the decoded string is
+      // the best available and is rendered through the same path.
+      const rawKey = rawManageDataKey(raw);
+      const key = bytesToDisplay(rawKey ?? Buffer.from(operation.name, 'utf8'));
       const value =
         operation.value === undefined
           ? undefined
@@ -333,15 +762,16 @@ function renderOperationBody(
           <Text>
             <Bold>{`${title}: Manage data`}</Bold>
           </Text>
-          {lossyTextBanner([operation.name])}
+          {rawBytesNotice('Key', key)}
+          {lossyTextBanner([key])}
           <Text>Key</Text>
-          <Copyable value={operation.name} />
-          {isLossyInline(operation.name) ? (
-            // The raw key above keeps hidden characters hidden; this view
-            // makes every such code point visible.
+          <Copyable value={key} />
+          {isLossyInline(key) ? (
+            // The raw key above keeps line breaks and tabs as they are; this
+            // view makes every such code point visible.
             <Box>
               <Text>Key (exact, special characters escaped)</Text>
-              <Copyable value={escapeHiddenCharacters(operation.name)} />
+              <Copyable value={escapeHiddenCharacters(key)} />
             </Box>
           ) : null}
           {value === undefined ? (
@@ -360,25 +790,48 @@ function renderOperationBody(
 
     case 'setOptions': {
       const rows: GenericSnapElement[] = [];
+      const outcomes: GenericSnapElement[] = [];
       if (operation.signer) {
         // Show the signer key itself, not only its weight — adding or
-        // removing a signer changes who controls the account.
+        // removing a signer changes who controls the account. A weight of
+        // zero is not a setting: it removes the signer, and the row says so
+        // rather than leaving a bare number to be read as harmless.
+        const { weight } = operation.signer;
+        const removes = weight === 0;
         rows.push(
           <Row label="Signer weight" variant="critical">
-            <Text>{String(operation.signer.weight ?? '?')}</Text>
+            <Text>
+              {removes ? '0 (removes this signer)' : String(weight ?? '?')}
+            </Text>
           </Row>,
         );
         rows.push(
-          <Text>Signer key</Text>,
+          <Text>{removes ? 'Signer key being removed' : 'Signer key'}</Text>,
           <Copyable value={describeSigner(operation.signer)} />,
         );
       }
       if (operation.masterWeight !== undefined) {
+        const disables = operation.masterWeight === 0;
         rows.push(
           <Row label="Master key weight" variant="critical">
-            <Text>{String(operation.masterWeight)}</Text>
+            <Text>
+              {disables
+                ? '0 (disables the master key)'
+                : String(operation.masterWeight)}
+            </Text>
           </Row>,
         );
+        if (disables) {
+          outcomes.push(
+            <Banner title="Master key will be disabled" severity="danger">
+              <Text>
+                With the master key at weight 0 the account's own secret key can
+                no longer sign for it. If the remaining signers and thresholds
+                do not add up, the account is locked permanently.
+              </Text>
+            </Banner>,
+          );
+        }
       }
       if (operation.inflationDest !== undefined) {
         // Inflation payouts are retired, but the destination is still a
@@ -393,21 +846,58 @@ function renderOperationBody(
         ['Low threshold', operation.lowThreshold],
         ['Medium threshold', operation.medThreshold],
         ['High threshold', operation.highThreshold],
-        ['Home domain', operation.homeDomain],
-        ['Set flags', operation.setFlags],
-        ['Clear flags', operation.clearFlags],
       ] as const) {
         if (value !== undefined) {
           rows.push(
             <Row label={label} variant="warning">
-              <Text>
-                {label === 'Home domain'
-                  ? sanitizeInlineText(String(value))
-                  : String(value)}
-              </Text>
+              <Text>{String(value)}</Text>
             </Row>,
           );
         }
+      }
+      // The home domain is decoded by the SDK with an ASCII decoder that
+      // masks the high bit of every byte (see `rawBytesNotice`), so it is
+      // rendered from the raw XDR bytes. When the raw envelope cannot be
+      // re-read the decoded string is the best available.
+      const homeDomain = homeDomainDisplay(raw, operation.homeDomain);
+      if (homeDomain !== undefined) {
+        if (isHexDisplay(homeDomain)) {
+          rows.push(<Text>Home domain</Text>, <Copyable value={homeDomain} />);
+        } else {
+          rows.push(
+            <Row label="Home domain" variant="warning">
+              <Text>{sanitizeInlineText(homeDomain)}</Text>
+            </Row>,
+          );
+        }
+      }
+      // Flags are shown by name, not only by bit: `4` says nothing, while
+      // `AUTH_IMMUTABLE` is the one setting on an account that can never be
+      // undone, and setting it deserves its own warning.
+      if (operation.setFlags !== undefined) {
+        rows.push(
+          <Row label="Set flags" variant="warning">
+            <Text>{describeAccountFlags(operation.setFlags)}</Text>
+          </Row>,
+        );
+        if (hasFlag(operation.setFlags, AuthImmutableFlag)) {
+          outcomes.push(
+            <Banner title="Irreversible: AUTH_IMMUTABLE" severity="danger">
+              <Text>
+                Setting AUTH_IMMUTABLE permanently freezes the account's
+                authorization flags and prevents the account from ever being
+                merged. This cannot be undone by any later transaction.
+              </Text>
+            </Banner>,
+          );
+        }
+      }
+      if (operation.clearFlags !== undefined) {
+        rows.push(
+          <Row label="Clear flags" variant="warning">
+            <Text>{describeAccountFlags(operation.clearFlags)}</Text>
+          </Row>,
+        );
       }
       return (
         <Section>
@@ -417,15 +907,18 @@ function renderOperationBody(
               controls the account. Review carefully.
             </Text>
           </Banner>
-          {lossyTextBanner([operation.homeDomain])}
+          {outcomes}
+          {homeDomain === undefined
+            ? null
+            : rawBytesNotice('Home domain', homeDomain)}
+          {lossyTextBanner([homeDomain])}
           {rows}
-          {operation.homeDomain !== undefined &&
-          isLossyInline(operation.homeDomain) ? (
+          {homeDomain !== undefined && isLossyInline(homeDomain) ? (
             // The row above is a sanitized preview; show the exact signed
             // value with hidden characters escaped visibly.
             <Box>
               <Text>Home domain (exact, special characters escaped)</Text>
-              <Copyable value={escapeHiddenCharacters(operation.homeDomain)} />
+              <Copyable value={escapeHiddenCharacters(homeDomain)} />
             </Box>
           ) : null}
         </Section>
@@ -443,6 +936,208 @@ function renderOperationBody(
           </Banner>
           <Text>Destination</Text>
           <Copyable value={String(operation.destination)} />
+        </Section>
+      );
+
+    case 'manageSellOffer':
+    case 'createPassiveSellOffer': {
+      // A sell offer: `amount` of `selling` offered at `price` units of
+      // `buying` per unit sold. Offer ID 0 creates; a non-zero ID updates
+      // that offer, and amount 0 deletes it. Passive offers have no ID.
+      const passive = operation.type === 'createPassiveSellOffer';
+      const offerId = passive ? '0' : operation.offerId;
+      const deleting = !passive && isZeroAmount(operation.amount);
+      let heading = 'Create sell offer';
+      if (passive) {
+        heading = 'Create passive sell offer';
+      } else if (deleting) {
+        heading = `Delete sell offer #${offerId}`;
+      } else if (offerId !== '0') {
+        heading = `Update sell offer #${offerId}`;
+      }
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: ${heading}`}</Bold>
+          </Text>
+          {deleting ? (
+            <Row label="Amount" variant="warning">
+              <Text>{`0 (removes offer #${offerId})`}</Text>
+            </Row>
+          ) : (
+            <Row label="Selling">
+              <Text>{`${operation.amount} ${formatAsset(operation.selling)}`}</Text>
+            </Row>
+          )}
+          <Row label="Buying">
+            <Text>{formatAsset(operation.buying)}</Text>
+          </Row>
+          <Row
+            label={`Price (${formatAsset(operation.buying)} per 1 ${formatAsset(
+              operation.selling,
+            )})`}
+          >
+            <Text>{formatPrice(rawPrice(raw, 'price'), operation.price)}</Text>
+          </Row>
+          {renderAssetFull('Selling asset', operation.selling)}
+          {renderAssetFull('Buying asset', operation.buying)}
+          {passive ? (
+            <Text>
+              A passive offer does not take existing offers at the same price;
+              it only fills against better ones.
+            </Text>
+          ) : null}
+        </Section>
+      );
+    }
+
+    case 'manageBuyOffer': {
+      // A buy offer: acquire `buyAmount` of `buying`, paying `price` units of
+      // `selling` per unit bought.
+      const deleting = isZeroAmount(operation.buyAmount);
+      let heading = 'Create buy offer';
+      if (deleting) {
+        heading = `Delete buy offer #${operation.offerId}`;
+      } else if (operation.offerId !== '0') {
+        heading = `Update buy offer #${operation.offerId}`;
+      }
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: ${heading}`}</Bold>
+          </Text>
+          {deleting ? (
+            <Row label="Amount" variant="warning">
+              <Text>{`0 (removes offer #${operation.offerId})`}</Text>
+            </Row>
+          ) : (
+            <Row label="Buying">
+              <Text>{`${operation.buyAmount} ${formatAsset(operation.buying)}`}</Text>
+            </Row>
+          )}
+          <Row label="Paying with">
+            <Text>{formatAsset(operation.selling)}</Text>
+          </Row>
+          <Row
+            label={`Price (${formatAsset(operation.selling)} per 1 ${formatAsset(
+              operation.buying,
+            )})`}
+          >
+            <Text>{formatPrice(rawPrice(raw, 'price'), operation.price)}</Text>
+          </Row>
+          {renderAssetFull('Buying asset', operation.buying)}
+          {renderAssetFull('Paying asset', operation.selling)}
+        </Section>
+      );
+    }
+
+    case 'createClaimableBalance': {
+      // The amount leaves the source account now and is held on the ledger
+      // until one of the claimants claims it under their condition. The
+      // claimants and their conditions are the whole content of the
+      // operation, so they are listed in full; an undecodable condition is
+      // refused before the dialog exists (see findUndisplayableOperation).
+      const claimants = operation.claimants.map((claimant, position) => {
+        let condition: string;
+        try {
+          condition = describeClaimPredicate(claimant.predicate);
+        } catch {
+          condition = '(condition cannot be displayed)';
+        }
+        return `#${position + 1} ${claimant.destination}\ncan claim: ${condition}`;
+      });
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: Create claimable balance`}</Bold>
+          </Text>
+          <Row label="Amount" variant="warning">
+            <Text>{`${operation.amount} ${formatAsset(operation.asset)}`}</Text>
+          </Row>
+          {renderAssetFull('Asset', operation.asset)}
+          <Text>
+            {`This amount leaves the source account now and is held until one of the ${operation.claimants.length} claimant${
+              operation.claimants.length === 1 ? '' : 's'
+            } below claims it. Each condition is checked when they claim.`}
+          </Text>
+          <Text>{`Claimants (${operation.claimants.length})`}</Text>
+          <Copyable value={claimants.join('\n\n')} />
+        </Section>
+      );
+    }
+
+    case 'claimClaimableBalance':
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: Claim claimable balance`}</Bold>
+          </Text>
+          <Text>
+            Claims the balance below into the source account, if the source
+            account is one of its claimants and its condition holds. The asset
+            and amount are not part of this operation; they are those of the
+            balance being claimed.
+          </Text>
+          <Text>Balance ID</Text>
+          <Copyable value={operation.balanceId} />
+        </Section>
+      );
+
+    case 'liquidityPoolDeposit':
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: Deposit into liquidity pool`}</Bold>
+          </Text>
+          <Text>
+            Deposits up to the two maximum amounts below into the pool in
+            exchange for pool shares, within the price range given. The pool and
+            its two assets are identified only by the pool ID; compare it with
+            the pool you intend.
+          </Text>
+          <Text>Pool ID</Text>
+          <Copyable value={operation.liquidityPoolId} />
+          <Row label="Max amount A">
+            <Text>{operation.maxAmountA}</Text>
+          </Row>
+          <Row label="Max amount B">
+            <Text>{operation.maxAmountB}</Text>
+          </Row>
+          <Row label="Min price (A per B)">
+            <Text>
+              {formatPrice(rawPrice(raw, 'minPrice'), operation.minPrice)}
+            </Text>
+          </Row>
+          <Row label="Max price (A per B)">
+            <Text>
+              {formatPrice(rawPrice(raw, 'maxPrice'), operation.maxPrice)}
+            </Text>
+          </Row>
+        </Section>
+      );
+
+    case 'liquidityPoolWithdraw':
+      return (
+        <Section>
+          <Text>
+            <Bold>{`${title}: Withdraw from liquidity pool`}</Bold>
+          </Text>
+          <Text>
+            Redeems the pool shares below for the pool's two assets, receiving
+            at least the two minimum amounts. The pool and its assets are
+            identified only by the pool ID; compare it with the pool you intend.
+          </Text>
+          <Text>Pool ID</Text>
+          <Copyable value={operation.liquidityPoolId} />
+          <Row label="Pool shares">
+            <Text>{operation.amount}</Text>
+          </Row>
+          <Row label="Min amount A">
+            <Text>{operation.minAmountA}</Text>
+          </Row>
+          <Row label="Min amount B">
+            <Text>{operation.minAmountB}</Text>
+          </Row>
         </Section>
       );
 
@@ -512,6 +1207,19 @@ function renderOperationBody(
             <Text>{`Authorizations (${authCount})`}</Text>
           ) : null}
           {authCount > 0 ? (
+            // The legend says which entries this signature itself
+            // authorizes. An entry marked [source-account] is approved by
+            // the transaction signature; an entry naming an address is
+            // approved by that address's own signature on the entry, which
+            // is collected separately (or is already attached) and is not
+            // what approving this dialog produces.
+            <Text>
+              Entries marked [source-account] are authorized by this transaction
+              signature. Entries naming an address need that address to sign the
+              entry itself.
+            </Text>
+          ) : null}
+          {authCount > 0 ? (
             <Copyable
               value={summarizeAuthEntries(operation.auth ?? []).join('\n\n')}
             />
@@ -564,13 +1272,15 @@ function renderOperationBody(
  *
  * @param operation - The parsed operation.
  * @param index - Zero-based position in the transaction.
+ * @param raw - The operation's raw XDR form, when available.
  * @returns The operation section.
  */
 function renderOperation(
   operation: OperationRecord,
   index: number,
+  raw: xdr.Operation | undefined,
 ): GenericSnapElement {
-  const body = renderOperationBody(operation, index);
+  const body = renderOperationBody(operation, index, raw);
   const source = renderOperationSource(operation);
   if (!source) {
     return body;
@@ -584,11 +1294,103 @@ function renderOperation(
 }
 
 /**
- * Header rows shared by regular transactions.
+ * Renders every operation of a transaction, pairing each decoded operation
+ * with its raw XDR counterpart so the fields whose decoded form is lossy can
+ * be rendered from the signed bytes.
  *
  * @param tx - The parsed transaction.
- * @returns Summary section.
+ * @returns One section per operation.
  */
+function renderOperations(tx: Transaction): GenericSnapElement[] {
+  const raws = rawOperations(tx);
+  return tx.operations.map((operation, index) =>
+    renderOperation(operation, index, raws?.[index]),
+  );
+}
+
+/**
+ * The memo rows: an inline preview, and, whenever that preview is not the
+ * exact signed value, an exact copy alongside.
+ *
+ * A text memo is bytes on the wire, and the SDK's decoded string maps any
+ * invalid UTF-8 sequence to U+FFFD, so two different byte strings could
+ * render identically with nothing to signal it. The rows are therefore built
+ * from the raw memo bytes: clean UTF-8 renders as text, anything else as the
+ * full hex form with the lossy banner, the same treatment `manageData` values
+ * get.
+ *
+ * @param tx - The parsed transaction.
+ * @returns The memo elements, empty when the memo is `none`.
+ */
+function renderMemo(tx: Transaction): GenericSnapElement[] {
+  const { memo } = tx;
+  switch (memo.type) {
+    case 'text': {
+      const bytes = Buffer.isBuffer(memo.value)
+        ? memo.value
+        : Buffer.from(String(memo.value ?? ''), 'utf8');
+      const display = bytesToDisplay(bytes);
+      const rows: GenericSnapElement[] = [];
+      if (isHexDisplay(display)) {
+        rows.push(
+          <Banner title="Display differs from signed text" severity="warning">
+            <Text>
+              The memo bytes are not clean, printable text, so they cannot be
+              shown as text without loss. The exact bytes are shown below as
+              hexadecimal.
+            </Text>
+          </Banner>,
+          <Row label="Memo (text)">
+            <Text>{sanitizeInlineText(bytes.toString('utf8'))}</Text>
+          </Row>,
+          <Text>Memo (exact bytes)</Text>,
+          <Copyable value={display} />,
+        );
+        return rows;
+      }
+      const banner = lossyTextBanner([display]);
+      if (banner) {
+        rows.push(banner);
+      }
+      rows.push(
+        <Row label="Memo (text)">
+          <Text>{sanitizeInlineText(display)}</Text>
+        </Row>,
+      );
+      if (isLossyInline(display)) {
+        // The inline row above is a sanitized preview; give the user the
+        // exact signed text with hidden characters escaped visibly.
+        rows.push(
+          <Text>Memo (exact, special characters escaped)</Text>,
+          <Copyable value={escapeHiddenCharacters(display)} />,
+        );
+      }
+      return rows;
+    }
+    case 'id':
+      return [
+        <Row label="Memo (ID)">
+          <Text>{String(memo.value)}</Text>
+        </Row>,
+      ];
+    case 'hash':
+      return [
+        <Row label="Memo (hash)">
+          <Text>{Buffer.from(memo.value as Buffer).toString('hex')}</Text>
+        </Row>,
+      ];
+    case 'return':
+      return [
+        <Row label="Memo (return)">
+          <Text>{Buffer.from(memo.value as Buffer).toString('hex')}</Text>
+        </Row>,
+      ];
+    case 'none':
+    default:
+      return [];
+  }
+}
+
 /**
  * Renders a unix-seconds time bound with a readable UTC form when parseable.
  *
@@ -719,23 +1521,29 @@ function renderPreconditions(tx: Transaction): GenericSnapElement[] {
 }
 
 /**
- * Header rows shared by regular transactions: full source, fee, sequence,
- * memo (with a hidden-character warning for text memos), and preconditions.
+ * Header rows shared by regular transactions: full source (with a warning
+ * when it is not the signing account), fee, sequence, memo (rendered from
+ * its signed bytes, with a warning when the preview is not exact), and
+ * preconditions.
  *
  * @param tx - The parsed transaction.
+ * @param signingAddress - The wallet key that will sign.
  * @returns The summary section.
  */
-function renderSummary(tx: Transaction): GenericSnapElement {
-  const memo = formatMemo(tx.memo);
-  const rawMemoText =
-    tx.memo.type === 'text' ? tx.memo.value?.toString() : undefined;
+function renderSummary(
+  tx: Transaction,
+  signingAddress: string,
+): GenericSnapElement {
   // A sequence-0 envelope can never execute, so its (absent) expiry is moot:
   // the banner would be noise on a login challenge, whose own branch already
-  // explains that it cannot be submitted at all.
-  const unbounded = tx.sequence !== '0' && !hasUpperTimeBound(tx);
+  // explains that it cannot be submitted at all. The same goes for the
+  // source-account banner: a SEP-10 challenge is sourced from the server's
+  // account by design, and that branch states that nothing is executed.
+  const executable = tx.sequence !== '0';
+  const unbounded = executable && !hasUpperTimeBound(tx);
   return (
     <Section>
-      {lossyTextBanner([rawMemoText])}
+      {executable ? sourceMismatchBanner(tx, signingAddress) : null}
       {unbounded ? (
         <Banner title="This signature never expires" severity="warning">
           <Text>
@@ -753,19 +1561,7 @@ function renderSummary(tx: Transaction): GenericSnapElement {
       <Row label="Sequence">
         <Text>{tx.sequence}</Text>
       </Row>
-      {memo ? (
-        <Row label={memo[0]}>
-          <Text>{memo[1]}</Text>
-        </Row>
-      ) : null}
-      {rawMemoText !== undefined && isLossyInline(rawMemoText) ? (
-        // The inline row above is a sanitized preview; give the user the
-        // exact signed text with hidden characters escaped visibly.
-        <Box>
-          <Text>Memo (exact, special characters escaped)</Text>
-          <Copyable value={escapeHiddenCharacters(rawMemoText)} />
-        </Box>
-      ) : null}
+      {renderMemo(tx)}
       {renderPreconditions(tx)}
     </Section>
   );
@@ -869,6 +1665,19 @@ function renderBalanceChanges(
               </Text>
             </Row>
           ))}
+          {/* The row labels shorten addresses, and a shortened address is
+              exactly what a lookalike token is ground to match. The full
+              identities are offered alongside so the user can compare the
+              whole contract address or issuer, not its ends. */}
+          <Text>Assets in full</Text>
+          <Copyable
+            value={summary.changes
+              .map(
+                (change) =>
+                  `${sanitizeInlineText(change.asset)}: ${change.identity}`,
+              )
+              .join('\n')}
+          />
         </Box>
       )}
     </Box>
@@ -879,11 +1688,21 @@ function renderBalanceChanges(
  * Renders the display-verification simulation results for a Soroban
  * transaction.
  *
+ * Every figure in this section is reported by an RPC endpoint the snap
+ * cannot independently verify (on PUBLIC, a third-party gateway), and the
+ * section says so in words. The empty and partial balance-change cases
+ * already carried a caveat; a populated list, a fee, and a signer list
+ * carried none, and numbers under a "Simulation" heading read as the snap's
+ * own findings unless told otherwise.
+ *
  * @param simulation - The simulation summary, or null when not simulated.
+ * @param rpcEndpoint - The endpoint that produced the simulation, named in
+ * the section so the user knows whose figures these are.
  * @returns The simulation section, or null.
  */
 function renderSimulation(
   simulation: SimulationSummary | null,
+  rpcEndpoint: string | undefined,
 ): GenericSnapElement | null {
   if (!simulation) {
     return null;
@@ -912,10 +1731,23 @@ function renderSimulation(
       <Text>
         <Bold>Simulation</Bold>
       </Text>
+      <Text>
+        {`Reported by ${
+          rpcEndpoint ? endpointHost(rpcEndpoint) : 'the network RPC endpoint'
+        }. The wallet cannot independently verify these figures; a wrong or hostile endpoint could misreport them.`}
+      </Text>
       {renderBalanceChanges(simulation.balanceChanges)}
-      <Row label="Estimated resource fee">
-        <Text>{`${stroopsToXlm(simulation.minResourceFee)} XLM`}</Text>
-      </Row>
+      {simulation.minResourceFee === null ? (
+        // An absent estimate is not a zero estimate: rendering it as `0 XLM`
+        // would claim the call is free, which nothing supports.
+        <Row label="Estimated resource fee" variant="warning">
+          <Text>unavailable (not reported by the endpoint)</Text>
+        </Row>
+      ) : (
+        <Row label="Estimated resource fee">
+          <Text>{`${stroopsToXlm(simulation.minResourceFee)} XLM`}</Text>
+        </Row>
+      )}
       {simulation.authSigners.length > 0 ? (
         <Box>
           <Text>Requires signature from</Text>
@@ -949,6 +1781,11 @@ export type SignTransactionDialogParams = {
   accountIndex: number;
   /** Present for Soroban transactions: display-verification simulation. */
   simulation?: SimulationSummary | null;
+  /**
+   * The RPC endpoint that produced the simulation, named in the simulation
+   * section so the user knows whose figures they are reading.
+   */
+  simulationEndpoint?: string;
   /** Advisory safety warnings (unfunded destination, SEP-29, multisig). */
   warnings?: string[];
   /** Approval will also broadcast the signed transaction immediately. */
@@ -1007,6 +1844,7 @@ function renderWarnings(warnings: string[]): GenericSnapElement[] {
  * @param params.accountIndex - The signing account's SEP-0005 index.
  * @param params.simulation - Display-verification simulation for Soroban
  * transactions, or null/absent for classic ones.
+ * @param params.simulationEndpoint - The RPC endpoint that produced it.
  * @param params.warnings - Advisory safety warnings for classic transactions.
  * @param params.submit - Approval will also broadcast the transaction.
  * @param params.submitEndpoint - The endpoint that will receive the signed
@@ -1021,6 +1859,7 @@ export function buildSignTransactionDialog({
   signingAddress,
   accountIndex,
   simulation,
+  simulationEndpoint,
   warnings = [],
   submit = false,
   submitEndpoint,
@@ -1079,6 +1918,12 @@ export function buildSignTransactionDialog({
   // Fee-bump envelope: outer fee payer wrapping an already-signed inner tx.
   if (!(tx instanceof Transaction)) {
     const inner = tx.innerTransaction;
+    // The fee source is the account this signature authorizes. When it is
+    // not the signing account, the user is co-signing someone else's fee
+    // payment, which deserves the same call-out a foreign source gets on an
+    // ordinary transaction.
+    const foreignFeeSource =
+      baseAccount(tx.feeSource) !== baseAccount(signingAddress);
     return (
       <Box>
         <Heading>
@@ -1093,6 +1938,18 @@ export function buildSignTransactionDialog({
         {submitBanner}
         {signingWith}
         {renderWarnings(warnings)}
+        {foreignFeeSource ? (
+          <Banner
+            title="Fee source is not the signing account"
+            severity="warning"
+          >
+            <Text>
+              {`The fee for this bump is paid by ${truncate(
+                tx.feeSource,
+              )}, not by the signing account. Your signature would authorize that account to pay. Compare the full Fee source and Signing with values before approving.`}
+            </Text>
+          </Banner>
+        ) : null}
         <Section>
           <Text>Fee source</Text>
           <Copyable value={tx.feeSource} />
@@ -1104,10 +1961,10 @@ export function buildSignTransactionDialog({
         <Text>
           <Bold>Inner transaction</Bold>
         </Text>
-        {renderSummary(inner)}
-        {inner.operations.map(renderOperation)}
+        {renderSummary(inner, signingAddress)}
+        {renderOperations(inner)}
         {renderFootprint(tx)}
-        {renderSimulation(simulation ?? null)}
+        {renderSimulation(simulation ?? null, simulationEndpoint)}
         {grantNotice}
         <Divider />
         <Text>Raw transaction (XDR)</Text>
@@ -1139,8 +1996,8 @@ export function buildSignTransactionDialog({
             not move funds.
           </Text>
         </Banner>
-        {renderSummary(tx)}
-        {tx.operations.map(renderOperation)}
+        {renderSummary(tx, signingAddress)}
+        {renderOperations(tx)}
         {renderFootprint(tx)}
         {grantNotice}
         <Divider />
@@ -1164,10 +2021,10 @@ export function buildSignTransactionDialog({
       {submitBanner}
       {signingWith}
       {renderWarnings(warnings)}
-      {renderSummary(tx)}
-      {tx.operations.map(renderOperation)}
+      {renderSummary(tx, signingAddress)}
+      {renderOperations(tx)}
       {renderFootprint(tx)}
-      {renderSimulation(simulation ?? null)}
+      {renderSimulation(simulation ?? null, simulationEndpoint)}
       {grantNotice}
       <Divider />
       <Text>Raw transaction (XDR)</Text>

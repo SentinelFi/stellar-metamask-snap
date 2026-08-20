@@ -1,5 +1,5 @@
 import { SLIP10Node } from '@metamask/key-tree';
-import { hash, Keypair } from '@stellar/stellar-sdk';
+import { hash, Keypair } from '@stellar/stellar-sdk/base';
 import { Buffer } from 'buffer';
 
 import { externalServiceError, invalidRequest } from '../rpc/errors';

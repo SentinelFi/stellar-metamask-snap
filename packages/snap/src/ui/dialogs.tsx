@@ -288,12 +288,23 @@ export type AddTokenDialogProps = {
   contractId: string;
   symbol: string;
   decimals: number;
+  /**
+   * The classic asset this contract provably is, when it is that asset's
+   * Stellar Asset Contract (`XLM (native)` or the full `CODE:ISSUER`);
+   * null for every other contract. Verified by derivation, not by what the
+   * contract says about itself.
+   */
+  stellarAsset?: string | null;
 };
 
 /**
  * Confirmation for tracking a Soroban token (SAC/SEP-41) for balance
  * display. Metadata shown is read from the contract, not supplied by the
- * dapp.
+ * dapp; but the contract is no more trustworthy a source for its own name
+ * than the dapp is, so the dialog says in words that the symbol is the
+ * contract's own claim, and names the one identity the snap can verify: the
+ * full contract address, plus the classic asset when the contract is that
+ * asset's Stellar Asset Contract.
  *
  * @param props - The dialog props.
  * @param props.origin - The requesting dapp origin.
@@ -301,6 +312,7 @@ export type AddTokenDialogProps = {
  * @param props.contractId - The token contract address.
  * @param props.symbol - The token symbol read from the contract.
  * @param props.decimals - The token decimals read from the contract.
+ * @param props.stellarAsset - The verified classic asset identity, if any.
  * @returns The dialog content.
  */
 export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
@@ -309,6 +321,7 @@ export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
   contractId,
   symbol,
   decimals,
+  stellarAsset = null,
 }) => (
   <Box>
     <Heading>Add token</Heading>
@@ -318,7 +331,7 @@ export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
       grant any spending permission.
     </Text>
     {originCautionBanner(origin)}
-    {symbol.toUpperCase() === 'XLM' ? (
+    {symbol.toUpperCase() === 'XLM' && stellarAsset !== 'XLM (native)' ? (
       <Banner title="Not the native asset" severity="warning">
         <Text>
           This contract calls itself XLM, but it is not the native lumen asset.
@@ -328,12 +341,29 @@ export const AddTokenDialog: SnapComponent<AddTokenDialogProps> = ({
       </Banner>
     ) : null}
     <Section>
-      <Row label="Symbol">
+      <Row label="Symbol (self-reported)">
         <Text>{symbol}</Text>
       </Row>
       <Row label="Decimals">
         <Text>{String(decimals)}</Text>
       </Row>
+      {stellarAsset === null ? (
+        <Text>
+          The symbol is what the contract says about itself and is not verified:
+          any contract can call itself anything. The contract address below is
+          its only identity. Check it against a source you trust before
+          approving.
+        </Text>
+      ) : (
+        <Box>
+          <Text>Stellar asset (verified)</Text>
+          <Copyable value={stellarAsset} />
+          <Text>
+            This contract is the Stellar Asset Contract of the classic asset
+            above, which the wallet confirmed by derivation.
+          </Text>
+        </Box>
+      )}
       <Text>Contract</Text>
       <Copyable value={contractId} />
     </Section>

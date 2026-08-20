@@ -62,7 +62,17 @@ export type StellarSnapOptions = {
   discoveryTimeoutMs?: number;
 };
 
-/** An exact release version: `major.minor.patch`, no range operators. */
+/**
+ * An exact release version: `major.minor.patch`, no range operators and no
+ * prerelease or build suffix. Prereleases are refused on purpose: the pin
+ * names an audited release, and `1.2.3-beta.1` is not one.
+ *
+ * The companion site's production build guard (`packages/site/gatsby-node.js`,
+ * `EXACT_VERSION`) applies the same rule to `GATSBY_SNAP_VERSION`, so a value
+ * the build accepts is a value this constructor accepts. Keep the two in
+ * step: a value that passes the build but fails here would throw the moment
+ * the page constructs its client.
+ */
 const EXACT_SEMVER = /^\d+\.\d+\.\d+$/u;
 
 /** Snap ID shapes the connector will request: npm-published or local dev. */
@@ -141,6 +151,23 @@ export class StellarSnap {
 
   readonly #discoveryTimeoutMs: number | undefined;
 
+  /**
+   * Whether MetaMask has been seen to report the pinned version installed
+   * under `snapId`. Set by `connect()` and `isInstalled()` when they verify
+   * it, or by the lazy check in `invoke()` otherwise; cleared whenever a
+   * check fails, so the next call re-reads `wallet_getSnaps` rather than
+   * trusting a stale answer. Always true for `local:` IDs, which carry no
+   * meaningful version.
+   */
+  #versionVerified: boolean;
+
+  /**
+   * The in-flight lazy version check, shared so that concurrent first calls
+   * (a page that fires `getAddress()` and `getNetwork()` together) read
+   * `wallet_getSnaps` once rather than once each.
+   */
+  #versionCheck: Promise<void> | null = null;
+
   constructor(options: StellarSnapOptions = {}) {
     const snapId = options.snapId ?? DEFAULT_SNAP_ID;
     // Validated even though these are caller-supplied programmer inputs:
@@ -160,10 +187,26 @@ export class StellarSnap {
           'Ranges are rejected because they defeat the audited-release pin.',
       );
     }
+    // Any `npm:` ID passes the shape check, including a package that merely
+    // resembles the published snap. That is deliberate (a fork under test
+    // is a legitimate target) but it must not happen quietly: the
+    // audited-release pin, the version verification, and every statement
+    // in the documentation describe `DEFAULT_SNAP_ID`, and a dapp that was
+    // handed a different ID through config or env should see that in its
+    // console rather than discover it from a user.
+    if (snapId.startsWith('npm:') && snapId !== DEFAULT_SNAP_ID) {
+      console.warn(
+        `StellarSnap: snapId "${snapId}" is not the published snap ` +
+          `(${DEFAULT_SNAP_ID}). The audited-release pin and this ` +
+          `connector's guarantees apply only to the published snap; make ` +
+          `sure this is intentional.`,
+      );
+    }
     this.snapId = snapId;
     this.version = version;
     this.#provider = options.provider ?? null;
     this.#discoveryTimeoutMs = options.discoveryTimeoutMs;
+    this.#versionVerified = !snapId.startsWith('npm:');
   }
 
   /**
@@ -212,16 +255,61 @@ export class StellarSnap {
    * or the entry carries no readable version.
    */
   #installedVersion(snaps: unknown): string | null {
-    if (typeof snaps !== 'object' || snaps === null) {
-      return null;
-    }
-    if (!Object.prototype.hasOwnProperty.call(snaps, this.snapId)) {
+    if (!this.#hasEntry(snaps)) {
       return null;
     }
     const entry = (snaps as Record<string, { version?: unknown } | undefined>)[
       this.snapId
     ];
     return typeof entry?.version === 'string' ? entry.version : null;
+  }
+
+  /**
+   * Whether a `wallet_getSnaps`/`wallet_requestSnaps` result lists this snap
+   * at all, whatever version it reports.
+   *
+   * @param snaps - The provider result.
+   * @returns True when the map has an own entry for `snapId`.
+   */
+  #hasEntry(snaps: unknown): boolean {
+    return (
+      typeof snaps === 'object' &&
+      snaps !== null &&
+      Object.prototype.hasOwnProperty.call(snaps, this.snapId)
+    );
+  }
+
+  /**
+   * The error thrown whenever MetaMask reports a version of this snap other
+   * than the pinned one. Shared by `connect()` and the lazy check in
+   * `invoke()` so a dapp sees one message and one code for the condition
+   * regardless of which call surfaced it.
+   *
+   * @param installed - The version MetaMask reported, or null when the entry
+   * carried no readable version.
+   * @returns The error, ready to throw.
+   */
+  #versionMismatchError(installed: string | null): StellarSnapError {
+    return new StellarSnapError(
+      `MetaMask reports snap version ${
+        installed === null ? 'unknown' : installed.slice(0, 32)
+      } installed, but this client pins ${this.version}. ` +
+        'Update the snap or the dapp before continuing.',
+      SEP43_ERROR_CODES.invalidRequest,
+    );
+  }
+
+  /**
+   * Records the outcome of a version comparison for an `npm:` snap, so that
+   * a verified pin is not re-read on every call and a failed comparison is
+   * not remembered past the call that observed it.
+   *
+   * @param installed - The version MetaMask reported.
+   * @returns True when it equals the pin.
+   */
+  #recordVersion(installed: string | null): boolean {
+    this.#versionVerified = installed === this.version;
+    return this.#versionVerified;
   }
 
   /**
@@ -233,6 +321,10 @@ export class StellarSnap {
    * release the pin names. Local development snaps carry no meaningful
    * version and only need to be present.
    *
+   * A true answer for an `npm:` ID also satisfies the per-call version
+   * check in `invoke()`, so a dapp that asks this first pays for one
+   * `wallet_getSnaps` read, not two.
+   *
    * @returns True when installed (and, for npm snaps, at the pinned
    * version).
    */
@@ -240,17 +332,66 @@ export class StellarSnap {
     try {
       const provider = await this.getProvider();
       const snaps = await provider.request({ method: 'wallet_getSnaps' });
-      const installed = this.#installedVersion(snaps);
       if (!this.snapId.startsWith('npm:')) {
-        return (
-          typeof snaps === 'object' &&
-          snaps !== null &&
-          Object.prototype.hasOwnProperty.call(snaps, this.snapId)
-        );
+        return this.#hasEntry(snaps);
       }
-      return installed === this.version;
+      return this.#recordVersion(this.#installedVersion(snaps));
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Verifies, at most once per client for the happy path, that the snap
+   * MetaMask will route `wallet_invokeSnap` to is the pinned release.
+   *
+   * `connect()` already verifies what `wallet_requestSnaps` installed, but a
+   * dapp is not obliged to call it first: `getAddress()` is silent by
+   * design, the Freighter facade's `isAllowed()` and the Wallets Kit's
+   * `getAddress({ skipRequestAccess: true })` reach the typed methods
+   * directly, and the common "read the address, connect only if it is
+   * empty" pattern would otherwise run every call against whatever release
+   * happens to be installed under the published ID, with no one having
+   * compared it to the pin. This closes that gap: the first invocation on
+   * an `npm:` client reads `wallet_getSnaps`, a mismatch is refused with the
+   * same error `connect()` throws, and a match is remembered so later calls
+   * cost nothing extra.
+   *
+   * An absent snap is not an error here. MetaMask refuses the invocation
+   * itself in that case, and letting it do so keeps the behaviour a dapp
+   * already handles (and the way `getAddress()` fails before installation)
+   * unchanged. Nothing is remembered for that outcome either, so the check
+   * simply repeats until the snap is installed and compared.
+   *
+   * The memo is per client instance and is not re-read while the page is
+   * open: a user who updates the snap mid-session is the one case it does
+   * not see, and `connect()` re-verifies whenever a dapp asks it to.
+   *
+   * @param provider - The resolved provider.
+   */
+  async #ensurePinnedVersion(provider: Eip1193Provider): Promise<void> {
+    if (this.#versionVerified) {
+      return;
+    }
+    this.#versionCheck ??= (async () => {
+      let snaps: unknown;
+      try {
+        snaps = await provider.request({ method: 'wallet_getSnaps' });
+      } catch (error) {
+        throw toStellarSnapError(error);
+      }
+      if (!this.#hasEntry(snaps)) {
+        return;
+      }
+      const installed = this.#installedVersion(snaps);
+      if (!this.#recordVersion(installed)) {
+        throw this.#versionMismatchError(installed);
+      }
+    })();
+    try {
+      await this.#versionCheck;
+    } finally {
+      this.#versionCheck = null;
     }
   }
 
@@ -282,14 +423,8 @@ export class StellarSnap {
     }
     if (this.snapId.startsWith('npm:')) {
       const installed = this.#installedVersion(result);
-      if (installed !== this.version) {
-        throw new StellarSnapError(
-          `MetaMask reports snap version ${
-            installed === null ? 'unknown' : installed.slice(0, 32)
-          } installed, but this client pins ${this.version}. ` +
-            'Update the snap or the dapp before continuing.',
-          SEP43_ERROR_CODES.invalidRequest,
-        );
+      if (!this.#recordVersion(installed)) {
+        throw this.#versionMismatchError(installed);
       }
     }
     return this.requestAccess();
@@ -303,6 +438,11 @@ export class StellarSnap {
    * provider boundary, and the typed methods below only earn their types by
    * validating shapes. Callers of the raw form take on that job themselves.
    *
+   * What it does share with the typed methods is the version check: for an
+   * `npm:` snap the first invocation confirms that the installed release is
+   * the pinned one (see `#ensurePinnedVersion`), so even the raw path cannot
+   * quietly talk to a different release than the one this client names.
+   *
    * @param method - The snap method name.
    * @param params - Optional params object.
    * @returns The raw method result.
@@ -312,6 +452,7 @@ export class StellarSnap {
     params?: Record<string, unknown>,
   ): Promise<unknown> {
     const provider = await this.getProvider();
+    await this.#ensurePinnedVersion(provider);
     try {
       return await provider.request({
         method: 'wallet_invokeSnap',
@@ -402,6 +543,11 @@ export class StellarSnap {
   /**
    * SEP-43 `signTransaction`.
    *
+   * `options.submitUrl` is refused here with `-3` rather than forwarded or
+   * dropped: the snap submits only to its own allowlisted endpoints, and a
+   * caller that named another one must learn that its endpoint was not used
+   * (see {@link SignTransactionOptions.submitUrl}).
+   *
    * @param xdr - Base64 transaction envelope XDR.
    * @param options - Optional SEP-43 option bag.
    * @returns The signed envelope and signer address.
@@ -410,9 +556,24 @@ export class StellarSnap {
     xdr: string,
     options: SignTransactionOptions = {},
   ): Promise<SignTransactionResultWithWarnings> {
+    if (options.submitUrl !== undefined) {
+      throw new StellarSnapError(
+        'Custom submission endpoints (submitUrl) are not supported: the ' +
+          'wallet submits only to its own allowlisted Horizon and Soroban ' +
+          'RPC endpoints. Omit submitUrl, or set submit: false and ' +
+          'broadcast the signed envelope yourself.',
+        SEP43_ERROR_CODES.invalidRequest,
+      );
+    }
+    // The positional argument is placed after the spread in each signing
+    // method so an option bag that happens to carry the same key (`xdr`,
+    // `authEntry`, `message`) cannot replace what the caller passed by
+    // position. Option bags are routinely forwarded from other layers (a
+    // kit, a facade, a dapp's own config), and "the payload I named wins"
+    // is the only rule a caller can reason about.
     return this.#invoke(
       'signTransaction',
-      { xdr, ...options },
+      { ...options, xdr },
       isSignTransactionResult,
     );
   }
@@ -430,7 +591,7 @@ export class StellarSnap {
   ): Promise<SignAuthEntryResult> {
     return this.#invoke(
       'signAuthEntry',
-      { authEntry, ...options },
+      { ...options, authEntry },
       isSignAuthEntryResult,
     );
   }
@@ -439,7 +600,9 @@ export class StellarSnap {
    * SEP-43 `signMessage` (SEP-53).
    *
    * @param message - The message to sign.
-   * @param options - Optional SEP-43 option bag.
+   * @param options - Optional SEP-43 option bag (`address`, and
+   * `networkPassphrase`, which is checked against the wallet's network when
+   * present).
    * @returns The base64 signature and signer address.
    */
   async signMessage(
@@ -448,7 +611,7 @@ export class StellarSnap {
   ): Promise<SignMessageResult> {
     return this.#invoke(
       'signMessage',
-      { message, ...options },
+      { ...options, message },
       isSignMessageResult,
     );
   }

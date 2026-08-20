@@ -2,6 +2,7 @@ import styled from 'styled-components';
 
 import { Columns, Page, Stack } from '../components/Layout';
 import { Alert } from '../components/Status';
+import { devBenchEnabled } from '../config';
 import {
   Balances,
   DevBench,
@@ -75,7 +76,7 @@ const Index = () => {
               <Trustlines />
             </Columns>
             <History />
-            <DevBench />
+            {devBenchEnabled ? <DevBench /> : null}
           </>
         ) : null}
       </Stack>

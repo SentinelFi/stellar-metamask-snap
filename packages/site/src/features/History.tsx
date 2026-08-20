@@ -34,8 +34,9 @@ const Signed = styled.span<{ direction: Direction }>`
 `;
 
 /**
- * The transaction column: a link when the network has an explorer, the bare
- * hash when it does not, and an em dash when Horizon reported none.
+ * The transaction column: a link when the network has an explorer and the
+ * value is a well-formed hash, the bare value as text when either is not the
+ * case, and an em dash when Horizon reported none.
  *
  * @param props - Cell props.
  * @param props.hash - The transaction hash, when the record carried one.

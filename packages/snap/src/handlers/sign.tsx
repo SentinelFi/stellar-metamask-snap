@@ -1,12 +1,12 @@
 import { SnapError } from '@metamask/snaps-sdk';
-import type { FeeBumpTransaction } from '@stellar/stellar-sdk';
+import type { FeeBumpTransaction } from '@stellar/stellar-sdk/base';
 import {
   authorizeEntry,
   hash,
   Transaction,
   TransactionBuilder,
   xdr,
-} from '@stellar/stellar-sdk';
+} from '@stellar/stellar-sdk/base';
 import { Buffer } from 'buffer';
 
 import { assertConnected } from './account';
@@ -57,6 +57,7 @@ import { SignAuthEntryDialog, SignMessageDialog } from '../ui/dialogs';
 import { containsHiddenCharacters } from '../ui/format';
 import {
   buildSignTransactionDialog,
+  findUndisplayableOperation,
   SUPPORTED_OPERATION_TYPES,
 } from '../ui/transaction';
 
@@ -174,6 +175,19 @@ export async function signTransaction(
   /** Advisory safety warnings also shown in the dialog. */
   warnings?: string[];
 }> {
+  // SEP-43 also defines a `submitUrl` option: the endpoint the wallet should
+  // submit to when `submit` is set. This snap never submits to a caller-named
+  // host. Every endpoint it talks to is an HTTPS constant, and a submission
+  // endpoint is trusted with the signed envelope itself, so accepting one
+  // from the requesting site would hand that trust to whoever asked. The
+  // field is refused with a message that says so, rather than falling into
+  // the generic unknown-field rejection a strict struct would produce, so a
+  // conformant caller can tell a policy from a typo.
+  if (typeof params === 'object' && params !== null && 'submitUrl' in params) {
+    throw invalidRequest(
+      'Custom submission endpoints (submitUrl) are not supported. The wallet submits only to its own allowlisted endpoints for the active network; omit submitUrl and use submit alone.',
+    );
+  }
   const request = validate(params, SignTransactionParams);
   const network = await getActiveNetwork();
   // Read once, before any pre-dialog lookup. A standing grant decides which
@@ -251,6 +265,16 @@ export async function signTransaction(
       `This transaction contains operation types the snap cannot display faithfully (${unsupportedTypes.join(
         ', ',
       )}) and cannot be reviewed. Signing is refused.`,
+    );
+  }
+  // Same rule one level down: a supported operation type whose details the
+  // dialog cannot render in full (today, a claimable balance with claim
+  // conditions of an unknown variant or nested beyond the rendering bound)
+  // is refused rather than shown with a placeholder for the condition.
+  const undisplayableOperation = findUndisplayableOperation(innerTx);
+  if (undisplayableOperation !== null) {
+    throw invalidRequest(
+      `This transaction contains ${undisplayableOperation}. Signing is refused.`,
     );
   }
   if (sorobanOperation?.type === 'invokeHostFunction') {
@@ -375,6 +399,9 @@ export async function signTransaction(
         signingAddress: signerAddress,
         accountIndex,
         simulation,
+        // Named in the simulation section: every figure there is the
+        // endpoint's report, not the wallet's own finding.
+        simulationEndpoint: network.sorobanRpcUrl,
         warnings,
         submit: Boolean(request.submit),
         // Which host receives the signed envelope when `submit` is set. On
@@ -727,7 +754,7 @@ export async function signAuthEntry(
  * `signMessage` — SEP-53: sign SHA-256("Stellar Signed Message:\n" + msg).
  *
  * @param origin - The requesting dapp origin.
- * @param params - `{ message, address? }`.
+ * @param params - `{ message, networkPassphrase?, address? }`.
  * @returns The base64 signature and signer address.
  */
 export async function signMessage(
@@ -737,14 +764,26 @@ export async function signMessage(
   const request = validate(params, SignMessageParams);
   // A SEP-53 signature is not bound to a network: the payload is
   // `SHA-256("Stellar Signed Message:\n" + message)` and carries no network
-  // ID, so there is nothing here to mismatch and no `networkPassphrase` to
-  // require. The network is read purely so the dialog can state it. That is
-  // worth the extra state read: this signature proves control of a key, and
-  // that proof is just as usable by a mainnet-facing verifier whatever network
-  // the wallet happens to be on. Every other signing dialog in this snap
-  // carries a network banner, and a user who has learned to look for it as the
-  // "this matters" signal must not find it missing here.
+  // ID, so there is no `networkPassphrase` to require. The network is read so
+  // the dialog can state it, and so that a passphrase the caller did state
+  // can be checked: SEP-43 lists the option for this method too, and a site
+  // that names a network the wallet is not on is told so rather than handed
+  // a signature it may be about to present to the wrong verifier. Stating
+  // the network in the dialog is worth the extra state read: this signature
+  // proves control of a key, and that proof is just as usable by a
+  // mainnet-facing verifier whatever network the wallet happens to be on.
+  // Every other signing dialog in this snap carries a network banner, and a
+  // user who has learned to look for it as the "this matters" signal must
+  // not find it missing here.
   const network = await getActiveNetwork();
+  if (
+    request.networkPassphrase !== undefined &&
+    request.networkPassphrase !== network.networkPassphrase
+  ) {
+    throw invalidRequest(
+      `Network mismatch: the wallet is on ${network.name}. Ask the user to switch networks (setNetwork) or use the matching passphrase.`,
+    );
+  }
 
   await assertAccountSelectionAllowed(origin, request.address);
   // Address only; the signing key is derived after approval, below.

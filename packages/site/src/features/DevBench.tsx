@@ -82,6 +82,10 @@ const ReferenceList = styled.dl`
  * the way, and so the shapes the connector actually returns are visible
  * rather than described.
  *
+ * It is a development surface and is mounted only when `GATSBY_DEV_BENCH` is
+ * `true` (see `devBenchEnabled` in `config/snap.ts`); the production build
+ * guard refuses that flag, so a released page never renders it.
+ *
  * @returns The developer panel.
  */
 export const DevBench = () => {

@@ -31,3 +31,21 @@ export const defaultSnapOrigin =
 export const defaultSnapVersion: string | undefined =
   // eslint-disable-next-line no-restricted-globals
   process.env.GATSBY_SNAP_VERSION;
+
+/**
+ * Whether the page renders the connector bench: the panel of raw SEP-43
+ * method buttons (including a `signMessage` and a self-transfer Soroban
+ * `signTransaction`) with the JSON response shown verbatim.
+ *
+ * The bench is a development and review surface, not part of the wallet
+ * product, so it is off unless `GATSBY_DEV_BENCH` is exactly `true`. Every
+ * action it offers still goes through a MetaMask dialog, so shipping it would
+ * not be a vulnerability, but a production page should not present a row of
+ * "sign something" buttons and a raw signed-envelope dump to users who came
+ * to hold and send assets. The production build guard in `gatsby-node.js`
+ * refuses to build with the flag set, so it cannot reach a release artifact
+ * by way of a stray environment variable.
+ */
+export const devBenchEnabled: boolean =
+  // eslint-disable-next-line no-restricted-globals
+  process.env.GATSBY_DEV_BENCH === 'true';

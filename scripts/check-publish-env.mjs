@@ -11,7 +11,9 @@
  *      all. `yarn npm publish` ignores `publishConfig.provenance` rather than
  *      failing on it, so it publishes an unattested tarball and exits 0.
  *   2. Yarn 3 also does not run `prepublishOnly`, so the snap's
- *      `mm-snap manifest` step is skipped on that path too.
+ *      `mm-snap manifest` step (which validates that the committed manifest's
+ *      shasum matches the bundle, and fails if it does not) is skipped on
+ *      that path too.
  *
  * Both failures are silent, and both produce a release that looks successful.
  * This script turns them into a loud stop.
@@ -19,8 +21,21 @@
  * It is wired to `prepack`, not `prepublishOnly`, precisely because `prepack`
  * is the one lifecycle hook BOTH package managers honour on the publish path.
  *
- * Escape hatch: set `ALLOW_UNSIGNED_PACK=1` to pack locally for inspection.
- * It is deliberately not named "...PUBLISH": anyone reaching for it should be
+ * How the release workflow relates to this check. `.github/workflows/release.yml`
+ * is split in two: a build job that runs every gate and packs both tarballs
+ * without holding an OIDC token, and a publish job that holds the token and
+ * does nothing but verify the tarballs' digests and run `npm publish <tgz>
+ * --provenance`. npm runs no lifecycle scripts when publishing a tarball, so
+ * this guard fires in the build job's `npm pack`, which is a job that cannot
+ * attest by design. That job therefore sets the escape hatch below, and the
+ * "can this environment attest" question is answered where it belongs: by npm
+ * itself, which refuses `--provenance` without an OIDC token in the publish
+ * job. Any other use of the escape hatch should be a local `npm pack` for
+ * inspection, never a publish.
+ *
+ * Escape hatch: set `ALLOW_UNSIGNED_PACK=1` to pack without an attestation
+ * (locally for inspection, or in the release workflow's build job). It is
+ * deliberately not named "...PUBLISH": anyone reaching for it should be
  * packing, and if they are publishing they should read this file first.
  */
 
@@ -52,12 +67,12 @@ process.stderr.write(
     `requires an OIDC token, which only a GitHub Actions job with\n` +
     `\`id-token: write\` has. Publishing from anywhere else does not fail on\n` +
     `its own: Yarn 3 ignores \`publishConfig.provenance\` entirely and also\n` +
-    `skips \`prepublishOnly\` (so the snap's manifest shasum would not be\n` +
-    `regenerated). Both omissions are silent, which is what this check is\n` +
-    `here to prevent.\n\n` +
+    `skips \`prepublishOnly\` (so the snap's manifest would not be validated\n` +
+    `against the bundle). Both omissions are silent, which is what this check\n` +
+    `is here to prevent.\n\n` +
     `To publish a release:\n` +
     `  push an annotated tag \`vX.Y.Z\`, which runs .github/workflows/release.yml\n` +
-    `  (or run that workflow manually with dry-run disabled)\n\n` +
+    `  (or run that workflow manually from that tag with dry-run disabled)\n\n` +
     `To pack locally for inspection, without publishing:\n` +
     `  ${OVERRIDE}=1 npm pack --workspace packages/snap\n\n` +
     `See docs/RELEASE.md.\n\n`,

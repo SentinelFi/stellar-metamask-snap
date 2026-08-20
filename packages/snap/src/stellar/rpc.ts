@@ -50,23 +50,25 @@ const SendTransactionStruct = type({
   errorResultXdr: optional(string()),
 });
 
-const GetTransactionStruct = type({
-  status: enums(['NOT_FOUND', 'SUCCESS', 'FAILED']),
-  resultXdr: optional(string()),
-});
-
 /** Raw shape of a `simulateTransaction` response (fields we consume). */
 export type RawSimulationResponse = Infer<typeof SimulationStruct>;
 
 export type SendTransactionResponse = Infer<typeof SendTransactionStruct>;
-
-export type GetTransactionResponse = Infer<typeof GetTransactionStruct>;
 
 /** Simulation timeout — keep dialog latency bounded. */
 const SIMULATION_TIMEOUT_MS = 10_000;
 
 /** Default timeout for every other RPC call, so none can hang. */
 const DEFAULT_RPC_TIMEOUT_MS = 10_000;
+
+/**
+ * The request id sent with every call. Each call is its own HTTPS exchange,
+ * so there is no multiplexing to disambiguate, and a fixed id keeps the
+ * request body deterministic. The response must echo it: a body carrying a
+ * different id is not the reply to this request and is refused like any
+ * other malformed response.
+ */
+const RPC_REQUEST_ID = 1;
 
 /**
  * Performs a JSON-RPC 2.0 call and validates the result shape.
@@ -100,7 +102,12 @@ async function rpcCall<Type, Schema>(
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: RPC_REQUEST_ID,
+        method,
+        params,
+      }),
       redirect: 'error',
       signal: controller.signal,
     });
@@ -129,6 +136,7 @@ async function rpcCall<Type, Schema>(
   }
 
   const envelope = body as {
+    id?: unknown;
     result?: unknown;
     error?: { message?: string };
   } | null;
@@ -148,7 +156,7 @@ async function rpcCall<Type, Schema>(
       }.`,
     );
   }
-  if (!is(envelope.result, resultStruct)) {
+  if (envelope.id !== RPC_REQUEST_ID || !is(envelope.result, resultStruct)) {
     throw externalServiceError(`Malformed Stellar RPC response (${method}).`);
   }
   return envelope.result;
@@ -209,18 +217,4 @@ export async function sendTransaction(
     { transaction: transactionXdr },
     SendTransactionStruct,
   );
-}
-
-/**
- * `getTransaction` — poll a submitted transaction's status.
- *
- * @param url - The RPC endpoint.
- * @param hash - The transaction hash (hex).
- * @returns The transaction status response.
- */
-export async function getTransaction(
-  url: string,
-  hash: string,
-): Promise<GetTransactionResponse> {
-  return rpcCall(url, 'getTransaction', { hash }, GetTransactionStruct);
 }

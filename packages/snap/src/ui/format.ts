@@ -1,9 +1,9 @@
-import type { Memo } from '@stellar/stellar-sdk';
+import type { Memo } from '@stellar/stellar-sdk/base';
 import {
   Asset,
   getLiquidityPoolId,
   LiquidityPoolAsset,
-} from '@stellar/stellar-sdk';
+} from '@stellar/stellar-sdk/base';
 import { Buffer } from 'buffer';
 
 /**
@@ -21,7 +21,20 @@ export function truncate(value: string, keep = 6): string {
 }
 
 /**
- * Human-readable asset name: `XLM` or `CODE (ISSU…UER)`.
+ * Characters kept on each side when an issuer or contract address is
+ * shortened for an inline label.
+ *
+ * Six rather than four: a strkey's first character is its version byte and
+ * its last characters are mostly CRC, so a four-and-four cut leaves roughly
+ * 35 bits of entropy, which is within reach of grinding a lookalike address
+ * for a well-known token. Six-and-six roughly doubles that. The shortened
+ * label is never the only identity shown: the full value is always available
+ * in a copyable field alongside.
+ */
+const ADDRESS_LABEL_KEEP = 6;
+
+/**
+ * Human-readable asset name: `XLM` or `CODE (ISSUER…ISSUER)`.
  *
  * @param asset - A stellar-sdk Asset (or liquidity-pool asset).
  * @returns Display string.
@@ -30,7 +43,10 @@ export function formatAsset(asset: unknown): string {
   if (asset instanceof Asset) {
     return asset.isNative()
       ? 'XLM'
-      : `${asset.getCode()} (${truncate(asset.getIssuer() ?? '', 4)})`;
+      : `${asset.getCode()} (${truncate(
+          asset.getIssuer() ?? '',
+          ADDRESS_LABEL_KEEP,
+        )})`;
   }
   if (asset instanceof LiquidityPoolAsset) {
     // Name the pool's constituents inline. "Liquidity pool shares" alone
@@ -90,11 +106,18 @@ export function formatAssetFull(asset: unknown): string | null {
   return null;
 }
 
+/** Prefix marking a {@link bytesToDisplay} rendering as hexadecimal. */
+export const HEX_DISPLAY_PREFIX = 'hex:';
+
 /**
  * Renders untrusted bytes losslessly: UTF-8 text when the bytes are clean,
  * printable UTF-8 (round-trips exactly and carries no hidden characters),
  * otherwise the full hex form prefixed `hex:`. Intended for `Copyable`, so
  * nothing is truncated.
+ *
+ * Clean text that itself begins with `hex:` is also rendered as hex, so the
+ * two forms can never collide: the literal text `hex:00` and the single
+ * byte `0x00` would otherwise display identically.
  *
  * @param bytes - The raw bytes.
  * @returns The display string.
@@ -103,15 +126,30 @@ export function bytesToDisplay(bytes: Uint8Array): string {
   const buffer = Buffer.from(bytes);
   const text = buffer.toString('utf8');
   const roundTrips = Buffer.from(text, 'utf8').equals(buffer);
-  if (roundTrips && !containsHiddenCharacters(text)) {
+  if (
+    roundTrips &&
+    !containsHiddenCharacters(text) &&
+    !text.startsWith(HEX_DISPLAY_PREFIX)
+  ) {
     return text;
   }
-  return `hex:${buffer.toString('hex')}`;
+  return `${HEX_DISPLAY_PREFIX}${buffer.toString('hex')}`;
+}
+
+/**
+ * Whether a {@link bytesToDisplay} rendering fell back to hex, meaning the
+ * bytes were not clean text and any text reading of them would be lossy.
+ *
+ * @param display - A string returned by {@link bytesToDisplay}.
+ * @returns True for the hex form.
+ */
+export function isHexDisplay(display: string): boolean {
+  return display.startsWith(HEX_DISPLAY_PREFIX);
 }
 
 /**
  * Display label for a tracked Soroban token: symbol plus truncated contract
- * ID (`SYM (CDLZ…CYSC)`). The symbol is contract-reported and untrusted, so
+ * ID (`SYM (CDLZFC…D3CYSC)`). The symbol is contract-reported and untrusted, so
  * it is never shown bare — a token calling itself `XLM` must remain
  * distinguishable from the native balance row.
  *
@@ -120,7 +158,19 @@ export function bytesToDisplay(bytes: Uint8Array): string {
  * @returns The display label.
  */
 export function formatTokenAsset(symbol: string, contractId: string): string {
-  return `${symbol} (${truncate(contractId, 4)})`;
+  return `${symbol} (${truncate(contractId, ADDRESS_LABEL_KEEP)})`;
+}
+
+/**
+ * Display label for a Soroban contract the snap knows nothing else about:
+ * `Token CDLZFC…D3CYSC`, shortened with the same margin as every other address
+ * label.
+ *
+ * @param contractId - The contract address.
+ * @returns The display label.
+ */
+export function formatUnknownTokenAsset(contractId: string): string {
+  return `Token ${truncate(contractId, ADDRESS_LABEL_KEEP)}`;
 }
 
 /**
@@ -160,9 +210,25 @@ export function stroopsToXlm(stroops: string | number): string {
  * BLANK, U+3164 HANGUL FILLER, and U+FFA0 HALFWIDTH HANGUL FILLER. These are
  * the standard tools for padding text out of view, or for splitting a word so
  * it reads as two.
+ *
+ * It further covers the invisible nonspacing marks that `\p{Cf}` does not
+ * reach because Unicode files them under `Mn`: the variation selectors
+ * U+FE00 to U+FE0F and U+E0100 to U+E01EF, the Mongolian free variation
+ * selectors U+180B to U+180D, and U+034F COMBINING GRAPHEME JOINER. Each
+ * renders as nothing on its own, so a memo, a signed message, or a contract
+ * symbol can carry any number of them past a reader while still differing
+ * byte for byte from the text the reader believes they approved. The cost is
+ * that emoji written with an explicit presentation selector (U+FE0F) are
+ * flagged as well; that is accepted, since the alternative is a class that
+ * an attacker can satisfy with a code point the user cannot see.
+ *
+ * Private-use code points (`\p{Co}`) are included for the same reason: they
+ * have no standard glyph and render as blank or as a placeholder box, so a
+ * string containing them reads differently on every device.
  */
 const HIDDEN_CHARACTER_CLASS =
-  '\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\u115F\\u1160\\u17B4\\u17B5\\u2800\\u3164\\uFFA0';
+  '\\p{Cc}\\p{Cf}\\p{Co}\\p{Zl}\\p{Zp}\\u115F\\u1160\\u17B4\\u17B5\\u2800\\u3164\\uFFA0' +
+  '\\u034F\\u180B-\\u180D\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}';
 
 /*
  * `no-misleading-character-class` exists to catch a multi-code-point grapheme

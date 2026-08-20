@@ -32,10 +32,13 @@
   "resolutions": {
     "@metamask/superstruct": "^3.4.1",
     "cookie": "^0.7.1",
+    "engine.io": "^6.6.7",
     "lodash": "^4.18.1",
-    "path-to-regexp@0.1.10": "^0.1.12",
+    "path-to-regexp@0.1.10": "^0.1.13",
+    "path-to-regexp@0.1.12": "^0.1.13",
     "sharp": "^0.35.0",
-    "socket.io": "^4.8.1",
+    "socket.io": "^4.8.3",
+    "socket.io-parser": "^4.2.7",
     "svgo": "^2.8.3",
     "tmp": "^0.2.6",
     "uuid": "^11.1.1",
@@ -74,7 +77,14 @@
   "lavamoat": {
     "allowScripts": {
       "@lavamoat/preinstall-always-fail": false,
-      "sharp": true
+      "@swc/core": false,
+      "core-js": false,
+      "core-js-pure": false,
+      "es5-ext": false,
+      "gatsby": false,
+      "gatsby-cli": false,
+      "lmdb": false,
+      "msgpackr-extract": false
     }
   }
 }

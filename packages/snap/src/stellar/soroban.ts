@@ -1,5 +1,11 @@
-import type { OperationRecord, Transaction } from '@stellar/stellar-sdk';
-import { Address, Asset, hash, scValToNative, xdr } from '@stellar/stellar-sdk';
+import type { OperationRecord, Transaction } from '@stellar/stellar-sdk/base';
+import {
+  Address,
+  Asset,
+  hash,
+  scValToNative,
+  xdr,
+} from '@stellar/stellar-sdk/base';
 import { Buffer } from 'buffer';
 
 import type { BalanceChangeSummary } from './events';
@@ -63,6 +69,15 @@ const MAX_SCVAL_DEPTH = 8;
 const MAX_SCVAL_ITEMS = 20;
 /** Bytes rendered as hex before an explicit truncation marker. */
 const MAX_SCVAL_BYTES = 64;
+/**
+ * Characters of an `scvString` rendered before an explicit truncation
+ * marker. Every other shape is bounded (bytes, items, depth), and a string
+ * is the one argument that can otherwise carry the whole envelope size limit
+ * into a single dialog field, expanded further by escaping; that defeats the
+ * "reviewably small dialog" bound the other caps exist to enforce. Measured
+ * in code points so a cut never splits a surrogate pair.
+ */
+const MAX_SCVAL_STRING_CHARS = 256;
 
 /**
  * Renders an SCSymbol-ish name: bare when it is a plain identifier, quoted
@@ -164,11 +179,21 @@ function formatScValInner(
       }
       return `bytes(${hexBytes}${suffix})`;
     }
-    case 'scvString':
+    case 'scvString': {
       // JSON.stringify escapes control characters but leaves format
       // characters (bidi overrides, zero-width marks) raw; escape those too
       // so a hostile argument cannot reorder or hide dialog text.
-      return `str(${escapeHiddenCharacters(JSON.stringify(value.str().toString()))})`;
+      const text = value.str().toString();
+      const codePoints = [...text];
+      let shown = text;
+      let suffix = '';
+      if (codePoints.length > MAX_SCVAL_STRING_CHARS) {
+        flags.truncated = true;
+        shown = codePoints.slice(0, MAX_SCVAL_STRING_CHARS).join('');
+        suffix = ` …+${codePoints.length - MAX_SCVAL_STRING_CHARS} chars`;
+      }
+      return `str(${escapeHiddenCharacters(JSON.stringify(shown))}${suffix})`;
+    }
     case 'scvSymbol':
       return `sym(${formatSymbolName(value.sym().toString())})`;
     case 'scvAddress':
@@ -900,8 +925,12 @@ const MAX_SIM_AUTH_SIGNERS = 20;
 export type SimulationSummary =
   | {
       ok: true;
-      /** Estimated resource fee in stroops. */
-      minResourceFee: string;
+      /**
+       * Estimated resource fee in stroops, or null when the endpoint did not
+       * report one. Null rather than `'0'`: a missing estimate rendered as
+       * zero reads as "free", which is a claim nothing supports.
+       */
+      minResourceFee: string | null;
       /** Addresses that must sign address-credential auth entries. */
       authSigners: string[];
       /** Archived ledger entries must be restored before submission. */
@@ -1026,7 +1055,7 @@ export async function simulateForDisplay(
 
   return {
     ok: true,
-    minResourceFee: response.minResourceFee ?? '0',
+    minResourceFee: response.minResourceFee ?? null,
     authSigners,
     restoreRequired: Boolean(response.restorePreamble),
     ...(balanceChanges === undefined ? {} : { balanceChanges }),

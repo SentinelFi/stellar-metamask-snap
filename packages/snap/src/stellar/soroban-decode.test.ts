@@ -107,6 +107,28 @@ describe('formatScVal', () => {
     expect(formatScVal(xdr.ScVal.scvSymbol('transfer'))).toBe('sym(transfer)');
   });
 
+  it('caps a long string and reports the truncation', () => {
+    // Regression: every other shape was bounded (bytes, items, depth) but a
+    // string was rendered in full, so one argument could carry the whole
+    // envelope size limit into a single dialog field.
+    const flags = { truncated: false };
+    const rendered = formatScVal(
+      xdr.ScVal.scvString('a'.repeat(300)),
+      0,
+      flags,
+    );
+    expect(rendered).toBe(`str("${'a'.repeat(256)}" \u2026+44 chars)`);
+    expect(flags.truncated).toBe(true);
+  });
+
+  it('renders a string under the cap in full without marking truncation', () => {
+    const flags = { truncated: false };
+    expect(formatScVal(xdr.ScVal.scvString('a'.repeat(256)), 0, flags)).toBe(
+      `str("${'a'.repeat(256)}")`,
+    );
+    expect(flags.truncated).toBe(false);
+  });
+
   it('renders bytes as hex and containers with typed elements', () => {
     expect(formatScVal(xdr.ScVal.scvBytes(Buffer.from([0x6a, 0x6f])))).toBe(
       'bytes(6a6f)',

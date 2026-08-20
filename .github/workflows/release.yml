@@ -15,6 +15,33 @@ name: Release
 # `prepublishOnly` lifecycle script either. Publishing the snap through Yarn
 # would therefore skip BOTH the attestation and `mm-snap manifest`, silently,
 # with a successful exit code. The npm CLI runs both.
+#
+# The workflow is two jobs, and the split is the point:
+#
+#   build    Runs every gate (lint, versions, build, manifest seal, audits,
+#            typecheck, tests with coverage thresholds, SBOM), then packs both
+#            tarballs and records their SHA-256 digests as job outputs. It
+#            holds no secret and no OIDC token. Everything that executes
+#            third-party code (eslint, jest, ts-jest, the SBOM action, every
+#            dev dependency) executes here, in a job that cannot publish.
+#
+#   publish  Holds the OIDC token and runs inside the `npm-publish`
+#            environment. It never checks out the repository and never runs a
+#            build tool: it downloads the tarballs the build job uploaded,
+#            refuses them unless their digests equal the ones the build job
+#            recorded, and runs `npm publish <tarball> --provenance`. Job
+#            outputs are stored by GitHub, not by the artifact store, so a
+#            step that could rewrite the artifact cannot also rewrite the
+#            digest it is checked against.
+#
+# Before the split, the manifest-seal check ran in the middle of one job and
+# test, lint, and SBOM tooling ran after it with the publish token in reach;
+# a compromised dev dependency could have substituted the artifact together
+# with a self-consistent manifest and nothing would have re-checked. Now the
+# seal is re-verified immediately before packing (after the last step that
+# rebuilds anything: `test:coverage` rebuilds the bundle, and `mm-snap build`
+# rewrites the manifest), the tarball's contents are compared to the committed
+# files, and what the publish job publishes is exactly that tarball.
 on:
   push:
     tags: ['v*']
@@ -24,33 +51,61 @@ on:
         description: 'Run every gate and pack the tarballs, but do not publish'
         type: boolean
         default: true
+      bootstrap-token:
+        description: >-
+          First publish of a package only: authenticate the publish step with
+          the NPM_BOOTSTRAP_TOKEN secret instead of trusted publishing. See
+          docs/RELEASE.md before enabling.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
-  publish:
-    name: Verify and publish
+  build:
+    name: Verify and pack
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: npm-publish
+    # No `id-token`, no environment, no secrets: this job can prove things
+    # about the artifact but cannot publish it.
     permissions:
       contents: read
-      # Required for npm provenance. This is the whole reason the release path
-      # is a workflow: the OIDC token is what signs the attestation.
-      id-token: write
+    outputs:
+      node-version: ${{ steps.toolchain.outputs.node-version }}
+      snap-tarball: ${{ steps.pack.outputs.snap-tarball }}
+      snap-sha256: ${{ steps.pack.outputs.snap-sha256 }}
+      connector-tarball: ${{ steps.pack.outputs.connector-tarball }}
+      connector-sha256: ${{ steps.pack.outputs.connector-sha256 }}
     steps:
+      # A real publish must come from a release tag, whichever event started
+      # the run. Pushing a tag satisfies this by construction; a manual run
+      # can be started from any branch, and with dry-run disabled it would
+      # otherwise publish an untagged commit that no release identifies. The
+      # tag-equals-version check further down only runs on tag refs, so this
+      # is the step that makes that check unconditional for real publishes.
+      - name: Refuse a real publish from anything but a release tag
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry-run && !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          echo "::error::A real publish (dry-run disabled) may only be started from a refs/tags/v* ref; this run is on ${GITHUB_REF}. Start the workflow from the release tag, or leave dry-run enabled."
+          exit 1
+
       - name: Checkout the tagged commit
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
+      # The publish job installs the same Node without a checkout, so the
+      # pinned version is handed over as an output rather than read twice.
+      - name: Read the pinned Node.js version
+        id: toolchain
+        run: echo "node-version=$(tr -d '[:space:]' < .nvmrc)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: yarn
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: yarn install --immutable
@@ -79,10 +134,16 @@ jobs:
       - name: Audit direct runtime dependencies (all workspaces)
         run: yarn npm audit --all --environment production
 
-      # The snap's transitive production graph, gated against the reviewed
-      # allowlist, including re-verification that every package the allowlist
-      # calls absent really is absent from the bundle about to be published.
-      # See the fuller rationale on the same step in ci.yml.
+      # The snap's exact, lockfile-resolved production graph, audited per
+      # version against the registry. See the fuller rationale on the same
+      # step in ci.yml.
+      - name: Audit the snap's exact production graph
+        run: node scripts/check-snap-graph-advisories.mjs
+
+      # The allowlist gate over Yarn's own audit of the snap's transitive
+      # production graph, including re-verification that every package the
+      # allowlist calls absent really is absent from the bundle about to be
+      # published. See the fuller rationale on the same step in ci.yml.
       - name: Gate transitive production advisories against the allowlist
         run: |
           ( cd packages/snap && \
@@ -117,7 +178,7 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package version $PKG_VERSION"
             exit 1
           fi
-          echo "Publishing $PKG_VERSION from tag $GITHUB_REF_NAME"
+          echo "Releasing $PKG_VERSION from tag $GITHUB_REF_NAME"
 
       - name: Generate SBOM (CycloneDX)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -127,40 +188,196 @@ jobs:
           output-file: sbom.cdx.json
           artifact-name: sbom.cdx.json
 
-      # Dry run stops here, having proved the artifact would publish cleanly.
-      - name: Pack (dry run)
-        if: inputs.dry-run
+      # This is the last thing that runs before packing, and it must stay
+      # last. `test:coverage` above rebuilt the bundle, and `mm-snap build`
+      # rewrites the manifest on every build; every step between the first
+      # manifest check and here executed third-party code with write access
+      # to the checkout. So the seal is re-established against the files that
+      # will actually be packed: the manifest must still be the committed one,
+      # nothing tracked under either package may have changed, and `mm-snap
+      # manifest` must confirm that the committed manifest's shasum matches
+      # the bundle on disk. That last command validates and fails; it does not
+      # rewrite, which is why it can be trusted here and why `prepublishOnly`
+      # (the same command) was a meaningful check when publishing ran from the
+      # package directory. npm runs no lifecycle scripts when publishing a
+      # tarball, so this step is where that check now lives.
+      - name: Re-verify the manifest seal against the files to be packed
         run: |
+          git diff --exit-code -- packages/snap packages/connector
+          if [ -n "$(git status --porcelain -- packages/snap packages/connector)" ]; then
+            echo "Tracked or untracked changes under the packages after the gates ran:"
+            git status --porcelain -- packages/snap packages/connector
+            exit 1
+          fi
+          yarn workspace stellar-soroban-snap exec mm-snap manifest
+
+      # Pack both tarballs, compare the snap tarball's sealed files against
+      # the committed ones (the manifest and icon against HEAD, the bundle
+      # against the file `mm-snap manifest` just validated), and record each
+      # tarball's digest as a job output for the publish job to check.
+      #
+      # `prepack` runs scripts/check-publish-env.mjs, which refuses to pack
+      # where no provenance attestation is possible. This job cannot attest,
+      # by design: it holds no OIDC token so that nothing it runs can publish.
+      # The escape hatch is therefore set here, deliberately, and the "can
+      # this environment attest" question is answered by npm itself in the
+      # publish job, which refuses `--provenance` without the token.
+      - name: Pack and record tarball digests
+        id: pack
+        env:
+          ALLOW_UNSIGNED_PACK: '1'
+        run: |
+          tarball_name() {
+            node -p "const p = require('./packages/$1/package.json'); p.name.replace(/^@/u, '').replace('/', '-') + '-' + p.version + '.tgz'"
+          }
+          SNAP_TGZ="$(tarball_name snap)"
+          CONNECTOR_TGZ="$(tarball_name connector)"
+
           npm pack --workspace packages/snap --pack-destination .
           npm pack --workspace packages/connector --pack-destination .
-          echo "Dry run: packed, not published."
-          ls -la ./*.tgz
+          test -f "$SNAP_TGZ" && test -f "$CONNECTOR_TGZ"
+
+          git show HEAD:packages/snap/snap.manifest.json > "$RUNNER_TEMP/manifest.committed.json"
+          git show HEAD:packages/snap/images/icon.svg > "$RUNNER_TEMP/icon.committed.svg"
+          tar -xOzf "$SNAP_TGZ" package/snap.manifest.json | cmp - "$RUNNER_TEMP/manifest.committed.json"
+          tar -xOzf "$SNAP_TGZ" package/images/icon.svg | cmp - "$RUNNER_TEMP/icon.committed.svg"
+          tar -xOzf "$SNAP_TGZ" package/dist/bundle.js | cmp - packages/snap/dist/bundle.js
+          echo "Snap tarball contents match the committed manifest, the committed icon, and the validated bundle."
+
+          SNAP_SHA256="$(sha256sum "$SNAP_TGZ" | cut -d' ' -f1)"
+          CONNECTOR_SHA256="$(sha256sum "$CONNECTOR_TGZ" | cut -d' ' -f1)"
+          {
+            echo "snap-tarball=$SNAP_TGZ"
+            echo "snap-sha256=$SNAP_SHA256"
+            echo "connector-tarball=$CONNECTOR_TGZ"
+            echo "connector-sha256=$CONNECTOR_SHA256"
+          } >> "$GITHUB_OUTPUT"
+          echo "$SNAP_SHA256  $SNAP_TGZ"
+          echo "$CONNECTOR_SHA256  $CONNECTOR_TGZ"
+          tar -tzf "$SNAP_TGZ"
+          tar -tzf "$CONNECTOR_TGZ"
+
+      - name: Upload the packed tarballs
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: release-tarballs
+          path: '*.tgz'
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Dry run complete
+        if: inputs.dry-run
+        run: |
+          echo "Dry run: every gate passed and both tarballs were packed; nothing was published."
+
+  publish:
+    name: Publish
+    needs: build
+    # Never on a dry run, and never from anything but a release tag: the
+    # build job already fails a manual non-tag run with dry-run disabled, and
+    # this condition states the same rule where the token lives.
+    if: ${{ !inputs.dry-run && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Protection rules on this environment (required reviewers) are the human
+    # gate on a publish; they are configured in the repository settings, not
+    # here. See docs/RELEASE.md.
+    environment: npm-publish
+    permissions:
+      contents: read
+      # Required for npm provenance and for npm trusted publishing: the OIDC
+      # token both signs the attestation and authenticates the publish, so no
+      # long-lived npm token exists anywhere in this workflow. This is the
+      # only job that holds it, and it runs nothing but npm.
+      id-token: write
+    steps:
+      # No checkout: the job publishes the tarballs the build job produced
+      # and has no use for the source tree. Node comes from the build job's
+      # reading of .nvmrc so both jobs run the same pinned version.
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ needs.build.outputs.node-version }}
+
+      # Trusted publishing (OIDC authentication to npm) needs npm 11.5.1 or
+      # later, and Node 22 ships npm 10. The version is pinned rather than
+      # `latest` so the one tool this job runs is the one that was reviewed;
+      # bump it deliberately. The check after the install is what fails the
+      # job if the pin ever drops below the trusted-publishing floor.
+      - name: Install an npm with trusted publishing support
+        run: |
+          npm install -g npm@11.19.0
+          npm --version
+          node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            const ok = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            if (!ok) { console.error("npm " + process.argv[1] + " predates trusted publishing (needs >= 11.5.1)"); process.exit(1); }
+          ' "$(npm --version)"
+
+      - name: Download the packed tarballs
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-tarballs
+          path: tarballs
+
+      # The artifact store is writable by anything in this run that holds the
+      # runtime token; the job outputs are not. Refuse to publish anything
+      # whose digest is not the one the build job recorded, and refuse extra
+      # files in the artifact outright.
+      - name: Verify the tarballs are the ones the build job packed
+        env:
+          SNAP_TGZ: ${{ needs.build.outputs.snap-tarball }}
+          SNAP_SHA256: ${{ needs.build.outputs.snap-sha256 }}
+          CONNECTOR_TGZ: ${{ needs.build.outputs.connector-tarball }}
+          CONNECTOR_SHA256: ${{ needs.build.outputs.connector-sha256 }}
+        working-directory: tarballs
+        run: |
+          test -n "$SNAP_TGZ" && test -n "$SNAP_SHA256"
+          test -n "$CONNECTOR_TGZ" && test -n "$CONNECTOR_SHA256"
+          EXTRA="$(ls -A | grep -vxF -e "$SNAP_TGZ" -e "$CONNECTOR_TGZ" || true)"
+          if [ -n "$EXTRA" ]; then
+            echo "Unexpected files in the release-tarballs artifact:"
+            echo "$EXTRA"
+            exit 1
+          fi
+          printf '%s  %s\n%s  %s\n' \
+            "$SNAP_SHA256" "$SNAP_TGZ" "$CONNECTOR_SHA256" "$CONNECTOR_TGZ" \
+            | sha256sum --check --strict
+          echo "Publishing $SNAP_TGZ ($SNAP_SHA256) and $CONNECTOR_TGZ ($CONNECTOR_SHA256)"
+
+      # Bootstrap path only. npm's trusted publisher configuration lives in
+      # the settings of a package that already exists on the registry, so the
+      # very first publish of a package cannot use it. For that one run, and
+      # only when the `bootstrap-token` input was enabled on a manual run from
+      # the release tag, the publish steps authenticate with the
+      # NPM_BOOTSTRAP_TOKEN secret. The token is referenced from ~/.npmrc by
+      # environment variable and exposed only to the two publish steps. Delete
+      # the secret once the trusted publisher is configured; see
+      # docs/RELEASE.md.
+      - name: Configure token authentication (bootstrap only)
+        if: ${{ inputs.bootstrap-token }}
+        run: |
+          echo "::warning::Publishing with the bootstrap token instead of trusted publishing. Configure the trusted publisher on npmjs.com and delete NPM_BOOTSTRAP_TOKEN after this run."
+          echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > ~/.npmrc
 
       # Snap first: the connector pins the snap version it installs, so a
       # connector on npm naming a snap release that does not exist yet is a
       # window in which a dapp can install a broken pair.
       #
-      # `npm publish` runs `prepublishOnly` (mm-snap manifest), which
-      # regenerates the manifest shasum, and the `git diff --exit-code` gate
-      # above has already proved that regeneration is a no-op for this commit.
+      # Publishing a tarball runs no lifecycle scripts (no `prepack`, no
+      # `prepublishOnly`): everything those scripts checked was checked in the
+      # build job, against the exact bytes in these files. `--provenance`
+      # makes npm refuse to publish without an OIDC token, so a run that
+      # somehow reached here without one stops rather than publishing an
+      # unattested artifact.
       - name: Publish snap
-        if: ${{ !inputs.dry-run }}
-        run: npm publish --provenance --access public
-        working-directory: packages/snap
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          SNAP_TGZ: ${{ needs.build.outputs.snap-tarball }}
+          NODE_AUTH_TOKEN: ${{ inputs.bootstrap-token && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
+        run: npm publish "tarballs/$SNAP_TGZ" --provenance --access public
 
       - name: Publish connector
-        if: ${{ !inputs.dry-run }}
-        run: npm publish --provenance --access public
-        working-directory: packages/connector
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Upload published tarballs
-        if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-        with:
-          name: release-tarballs
-          path: '*.tgz'
-          if-no-files-found: ignore
+          CONNECTOR_TGZ: ${{ needs.build.outputs.connector-tarball }}
+          NODE_AUTH_TOKEN: ${{ inputs.bootstrap-token && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
+        run: npm publish "tarballs/$CONNECTOR_TGZ" --provenance --access public

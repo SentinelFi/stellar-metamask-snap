@@ -9,6 +9,7 @@ export {
   createFreighterApi,
   WatchWalletChanges,
   type FreighterApiError,
+  type WalletChange,
 } from './freighter.js';
 export { StellarSnapKitModule } from './kit-module.js';
 export * from './types.js';

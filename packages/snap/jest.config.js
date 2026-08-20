@@ -100,6 +100,15 @@ module.exports = {
         tsconfig: {
           module: 'commonjs',
           moduleResolution: 'node',
+          // Classic node resolution does not read package `exports`, so the
+          // `/base` subpath the snap source imports needs an explicit type
+          // mapping here; the webpack build resolves it through `exports`.
+          baseUrl: '.',
+          paths: {
+            '@stellar/stellar-sdk/base': [
+              '../../node_modules/@stellar/stellar-sdk/lib/esm/base/index.d.ts',
+            ],
+          },
         },
       },
     ],
@@ -118,6 +127,12 @@ module.exports = {
     // package to its CJS base build at runtime; types still come from the
     // root typings.
     '^@stellar/stellar-sdk$':
+      '<rootDir>/../../node_modules/@stellar/stellar-sdk/lib/cjs/base/index.js',
+    // The snap source imports the `/base` entry point directly (so the
+    // Horizon and RPC transports are excluded by construction rather than by
+    // tree-shaking); map it to the same CJS build so source and test fixtures
+    // share one module instance and `instanceof` checks hold across them.
+    '^@stellar/stellar-sdk/base$':
       '<rootDir>/../../node_modules/@stellar/stellar-sdk/lib/cjs/base/index.js',
   },
 };

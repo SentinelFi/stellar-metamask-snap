@@ -60,11 +60,31 @@ export type NetworkDetailsResult = NetworkResult & {
   sorobanRpcUrl: string;
 };
 
+/**
+ * SEP-0043 `signTransaction` options. The shape follows the standard so a
+ * caller holding a SEP-0043 option bag (a Freighter or Wallets Kit
+ * integration, for instance) can pass it through unchanged, and so that any
+ * field the wallet does not honour is refused with an explicit message
+ * instead of a generic invalid-request error from the snap.
+ */
 export type SignTransactionOptions = {
+  /** Expected network passphrase; checked against the wallet's network. */
   networkPassphrase?: string;
+  /** A revealed account to sign with, instead of the active one. */
   address?: string;
   /** When true, the snap also submits the signed transaction. */
   submit?: boolean;
+  /**
+   * Declared for SEP-0043 shape compatibility only: **not supported**. The
+   * snap submits only to its own allowlisted Horizon and Soroban RPC
+   * endpoints, never to a dapp-chosen URL, because a caller-supplied
+   * submission host could delay, withhold, or front-run a signed envelope.
+   * Passing any value here is rejected client-side with an
+   * `invalidRequest` (`-3`) `StellarSnapError` before the wallet is
+   * contacted. It is refused rather than silently dropped so a caller never
+   * believes its endpoint was used when it was not.
+   */
+  submitUrl?: string;
 };
 
 export type SignTransactionResult = {
@@ -87,6 +107,15 @@ export type SignAuthEntryResult = {
 };
 
 export type SignMessageOptions = {
+  /**
+   * Expected network passphrase (SEP-0043 defines it for `signMessage` as
+   * well as for the transaction methods). When present it is compared
+   * against the wallet's active network exactly as `signTransaction` does,
+   * and a mismatch is rejected with `-3`. Optional: a SEP-0053 message
+   * signature itself carries no network, so omitting it is valid.
+   */
+  networkPassphrase?: string;
+  /** A revealed account to sign with, instead of the active one. */
   address?: string;
 };
 

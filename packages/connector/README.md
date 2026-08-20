@@ -29,9 +29,11 @@ if (await snap.isAvailable()) {
 }
 ```
 
-Errors throw `StellarSnapError { message, code }` with SEP-0043 codes (`-1` internal, `-2` external service, `-3` invalid request, `-4` user rejected). Every typed method validates the response shape at runtime before returning it, and `connect()`/`isInstalled()` verify that the snap version MetaMask actually installed matches the pinned release.
+Errors throw `StellarSnapError { message, code }` with SEP-0043 codes (`-1` internal, `-2` external service, `-3` invalid request, `-4` user rejected). Every typed method validates the response shape at runtime before returning it. `connect()`/`isInstalled()` verify that the snap version MetaMask actually installed matches the pinned release, and every call that reaches the snap (including through the Freighter facade and the Wallets Kit module) re-checks that on first use, refusing a mismatched install with `-3` before the snap is contacted, so a dapp that never calls `connect()` gets the same guarantee.
 
-During snap development pass `{ snapId: 'local:http://localhost:8080' }`. The `version` option must be an exact `x.y.z` semver and `snapId` an `npm:`/`local:` ID; anything else is rejected at construction, because a range or arbitrary ID would silently defeat the audited-release pin.
+During snap development pass `{ snapId: 'local:http://localhost:8080' }`. The `version` option must be an exact `x.y.z` semver (no range, no prerelease suffix) and `snapId` an `npm:`/`local:` ID; anything else is rejected at construction, because a range or arbitrary ID would silently defeat the audited-release pin. An `npm:` ID other than the published one is accepted but logs a console warning.
+
+The signing option bags follow SEP-0043 (`networkPassphrase`, `address`, and for `signTransaction` also `submit`). `submitUrl` is declared for shape compatibility but not supported: the snap submits only to its own allowlisted endpoints, and passing a `submitUrl` is refused with `-3` before MetaMask is contacted rather than silently ignored. See the [connector API reference](https://github.com/SentinelFi/stellar-metamask-snap/blob/main/docs/CONNECTOR-API.md) for the full method list.
 
 ### Multiple accounts
 

@@ -161,7 +161,24 @@ export type SnapState = {
    * of a public key, never key material.
    */
   entropyFingerprint?: string;
+  /**
+   * Set when this store was rebuilt from defaults rather than read: either
+   * the persisted value did not match the schema (a downgrade or corruption),
+   * or the primary secret recovery phrase changed and the phrase-derived
+   * contents were discarded. Both drop every connection grant and return the
+   * network to TESTNET, and both used to happen in silence. The home page
+   * shows a one-time notice and clears this field.
+   */
+  resetNotice?: StoreResetReason;
 };
+
+/** Why a store was rebuilt from defaults. */
+export type StoreResetReason = 'unrecognized-store' | 'phrase-changed';
+
+const RESET_REASONS: StoreResetReason[] = [
+  'unrecognized-store',
+  'phrase-changed',
+];
 
 /**
  * A persisted grant. `disclosureVersion` is optional so grants written before
@@ -188,6 +205,7 @@ const SnapStateStruct = object({
     ),
   ),
   entropyFingerprint: optional(string()),
+  resetNotice: optional(enums(RESET_REASONS)),
 });
 
 /**
@@ -331,7 +349,26 @@ export function parseState(stored: unknown): SnapState {
       tokens: normalizeTokens(state.tokens),
     });
   }
-  return defaultState();
+  // A store that exists but does not validate is a reset the user should
+  // hear about: their grants are gone and the network is back on TESTNET.
+  // The notice rides on the returned defaults, is persisted by whichever
+  // mutation writes next (every writer spreads the read state), and is
+  // cleared by the home page once shown.
+  return { ...defaultState(), resetNotice: 'unrecognized-store' };
+}
+
+/**
+ * Clears the one-time store-reset notice once the home page has shown it.
+ * A no-op when no notice is pending, so it never writes needlessly.
+ */
+export async function clearResetNotice(): Promise<void> {
+  await withStateLock(async () => {
+    const { resetNotice, ...rest } = await getState();
+    if (resetNotice === undefined) {
+      return;
+    }
+    await saveState(rest);
+  });
 }
 
 /**
@@ -713,6 +750,7 @@ export async function reconcileEntropyBinding(
       network: state.network,
       tokens: state.tokens ?? {},
       entropyFingerprint: fingerprint,
+      resetNotice: 'phrase-changed',
     });
     return true;
   });

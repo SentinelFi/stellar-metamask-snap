@@ -94,6 +94,12 @@ export const WalletProvider: FunctionComponent<{ children: ReactNode }> = ({
   // the controls re-render as disabled.
   const busyRef = useRef(false);
 
+  // The constructor throws a TypeError for a snap ID outside `npm:`/`local:`
+  // or a version that is not an exact `x.y.z`. It cannot do so for a value a
+  // production build accepted: `gatsby-node.js` refuses any other origin than
+  // the audited `npm:` ID and any version shape the connector would not take
+  // (its `EXACT_VERSION` is the connector's `EXACT_SEMVER`), so a crash here
+  // can only come from a development build with a hand-edited environment.
   const client = useMemo(
     () =>
       provider

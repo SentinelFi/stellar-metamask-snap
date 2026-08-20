@@ -50,7 +50,7 @@ Run from a clean tree on `main`, with CI green.
    git diff --exit-code packages/snap/snap.manifest.json
    ```
 
-   A non-empty diff means the committed manifest was stale; commit the regenerated one. Builds are reproducible on the supported runtime (Node 22 only, see [PHASE-5.md](PHASE-5.md)), so the shasum a reviewer computes will match.
+   A non-empty diff means the committed manifest was stale; commit the regenerated one. Builds are reproducible on the supported runtime (the exact Node 22 release pinned in `.nvmrc`, see [Toolchain pin](#toolchain-pin) below and [PHASE-5.md](PHASE-5.md)), so the shasum a reviewer computes will match.
 
 5. **Full verification:**
 
@@ -61,11 +61,11 @@ Run from a clean tree on `main`, with CI green.
    yarn workspace stellar-soroban-snap-connector build
    ```
 
-6. **Check the pack contents** of both packages, so nothing unintended ships and nothing needed is missing:
+6. **Check the pack contents** of both packages, so nothing unintended ships and nothing needed is missing. `prepack` runs `scripts/check-publish-env.mjs`, which refuses to pack outside the release workflow unless told this is a local inspection:
 
    ```bash
-   yarn workspace stellar-soroban-snap pack --dry-run
-   yarn workspace stellar-soroban-snap-connector pack --dry-run
+   ALLOW_UNSIGNED_PACK=1 yarn workspace stellar-soroban-snap pack --dry-run
+   ALLOW_UNSIGNED_PACK=1 yarn workspace stellar-soroban-snap-connector pack --dry-run
    ```
 
 7. **Commit and tag** the release commit, then push with tags:
@@ -82,16 +82,21 @@ Run from a clean tree on `main`, with CI green.
    git push origin vX.Y.Z
    ```
 
-   That triggers [`.github/workflows/release.yml`](../.github/workflows/release.yml), which re-runs every CI gate against the tagged checkout, verifies the tag matches `packages/snap/package.json`'s version, then publishes the snap first and the connector second (the connector pins the snap version it installs, so the reverse order leaves a window in which a dapp can install a broken pair). Verify both npm pages render afterwards, and that each shows the provenance badge.
+   That triggers [`.github/workflows/release.yml`](../.github/workflows/release.yml), which runs as two jobs:
 
-   To rehearse without publishing, run the workflow manually from the Actions tab with `dry-run` left enabled: it performs every gate and packs both tarballs, but publishes nothing.
+   - **`build`** (no secrets, no OIDC token) re-runs every CI gate against the tagged checkout, verifies the tag matches `packages/snap/package.json`'s version, re-verifies the manifest seal immediately before packing (the test step rebuilds the bundle, and `mm-snap build` rewrites the manifest, so the check after the first build is not enough on its own), confirms with `mm-snap manifest` that the committed manifest's shasum matches the bundle on disk, packs both tarballs, compares the snap tarball's manifest, icon, and bundle byte for byte against the committed and validated files, and records each tarball's SHA-256 as a job output.
+   - **`publish`** (the only job with `id-token: write`, inside the `npm-publish` environment) never checks out the repository. It downloads the tarballs, refuses them unless their digests equal the ones the build job recorded, and runs `npm publish <tarball> --provenance`, snap first and connector second (the connector pins the snap version it installs, so the reverse order leaves a window in which a dapp can install a broken pair). Authentication is npm trusted publishing (OIDC); no npm token exists in the repository's secrets once the one-time setup below is done.
+
+   Verify both npm pages render afterwards, and that each shows the provenance badge.
+
+   To rehearse without publishing, run the workflow manually from the Actions tab with `dry-run` left enabled: it performs every gate and packs both tarballs (downloadable as the `release-tarballs` artifact), but publishes nothing. A manual run with `dry-run` disabled is refused unless it was started from a `vX.Y.Z` tag ref: select the tag in the "Use workflow from" picker, never a branch.
 
    **Do not publish locally, and in particular do not use `yarn npm publish`.** Yarn 3 (which this repository pins for everything else) implements neither of the two things the snap publish depends on:
 
    - it does not support npm provenance, and ignores `publishConfig.provenance` rather than failing on it, so it publishes an unattested tarball and exits 0;
-   - it does not run `prepublishOnly`, so `mm-snap manifest` never runs and the manifest shasum is not regenerated.
+   - it does not run `prepublishOnly`, so `mm-snap manifest` never runs and the manifest is never validated against the bundle (that command validates and fails on a mismatch; it does not rewrite the shasum).
 
-   Both omissions are silent and produce a release that looks successful. `scripts/check-publish-env.mjs` runs on `prepack` (the one lifecycle hook both package managers honour on the publish path) and refuses to proceed outside a CI job holding an OIDC token, so this cannot be reached by accident. To pack a tarball locally for inspection, set `ALLOW_UNSIGNED_PACK=1`.
+   Both omissions are silent and produce a release that looks successful. `scripts/check-publish-env.mjs` runs on `prepack` (the one lifecycle hook both package managers honour on the publish path) and refuses to proceed outside a CI job holding an OIDC token, so this cannot be reached by accident. To pack a tarball locally for inspection, set `ALLOW_UNSIGNED_PACK=1`; the release workflow's build job sets the same variable, deliberately, because it packs in a job that holds no token so that nothing it runs can publish, and npm itself then refuses `--provenance` in the publish job if the token is missing there.
 
 9. **Submit to the Snaps Directory** with the new version, the audit report, screenshots, and a demo video. Allowlisting is per version: until the review completes, users installing through the Directory continue to get the previous listed version.
 
@@ -137,18 +142,35 @@ every step below is mandatory for a production release:
    this repository pins Yarn 3.)
 
    Both packages publish with npm provenance (`publishConfig.provenance`),
-   minted by `.github/workflows/release.yml`, which is the only job granted
-   the `id-token: write` permission that makes an attestation possible. The
-   attestation is what ties the published tarball to a workflow run and a
-   commit, so it is the one part of this trail that does not rest on process
-   discipline. Check for it on the npm page after publishing, and record the
-   workflow run URL with the tag.
+   minted by the `publish` job of `.github/workflows/release.yml`, which is
+   the only job granted the `id-token: write` permission that makes an
+   attestation possible. The attestation is what ties the published tarball
+   to a workflow run and a commit, so it is the one part of this trail that
+   does not rest on process discipline. Check for it on the npm page after
+   publishing, and record the workflow run URL with the tag. The same run's
+   log records the SHA-256 of each tarball as packed and as published; keep
+   those with the tag too.
 
    Note that the npm CLI does refuse to publish a provenance-configured
    package from an environment that cannot attest, but Yarn 3 does not: it
    ignores the setting entirely. Do not rely on the package manager to catch
    this. `scripts/check-publish-env.mjs` is what actually enforces it, on
    `prepack`, for both CLIs.
+
+## Toolchain pin
+
+`.nvmrc` pins the exact Node.js release (a full `major.minor.patch`, not a major line) and both `ci.yml` and `release.yml` install it with `node-version-file: .nvmrc`; the release workflow's publish job receives the same version from the build job so the two jobs cannot drift. Use the same release locally (`nvm use`, or check `node --version` against the file) before rebuilding the bundle for a release. Bump the pin deliberately, in its own commit, and rebuild the bundle afterwards: if the shasum changes with the toolchain, that is information the release record needs.
+
+The native transpiler behind `mm-snap build` (`@swc/core`) is delivered as platform-specific optional packages (`@swc/core-win32-x64-msvc`, `@swc/core-linux-x64-gnu`, and so on). Yarn 3 records no `checksum:` for platform-conditional packages in `yarn.lock`, and `yarn install --immutable` does not fail on them, so they are fetched over TLS with nothing but the registry's word for their contents. The compensating control is the cross-platform reproducibility that the manifest seal enforces: the bundle is built on Windows by the developer (with `@swc/core-win32-x64-msvc`) and the committed manifest carries its shasum; CI then rebuilds on Linux (with `@swc/core-linux-x64-gnu`) and fails unless `git diff --exit-code packages/snap/snap.manifest.json` is clean. A committed manifest that passes CI therefore means two independently fetched, un-checksummed native transpilers produced byte-identical output from the same source. A tampered binary on either side would have to produce exactly the other side's bytes to go unnoticed, which is a far stronger statement than a single checksum over one download. Keep the developer-side and CI-side platforms different on purpose; building the release bundle in CI alone would lose this property.
+
+## One-time setup outside the repository
+
+These are GitHub and npm settings. They are not in version control, so they are listed here so a new maintainer can verify them.
+
+1. **npm trusted publishing (per package).** On npmjs.com, open each package (`stellar-soroban-snap`, `stellar-soroban-snap-connector`), then Settings, then Trusted Publisher, and add a GitHub Actions publisher with organization `SentinelFi`, repository `stellar-metamask-snap`, workflow filename `release.yml`, and environment `npm-publish`. The workflow filename and environment must match exactly; the publish job's OIDC token carries both. Once configured, no npm token is needed and none should exist in the repository's secrets.
+2. **First publish of a never-published package.** A trusted publisher is configured on an existing package, so the very first publish of each package cannot use it. For that one run: create a granular access token on npmjs.com scoped to publish (bypassing 2FA for automation, or with 2FA satisfied per npm's current token rules), store it as the repository secret `NPM_BOOTSTRAP_TOKEN`, run the release workflow manually from the release tag with `dry-run` disabled and `bootstrap-token` enabled, then configure the trusted publisher as in step 1 and **delete the secret**. The workflow exposes that secret to the two publish steps only, and only when the input is enabled; every later release must leave it disabled.
+3. **Required reviewers on the `npm-publish` environment.** In the repository's Settings, then Environments, then `npm-publish`, enable "Required reviewers" and add the release maintainers; restrict deployment branches and tags to `v*` tags. The publish job waits for approval after the build job has passed every gate, so reviewers approve a specific, already-verified tarball digest (printed in the build job's log) rather than a run that has not yet built anything.
+4. **Branch protection on `main`** with required reviews and required CI, and GitHub private vulnerability reporting enabled (it is the reporting channel `SECURITY.md` names).
 
 ## Companion dapp security headers
 
@@ -173,6 +195,6 @@ The first release is not routine, and its ordering is fixed by the audit:
 1. Third-party audit completes and fixes land (mandatory: the entropy permission is audit-gated).
 2. Freeze the release commit, re-run the mainnet CORS probe, and run the Snapper scan on that commit; commit the report to [`audits/scans/`](../audits/scans/).
 3. Confirm `stellar-soroban-snap` and `stellar-soroban-snap-connector` are still unclaimed on npm before publishing.
-4. Then follow the checklist above.
+4. Then follow the checklist above. Because neither package exists on npm yet, this first publish takes the bootstrap path in [One-time setup outside the repository](#one-time-setup-outside-the-repository): a manual run from the release tag with `bootstrap-token` enabled, followed immediately by configuring the trusted publisher on both packages and deleting the token.
 
 Detail for each of these is in [PHASE-5.md](PHASE-5.md).

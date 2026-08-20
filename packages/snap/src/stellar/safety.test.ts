@@ -167,6 +167,35 @@ describe('collectSafetyWarnings', () => {
     expect(warnings.some((entry) => entry.includes('muxed'))).toBe(false);
   });
 
+  it('discloses unchecked accounts when Horizon lookups fail', async () => {
+    // Regression: a Horizon error status, timeout, or malformed body made
+    // `getAccountChecks` return null, and the consumer skipped the account
+    // without a word, so an outage produced zero warnings, which reads like
+    // a transaction that was checked and found clean.
+    mockChecks.mockResolvedValue(null);
+    const tx = buildTx([payment(DESTINATION) as never]);
+    const warnings = await collectSafetyWarnings(tx, network, SOURCE);
+    const skipped = warnings.filter((entry) =>
+      entry.startsWith('Safety checks were skipped'),
+    );
+    expect(skipped).toHaveLength(1);
+    // The destination and the source: both lookups failed.
+    expect(skipped[0]).toContain('2 account(s)');
+    expect(skipped[0]).toContain('NOT checked');
+  });
+
+  it('counts only the accounts whose lookup failed', async () => {
+    mockChecks.mockReset();
+    mockChecks.mockResolvedValueOnce(null).mockResolvedValue(fundedAccount());
+    const tx = buildTx([payment(DESTINATION) as never]);
+    const warnings = await collectSafetyWarnings(tx, network, SOURCE);
+    const skipped = warnings.filter((entry) =>
+      entry.startsWith('Safety checks were skipped'),
+    );
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toContain('1 account(s)');
+  });
+
   it('discloses skipped checks when the global lookup budget is exhausted', async () => {
     // Denial must surface as a visible caution, never as silence: an
     // attacker who could drain the budget would otherwise be suppressing a
@@ -387,10 +416,14 @@ describe('collectFeeSourceWarnings', () => {
     expect(mockChecks).not.toHaveBeenCalled();
   });
 
-  it('degrades silently when Horizon is unreachable', async () => {
+  it('discloses an unchecked fee source when Horizon is unreachable', async () => {
+    // A failed lookup is a check that did not run, not one that passed, and
+    // the fee source is the account the wallet's signature authorizes.
     mockChecks.mockResolvedValue(null);
     const warnings = await collectFeeSourceWarnings(SOURCE, network, SOURCE);
-    expect(warnings).toStrictEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Safety checks were skipped');
+    expect(warnings[0]).toContain('NOT checked');
   });
 
   it('still checks the fee source for a connected origin under cold pressure', async () => {

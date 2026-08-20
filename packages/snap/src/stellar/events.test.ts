@@ -114,7 +114,7 @@ describe('summarizeBalanceChanges', () => {
 
     expect(summary.partial).toBe(false);
     expect(summary.changes).toStrictEqual([
-      { asset: 'XLM', amount: '-1', rawUnits: false },
+      { asset: 'XLM', identity: 'XLM (native)', amount: '-1', rawUnits: false },
     ]);
   });
 
@@ -126,7 +126,12 @@ describe('summarizeBalanceChanges', () => {
     );
 
     expect(summary.changes).toStrictEqual([
-      { asset: 'XLM', amount: '+2.5', rawUnits: false },
+      {
+        asset: 'XLM',
+        identity: 'XLM (native)',
+        amount: '+2.5',
+        rawUnits: false,
+      },
     ]);
   });
 
@@ -141,7 +146,7 @@ describe('summarizeBalanceChanges', () => {
     );
 
     expect(summary.changes).toStrictEqual([
-      { asset: 'XLM', amount: '-2', rawUnits: false },
+      { asset: 'XLM', identity: 'XLM (native)', amount: '-2', rawUnits: false },
     ]);
   });
 
@@ -166,7 +171,7 @@ describe('summarizeBalanceChanges', () => {
       '+5',
     ]);
     expect(summary.changes[1]?.asset).toBe(
-      `USDC (${OTHER.slice(0, 4)}…${OTHER.slice(-4)})`,
+      `USDC (${OTHER.slice(0, 6)}…${OTHER.slice(-6)})`,
     );
   });
 
@@ -213,7 +218,7 @@ describe('summarizeBalanceChanges', () => {
     const summary = summarizeBalanceChanges([event], ACCOUNT, PASSPHRASE);
 
     expect(summary.changes).toStrictEqual([
-      { asset: 'XLM', amount: '+1', rawUnits: false },
+      { asset: 'XLM', identity: 'XLM (native)', amount: '+1', rawUnits: false },
     ]);
   });
 
@@ -241,7 +246,7 @@ describe('summarizeBalanceChanges', () => {
     const summary = summarizeBalanceChanges([event], ACCOUNT, PASSPHRASE);
 
     expect(summary.changes).toStrictEqual([
-      { asset: 'XLM', amount: '-1', rawUnits: false },
+      { asset: 'XLM', identity: 'XLM (native)', amount: '-1', rawUnits: false },
     ]);
   });
 
@@ -286,7 +291,8 @@ describe('summarizeBalanceChanges', () => {
 
     expect(summary.changes).toStrictEqual([
       {
-        asset: `Token ${OTHER_CONTRACT.slice(0, 4)}…${OTHER_CONTRACT.slice(-4)}`,
+        asset: `Token ${OTHER_CONTRACT.slice(0, 6)}…${OTHER_CONTRACT.slice(-6)}`,
+        identity: OTHER_CONTRACT,
         amount: '-10000000',
         rawUnits: true,
       },
@@ -306,7 +312,7 @@ describe('summarizeBalanceChanges', () => {
 
     expect(summary.changes.map((change) => change.asset)).toStrictEqual([
       'XLM',
-      `Token ${OTHER_CONTRACT.slice(0, 4)}…${OTHER_CONTRACT.slice(-4)}`,
+      `Token ${OTHER_CONTRACT.slice(0, 6)}…${OTHER_CONTRACT.slice(-6)}`,
     ]);
   });
 
@@ -330,7 +336,8 @@ describe('summarizeBalanceChanges', () => {
 
     expect(summary.changes).toStrictEqual([
       {
-        asset: `ABC (${OTHER_CONTRACT.slice(0, 4)}…${OTHER_CONTRACT.slice(-4)})`,
+        asset: `ABC (${OTHER_CONTRACT.slice(0, 6)}…${OTHER_CONTRACT.slice(-6)})`,
+        identity: OTHER_CONTRACT,
         amount: '-15',
         rawUnits: false,
       },

@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { Asset, LiquidityPoolAsset, Memo } from '@stellar/stellar-sdk';
 
 import {
+  bytesToDisplay,
   containsHiddenCharacters,
   displayOrigin,
   escapeHiddenCharacters,
@@ -9,6 +10,7 @@ import {
   formatLiquidityPool,
   formatMemo,
   formatTokenAsset,
+  isHexDisplay,
   isLossyInline,
   isOriginDisplayLossy,
   originLooksConfusable,
@@ -40,7 +42,7 @@ describe('formatAsset', () => {
   });
 
   it('renders a credit asset as CODE (truncated issuer)', () => {
-    expect(formatAsset(new Asset('USDC', ISSUER))).toBe('USDC (GDRX…JUJ6)');
+    expect(formatAsset(new Asset('USDC', ISSUER))).toBe('USDC (GDRXE2…SUJUJ6)');
   });
 
   it('names the constituents of a liquidity-pool asset', () => {
@@ -52,7 +54,7 @@ describe('formatAsset', () => {
       new Asset('USDC', ISSUER),
       30,
     );
-    expect(formatAsset(pool)).toBe('Pool shares: XLM / USDC (GDRX…JUJ6)');
+    expect(formatAsset(pool)).toBe('Pool shares: XLM / USDC (GDRXE2…SUJUJ6)');
   });
 });
 
@@ -105,7 +107,7 @@ describe('formatTokenAsset', () => {
   const CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 
   it('pairs the symbol with a truncated contract ID', () => {
-    expect(formatTokenAsset('USDC', CONTRACT)).toBe('USDC (CDLZ…CYSC)');
+    expect(formatTokenAsset('USDC', CONTRACT)).toBe('USDC (CDLZFC…HGCYSC)');
   });
 
   it('keeps a token calling itself XLM distinguishable from the native row', () => {
@@ -182,6 +184,25 @@ describe('containsHiddenCharacters', () => {
     expect(containsHiddenCharacters('a\u17B4b')).toBe(true);
   });
 
+  it('flags the invisible nonspacing marks that \\p{Cf} does not reach', () => {
+    // Regression: variation selectors, the Mongolian free variation
+    // selectors, and the combining grapheme joiner are General Category Mn,
+    // render as nothing, and were not in the class, so a memo or signed
+    // message could carry them past the warning.
+    // U+FE0F VARIATION SELECTOR-16.
+    expect(containsHiddenCharacters('pay\uFE0F 1')).toBe(true);
+    // U+FE00 VARIATION SELECTOR-1.
+    expect(containsHiddenCharacters('a\uFE00b')).toBe(true);
+    // U+E0100 VARIATION SELECTOR-17 (supplementary plane).
+    expect(containsHiddenCharacters('a\u{E0100}b')).toBe(true);
+    // U+180B MONGOLIAN FREE VARIATION SELECTOR ONE.
+    expect(containsHiddenCharacters('a\u180Bb')).toBe(true);
+    // U+034F COMBINING GRAPHEME JOINER.
+    expect(containsHiddenCharacters('a\u034Fb')).toBe(true);
+    // U+E000, a private-use code point with no standard glyph.
+    expect(containsHiddenCharacters('a\uE000b')).toBe(true);
+  });
+
   it('makes every flagged character visible when escaped', () => {
     // Detection and escaping must cover the same set: a character flagged but
     // not escaped leaves the user warned with nothing to inspect.
@@ -189,6 +210,11 @@ describe('containsHiddenCharacters', () => {
       '\u202E',
       '\u200B',
       '',
+      '\uFE0F',
+      '\u{E0100}',
+      '\u180B',
+      '\u034F',
+      '\uE000',
       '\u00AD',
       '\u2028',
       '\u2029',
@@ -338,5 +364,29 @@ describe('originLooksConfusable', () => {
 
   it('accepts ordinary ASCII origins', () => {
     expect(originLooksConfusable('https://example.com')).toBe(false);
+  });
+});
+
+describe('bytesToDisplay', () => {
+  it('renders clean text that merely starts with the hex marker as hex', () => {
+    // Without this the literal text `hex:00` and the single byte 0x00 would
+    // display identically.
+    expect(bytesToDisplay(Buffer.from('hex:00', 'utf8'))).toBe(
+      `hex:${Buffer.from('hex:00', 'utf8').toString('hex')}`,
+    );
+    expect(isHexDisplay(bytesToDisplay(Buffer.from('hex:00', 'utf8')))).toBe(
+      true,
+    );
+    expect(isHexDisplay(bytesToDisplay(Buffer.from('plain', 'utf8')))).toBe(
+      false,
+    );
+  });
+
+  it('renders invalid UTF-8 and hidden characters as hex', () => {
+    expect(bytesToDisplay(Buffer.from([0x61, 0xff, 0x62]))).toBe('hex:61ff62');
+    expect(bytesToDisplay(Buffer.from('a\u200Bb', 'utf8'))).toBe(
+      `hex:${Buffer.from('a\u200Bb', 'utf8').toString('hex')}`,
+    );
+    expect(bytesToDisplay(Buffer.from('plain', 'utf8'))).toBe('plain');
   });
 });

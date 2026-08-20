@@ -60,6 +60,13 @@ async function soft<Type extends Record<string, unknown>>(
   }
 }
 
+/** The update a {@link WatchWalletChanges} listener receives. */
+export type WalletChange = {
+  address: string;
+  network: string;
+  networkPassphrase: string;
+};
+
 /**
  * Polls for wallet address/network changes, mirroring Freighter's
  * `WatchWalletChanges` helper.
@@ -84,30 +91,36 @@ export class WatchWalletChanges {
    * @param callback - Invoked whenever the address, network, or passphrase
    * changes.
    */
-  watch(
-    callback: (update: {
-      address: string;
-      network: string;
-      networkPassphrase: string;
-    }) => void,
-  ): void {
+  watch(callback: (update: WalletChange) => void): void {
     this.stop();
     this.#timer = setInterval(() => {
-      Promise.all([this.#snap.getAddress(), this.#snap.getNetwork()])
-        .then(([{ address }, network]) => {
-          const key = `${address}|${network.network}|${network.networkPassphrase}`;
-          if (key !== this.#last) {
-            this.#last = key;
-            callback({
-              address,
-              network: network.network,
-              networkPassphrase: network.networkPassphrase,
-            });
-          }
-          return null;
-        })
-        .catch(() => null);
+      // A failed poll (MetaMask locked, snap mid-update, page offline) is
+      // not an event the listener can act on; the next tick retries.
+      this.#poll(callback).catch(() => undefined);
     }, this.#intervalMs);
+  }
+
+  /**
+   * One poll: reads the address and network, and notifies the listener
+   * when the combination differs from the last one it was told about.
+   *
+   * @param callback - The listener registered with `watch`.
+   */
+  async #poll(callback: (update: WalletChange) => void): Promise<void> {
+    const [{ address }, network] = await Promise.all([
+      this.#snap.getAddress(),
+      this.#snap.getNetwork(),
+    ]);
+    const key = `${address}|${network.network}|${network.networkPassphrase}`;
+    if (key === this.#last) {
+      return;
+    }
+    this.#last = key;
+    callback({
+      address,
+      network: network.network,
+      networkPassphrase: network.networkPassphrase,
+    });
   }
 
   /** Stops polling. */

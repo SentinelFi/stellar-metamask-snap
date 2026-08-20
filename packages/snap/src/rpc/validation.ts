@@ -9,7 +9,7 @@ import {
   size,
   string,
 } from '@metamask/superstruct';
-import { StrKey } from '@stellar/stellar-sdk';
+import { StrKey } from '@stellar/stellar-sdk/base';
 
 import { invalidRequest } from './errors';
 import { AccountIndexStruct } from '../state';
@@ -144,6 +144,14 @@ export const SignTransactionParams = object({
 
 export const SignMessageParams = object({
   message: boundedString(MAX_MESSAGE_LENGTH),
+  /**
+   * SEP-43 lists `networkPassphrase` for `signMessage` too. A SEP-53
+   * signature is not bound to a network, so the field changes nothing about
+   * what is signed; it is accepted so a conformant caller is not rejected,
+   * and compared against the active network when present so a site that
+   * states a network it is not on hears about it.
+   */
+  networkPassphrase: NetworkPassphraseOption,
   address: AddressOption,
 });
 

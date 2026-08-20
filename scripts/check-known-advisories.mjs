@@ -20,7 +20,22 @@
  * not one per advisory. Reading that output suggests a handful of issues when
  * the JSON reports dozens. This script reads the JSON.
  *
- * A third trap, and the reason this script's bundle check looks the way it
+ * A third trap, which is why this script is no longer the only gate over the
+ * transitive graph. The vendored Yarn 3 builds the audit's dependency map
+ * keyed by package NAME across every workspace in the monorepo, so when two
+ * workspaces resolve different versions of the same package, one version wins
+ * and is reported as if it were the snap's. Measured here: the snap resolves
+ * axios 1.18.0 (with follow-redirects 1.16.0 and form-data 4.0.6) while the
+ * site resolves axios 1.12.1, and the audit this script reads reports the
+ * 1.12.1 advisories under a path through the stellar SDK. The allowlist
+ * entries for those three packages therefore disposition advisories that may
+ * not be the snap's, and the same mechanism would under-report the moment the
+ * roles reverse. `scripts/check-snap-graph-advisories.mjs` computes the snap's
+ * exact lockfile-resolved production closure and audits that; this script
+ * keeps its distinct job, which is to prove through bundle markers that the
+ * allowlisted packages are absent from the artifact that ships.
+ *
+ * A fourth trap, and the reason this script's bundle check looks the way it
  * does. The obvious way to verify "this package does not ship" is to search the
  * bundle for the package name, which is what this script did originally. That
  * check has no power: `mm-snap build` emits a minified bundle in which package
@@ -82,10 +97,34 @@ try {
   );
 }
 
+/*
+ * A body that parses is not yet a body that means "no advisories". Yarn's
+ * report always carries an `advisories` map and a `metadata.vulnerabilities`
+ * summary, even when both are empty; a well-formed JSON document without them
+ * (an error object, a truncated capture, output from some other command) must
+ * not be read as a clean audit. Require the fields before trusting an empty
+ * map, for the same reason an unparseable body is refused above.
+ */
+if (
+  audit === null ||
+  typeof audit !== 'object' ||
+  audit.advisories === null ||
+  typeof audit.advisories !== 'object' ||
+  audit.metadata?.vulnerabilities === null ||
+  typeof audit.metadata?.vulnerabilities !== 'object'
+) {
+  throw new Error(
+    `The audit report at ${auditPath} parses but does not look like a Yarn ` +
+      `audit report: expected an \`advisories\` object and a ` +
+      `\`metadata.vulnerabilities\` summary. Refusing to report a clean result ` +
+      `from a body that may be an error or a partial capture.`,
+  );
+}
+
 /** Advisory count and highest severity per module. */
 const RANK = { info: 0, low: 1, moderate: 2, high: 3, critical: 4 };
 const found = new Map();
-for (const advisory of Object.values(audit.advisories ?? {})) {
+for (const advisory of Object.values(audit.advisories)) {
   const name = advisory.module_name;
   const entry = found.get(name) ?? { count: 0, severity: 'info', ids: [] };
   entry.count += 1;

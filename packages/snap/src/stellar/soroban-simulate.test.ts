@@ -180,12 +180,14 @@ describe('simulateForDisplay', () => {
     expect(summary).not.toHaveProperty('latestLedger');
   });
 
-  it('defaults a missing resource fee rather than rendering undefined', async () => {
+  it('reports a missing resource fee as unavailable rather than as zero', async () => {
+    // An endpoint that reports no estimate has not said the call is free; a
+    // `'0'` default would have rendered exactly that claim.
     mockRpc({});
 
     expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({
       ok: true,
-      minResourceFee: '0',
+      minResourceFee: null,
     });
   });
 

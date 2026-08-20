@@ -14,13 +14,16 @@ jobs:
   #
   # `npm ci` executes install lifecycle scripts from a third-party dependency
   # tree. This repository locks its own installs down (`enableScripts: false`
-  # plus LavaMoat allow-scripts), and that posture should not lapse just
-  # because the code being installed is a security scanner. Isolating the
-  # build means those scripts run in a job that has never checked out this
-  # repository, so there is no audited source tree to tamper with and no
-  # credential on disk to find: `persist-credentials: false` keeps the
-  # checkout token out of `.git/config`, which is where an install script
-  # would otherwise look for it.
+  # in .yarnrc.yml is the control that suppresses them; the LavaMoat
+  # allow-scripts inventory in the root package.json is the reviewed record of
+  # which packages declare such scripts, each set to `false`), and that
+  # posture should not lapse just because the code being installed is a
+  # security scanner. Isolating the build means those scripts run in a job
+  # that has never checked out this repository, so there is no audited source
+  # tree to tamper with and no credential on disk to find:
+  # `persist-credentials: false` keeps the checkout token out of
+  # `.git/config`, which is where an install script would otherwise look for
+  # it.
   #
   # The scanner is shipped to the next job as a tarball including its
   # `node_modules`, because `dist/main.js` needs them at runtime. Tarring

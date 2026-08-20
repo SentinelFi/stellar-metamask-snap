@@ -1,4 +1,4 @@
-import { Networks } from '@stellar/stellar-sdk';
+import { Networks } from '@stellar/stellar-sdk/base';
 
 /** Network identifiers, matching Freighter's naming. */
 export type NetworkName = 'PUBLIC' | 'TESTNET' | 'FUTURENET';

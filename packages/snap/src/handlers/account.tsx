@@ -3,7 +3,11 @@ import {
   getOwnedAccounts,
   getWalletAddress,
 } from '../keys';
-import { invalidRequest, userRejected } from '../rpc/errors';
+import {
+  externalServiceError,
+  invalidRequest,
+  userRejected,
+} from '../rpc/errors';
 import { takeTokenReadBudget } from '../rpc/limiter';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
@@ -18,12 +22,14 @@ import {
   isOriginConnected,
   MAX_TRACKED_TOKENS,
 } from '../state';
+import { SAC_DECIMALS, verifiedStellarAssetIdentity } from '../stellar/events';
 import type { AccountSummary, HorizonBalance } from '../stellar/horizon';
 import { getAccountSummary, requestFriendbot } from '../stellar/horizon';
 import {
   isContractId,
   readTokenBalance,
   readTokenMetadata,
+  readTokenName,
 } from '../stellar/token';
 import { AddTokenDialog } from '../ui/dialogs';
 
@@ -272,8 +278,17 @@ export async function getBalances(
   }
   const promise = readBalances(network, address);
   balanceCache.set(key, { at: now, promise });
-  // A failure must not be served from cache for the rest of the window.
-  promise.catch(() => balanceCache.delete(key));
+  // A failure must not be served from cache for the rest of the window. The
+  // eviction is identity-checked because a lookup can outlive its own TTL
+  // (the Horizon timeout alone is twice the window), so by the time it
+  // rejects, a fresh entry may already sit under the same key; deleting by
+  // key alone would evict that live entry and re-run its whole per-token
+  // fan-out.
+  promise.catch(() => {
+    if (balanceCache.get(key)?.promise === promise) {
+      balanceCache.delete(key);
+    }
+  });
   return promise;
 }
 
@@ -332,15 +347,48 @@ export async function addToken(
   // let ordinary token traffic degrade the user's own signing dialogs to
   // "checks were skipped". Denial is an error rather than a silent skip,
   // because there is nothing to show the user without the metadata.
-  if (!takeTokenReadBudget(2)) {
+  if (!takeTokenReadBudget(3)) {
     throw invalidRequest(
       'Too many token contract reads have run recently. Try again in a minute.',
     );
   }
-  const metadata = await readTokenMetadata(network, request.contractId);
+  // The name read is best effort and runs alongside the metadata reads. It
+  // decides one thing: whether the dialog can state that this contract is
+  // the Stellar Asset Contract of a classic asset (a claim the snap verifies
+  // by derivation), or must present the symbol as the contract's own
+  // unverified word. A failed name read simply yields the latter.
+  const [metadata, name] = await Promise.all([
+    readTokenMetadata(network, request.contractId),
+    readTokenName(network, request.contractId),
+  ]);
   if (!metadata) {
     throw invalidRequest(
       'Could not read the token contract (symbol/decimals). It may not be a token, or the network may be unreachable.',
+    );
+  }
+  const stellarAsset = verifiedStellarAssetIdentity(
+    name,
+    request.contractId,
+    network.networkPassphrase,
+  );
+  // A Stellar Asset Contract's decimals are fixed at 7 by the protocol, so on
+  // a contract *verified* to be that asset's SAC the reported value is
+  // checkable, and a mismatch cannot be the contract's doing: the read is a
+  // simulation, so the answer is endpoint-controlled. This matters because
+  // `decimals` is the one endpoint answer that persists. It is written to
+  // state here and scales every later balance render for this token, on the
+  // home page and through `getBalances`, under a dialog that just called the
+  // asset verified; and the balance-change summary in signing dialogs
+  // hardcodes 7 for the same asset (`SAC_DECIMALS`), so the two displays
+  // would silently disagree about magnitude. Refuse rather than repair: an
+  // endpoint proven to lie about a derivable value cannot be trusted for the
+  // symbol from the same response either, and an honest endpoint can never
+  // trip this.
+  if (stellarAsset !== null && metadata.decimals !== SAC_DECIMALS) {
+    throw externalServiceError(
+      'The network endpoint reported token metadata inconsistent with this ' +
+        'verified Stellar asset contract, so the token was not added. Try ' +
+        'again later.',
     );
   }
 
@@ -356,6 +404,7 @@ export async function addToken(
           contractId={request.contractId}
           symbol={metadata.symbol}
           decimals={metadata.decimals}
+          stellarAsset={stellarAsset}
         />
       ),
     },

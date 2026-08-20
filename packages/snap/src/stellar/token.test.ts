@@ -1,4 +1,5 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { nativeToScVal, xdr } from '@stellar/stellar-sdk';
 
 import {
   formatTokenAmount,
@@ -148,6 +149,110 @@ describe('readTokenBalance decimals guard', () => {
     ).toBeNull();
     expect(
       await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7.5),
+    ).toBeNull();
+  });
+});
+
+describe('readTokenBalance return-type guard', () => {
+  const CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+  const ADDRESS = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
+  const originalFetch = (globalThis as { fetch?: unknown }).fetch;
+
+  afterEach(() => {
+    (globalThis as { fetch?: unknown }).fetch = originalFetch;
+  });
+
+  /**
+   * Makes every simulation answer with the given raw `result` member, so the
+   * error and empty-result shapes are as expressible as a value-bearing one.
+   *
+   * @param result - The JSON-RPC `result` member to return.
+   */
+  function mockSimulation(result: unknown) {
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ jsonrpc: '2.0', id: 1, result }),
+    );
+    const mocked = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      arrayBuffer: async () => bytes.buffer,
+    }));
+    (globalThis as { fetch?: unknown }).fetch = mocked;
+  }
+
+  /**
+   * Makes every simulation answer with the given ScVal as the call result.
+   *
+   * @param value - The value the simulated `balance()` call returns.
+   */
+  function mockBalance(value: xdr.ScVal) {
+    mockSimulation({
+      results: [{ xdr: value.toXDR('base64') }],
+      latestLedger: 1,
+    });
+  }
+
+  it('formats an i128 balance', async () => {
+    mockBalance(nativeToScVal(15_000_000n, { type: 'i128' }));
+    expect(await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7)).toBe(
+      '1.5',
+    );
+  });
+
+  it('rejects a boolean instead of coercing it to one smallest unit', async () => {
+    // Regression: `BigInt(true)` is `1n`, so a contract whose `balance()`
+    // returned `true` displayed as 0.0000001.
+    mockBalance(xdr.ScVal.scvBool(true));
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
+    ).toBeNull();
+  });
+
+  it('rejects a symbol or a string that is not digits', async () => {
+    mockBalance(nativeToScVal('abc', { type: 'symbol' }));
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
+    ).toBeNull();
+    mockBalance(xdr.ScVal.scvString('1e3'));
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
+    ).toBeNull();
+  });
+
+  it('accepts the number and digit-string shapes a balance may decode to', async () => {
+    // scValToNative yields a plain number for 32-bit values, and the narrow
+    // integer-string form is allowed on the same grounds; both must format at
+    // the token's precision like the common bigint shape.
+    mockBalance(nativeToScVal(5, { type: 'u32' }));
+    expect(await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7)).toBe(
+      '0.0000005',
+    );
+    mockBalance(xdr.ScVal.scvString('123'));
+    expect(await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7)).toBe(
+      '0.0000123',
+    );
+  });
+
+  it('returns null when the simulation reports an error', async () => {
+    // The error and the result value are both endpoint-controlled; a response
+    // that carries an error must read as "could not read", never as a balance.
+    mockSimulation({ error: 'host function failed', latestLedger: 1 });
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
+    ).toBeNull();
+  });
+
+  it('returns null when the simulation returns no result value', async () => {
+    // A structurally valid response with nothing in `results` is a read that
+    // produced no value, not a zero balance.
+    mockSimulation({ latestLedger: 1 });
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
+    ).toBeNull();
+    mockSimulation({ results: [{}], latestLedger: 1 });
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
     ).toBeNull();
   });
 });

@@ -260,6 +260,23 @@ describe('signing handlers: fail-closed gates', () => {
       expect(dialogs).toHaveLength(0);
     });
 
+    it('refuses a caller-named submission endpoint with a specific message', async () => {
+      // SEP-43 defines `submitUrl`, but this wallet submits only to its own
+      // allowlisted endpoints: a submission endpoint is trusted with the
+      // signed envelope. The refusal names the policy so a conformant caller
+      // can tell it from a malformed request.
+      await expect(
+        signTransaction(ORIGIN, {
+          xdr: classicTx().toXDR(),
+          submit: true,
+          submitUrl: 'https://attacker.example/submit',
+        }),
+      ).rejects.toThrow(
+        'Custom submission endpoints (submitUrl) are not supported',
+      );
+      expect(dialogs).toHaveLength(0);
+    });
+
     it('requires the caller to state the network on PUBLIC', async () => {
       // `networkPassphrase` is optional in SEP-43, and when it is omitted the
       // envelope is hashed against whatever network the wallet happens to be
@@ -693,6 +710,27 @@ describe('signing handlers: fail-closed gates', () => {
       await expect(
         signMessage(ORIGIN, { message: 'hello', address: ADDRESS_0 }),
       ).rejects.toThrow('not connected');
+      expect(dialogs).toHaveLength(0);
+    });
+
+    it('accepts a matching network passphrase, as SEP-43 allows', async () => {
+      // The field was missing from the message params, so a conformant
+      // caller that passed it was rejected with a generic invalid request.
+      const result = await signMessage(ORIGIN, {
+        message: 'hello',
+        networkPassphrase: Networks.TESTNET,
+      });
+      expect(dialogs).toHaveLength(1);
+      expect(result.signerAddress).toBe(ADDRESS_0);
+    });
+
+    it('refuses a mismatched network passphrase', async () => {
+      await expect(
+        signMessage(ORIGIN, {
+          message: 'hello',
+          networkPassphrase: Networks.PUBLIC,
+        }),
+      ).rejects.toThrow('Network mismatch');
       expect(dialogs).toHaveLength(0);
     });
 

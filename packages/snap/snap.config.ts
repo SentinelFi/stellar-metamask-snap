@@ -12,11 +12,15 @@ const webpack = require(
 );
 /* eslint-enable @typescript-eslint/no-require-imports, import-x/no-dynamic-require, n/no-extraneous-require */
 
-// bignumber.js's `BigNumber.random()` (shipped pre-minified inside
-// @stellar/stellar-sdk) references Math.random and probes it at module init.
-// DefinePlugin cannot reach the pre-minified source, and a throwing stub
-// would crash the bundle at load, so rewrite the emitted bundle to back
-// every Math.random call with crypto.getRandomValues.
+// Two bundled packages reference Math.random. bignumber.js (a dependency of
+// @stellar/stellar-sdk, resolved as its own package from the registry, not
+// embedded in the SDK) calls it at module initialisation inside
+// `BigNumber.random()`: a probe of whether Math.random yields more than 32
+// bits, then the two candidate generators the probe selects between. lodash
+// captures it once as `nativeRandom = Math.random` for `_.random`. A throwing
+// stub would crash the bundle at load because of bignumber's probe, so the
+// emitted bundle is rewritten to back every Math.random reference with
+// crypto.getRandomValues instead.
 const SECURE_RANDOM =
   '(() => crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000)';
 
@@ -27,6 +31,15 @@ const SECURE_RANDOM =
  * textual replacement would corrupt a string) surfaces at build time rather
  * than silently producing a new shasum. Update deliberately, never to make a
  * red build go green.
+ *
+ * Where the seven come from, measured on the 0.1.0 bundle: six in
+ * bignumber.js (the four call sites in `BigNumber.random()` described above
+ * plus two comments that mention the name, which this textual rewrite also
+ * touches harmlessly) and one in lodash (`nativeRandom = Math.random`). The
+ * rewrite runs at webpack's optimize stage, before minification strips the
+ * comments, which is why the minified bundle shows five rewritten sites
+ * rather than seven; CI's companion grep counts on the minified output and
+ * asserts only that zero `Math.random` references remain.
  *
  * Know what this does NOT reach. Both the rewrite and CI's companion grep match
  * the literal text `Math.random`, so aliased access (`const M = Math;

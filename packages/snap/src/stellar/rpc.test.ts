@@ -1,11 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import {
-  getLatestLedger,
-  getTransaction,
-  sendTransaction,
-  simulateTransaction,
-} from './rpc';
+import { getLatestLedger, sendTransaction, simulateTransaction } from './rpc';
 
 const RPC = 'https://soroban-testnet.stellar.org';
 const TX_HASH = 'b'.repeat(64);
@@ -115,6 +110,21 @@ describe('getLatestLedger', () => {
       'Stellar RPC error: empty result.',
     );
   });
+
+  it('refuses a response whose id is not the one the request carried', async () => {
+    // A body answering some other request is not this call's reply, however
+    // well formed its result is.
+    mockFetch(
+      mockResponse({ jsonrpc: '2.0', id: 2, result: { sequence: 4321 } }),
+    );
+    await expect(getLatestLedger(RPC)).rejects.toThrow(
+      'Malformed Stellar RPC response (getLatestLedger).',
+    );
+    mockFetch(mockResponse({ jsonrpc: '2.0', result: { sequence: 4321 } }));
+    await expect(getLatestLedger(RPC)).rejects.toThrow(
+      'Malformed Stellar RPC response (getLatestLedger).',
+    );
+  });
 });
 
 describe('sendTransaction', () => {
@@ -138,18 +148,6 @@ describe('sendTransaction', () => {
     await expect(sendTransaction(RPC, 'AAAA')).rejects.toThrow(
       'Malformed Stellar RPC response (sendTransaction).',
     );
-  });
-});
-
-describe('getTransaction', () => {
-  it('returns the validated status envelope', async () => {
-    mockFetch(
-      mockResponse(rpcResult({ status: 'SUCCESS', resultXdr: 'AAAA' })),
-    );
-    expect(await getTransaction(RPC, TX_HASH)).toStrictEqual({
-      status: 'SUCCESS',
-      resultXdr: 'AAAA',
-    });
   });
 });
 

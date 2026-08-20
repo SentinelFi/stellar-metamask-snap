@@ -31,7 +31,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: yarn
 
       - name: Install dependencies
@@ -85,19 +85,44 @@ jobs:
       - name: Audit direct runtime dependencies (all workspaces)
         run: yarn npm audit --all --environment production
 
-      # The snap's TRANSITIVE production graph, gated against a reviewed
-      # allowlist (audits/known-advisories.json).
+      # The snap's TRANSITIVE production graph, audited per exact version.
       #
-      # This is the check the step above cannot perform. It also verifies the
-      # claim the allowlist rests on, by grepping the built bundle for each
-      # package it says is absent, so "webpack tree-shakes it out" stops being
-      # prose in the threat model and becomes something CI re-derives on every
-      # run. It therefore has to come after the build.
+      # This is the check the step above cannot perform, and it is also the
+      # check the step below cannot be trusted to perform on its own. The
+      # vendored Yarn 3 builds its audit map keyed by package NAME across every
+      # workspace, so when the snap and the site resolve different versions of
+      # the same package (they do: axios 1.18.0 through the stellar SDK versus
+      # axios 1.12.1 through gatsby), one version wins and is reported as if it
+      # were the snap's. That over-reports today and would under-report the
+      # moment the roles reverse. The script instead asks Yarn for the snap
+      # workspace's own resolution (`yarn info --recursive --virtuals`), walks
+      # only the production edges from the manifest's `dependencies`, posts the
+      # exact `{ name: [versions] }` closure to the npm bulk advisory endpoint,
+      # and fails on any advisory in a module that audits/known-advisories.json
+      # has not dispositioned. It first proves the endpoint still answers with
+      # advisories for a known-vulnerable version, so an empty answer cannot
+      # pass by accident. The audited closure is printed so the run log records
+      # exactly what was checked.
+      - name: Audit the snap's exact production graph
+        run: node scripts/check-snap-graph-advisories.mjs
+
+      # The same graph as Yarn's own audit reports it, gated against the
+      # reviewed allowlist (audits/known-advisories.json).
+      #
+      # Kept alongside the step above for what it verifies that the step above
+      # does not: the claim the allowlist rests on. It greps the built bundle
+      # for string markers from each package the allowlist says is absent, so
+      # "webpack tree-shakes it out" stops being prose in the threat model and
+      # becomes something CI re-derives on every run. It therefore has to come
+      # after the build. Because of the name-keyed audit described above, the
+      # versions Yarn reports here may be another workspace's, which is why the
+      # allowlist is keyed by module rather than by version or advisory.
       #
       # `|| true` catches the audit's non-zero exit when advisories exist; the
       # script does the actual judging. An audit that failed to run leaves an
-      # unparseable report, which the script treats as a failure rather than as
-      # a clean result.
+      # unparseable report, or one without the fields a Yarn report always
+      # carries, which the script treats as a failure rather than as a clean
+      # result.
       - name: Gate transitive production advisories against the allowlist
         run: |
           ( cd packages/snap && \
@@ -184,7 +209,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: yarn
 
       - name: Install dependencies
@@ -199,9 +224,19 @@ jobs:
         # requires the audited npm: GATSBY_SNAP_ORIGIN (gatsby-node.js onPreBuild).
         # Remove once the audited release is published and
         # .env.production carries the pinned npm: origin.
+        #
+        # `gatsby build` always forces NODE_ENV=production, and gatsby-node.js
+        # refuses ALLOW_LOCAL_SNAP outright when the configuration environment
+        # (GATSBY_ACTIVE_ENV, falling back to NODE_ENV) is production, so that
+        # a release build can never be quietly pointed at a local snap.
+        # GATSBY_ACTIVE_ENV=development is what tells it this is a development
+        # configuration being built, which is the only setting under which the
+        # local-snap override is honoured. The job below builds the release
+        # configuration with neither variable set.
         run: yarn workspace site build
         env:
           ALLOW_LOCAL_SNAP: 'true'
+          GATSBY_ACTIVE_ENV: development
 
   release-site:
     name: Build companion dapp in release configuration
@@ -214,7 +249,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: yarn
 
       - name: Install dependencies

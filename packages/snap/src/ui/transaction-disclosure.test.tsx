@@ -258,7 +258,14 @@ describe('balance-change disclosure', () => {
 
   it('shows what leaves the account, marked as a caution', () => {
     const content = renderChanges({
-      changes: [{ asset: 'XLM', amount: '-1.5', rawUnits: false }],
+      changes: [
+        {
+          asset: 'XLM',
+          identity: 'XLM (native)',
+          amount: '-1.5',
+          rawUnits: false,
+        },
+      ],
       partial: false,
     });
     expect(content).toContain('Balance changes for the signing account');
@@ -278,7 +285,14 @@ describe('balance-change disclosure', () => {
 
   it('warns when the summary lost an event', () => {
     const content = renderChanges({
-      changes: [{ asset: 'XLM', amount: '-1', rawUnits: false }],
+      changes: [
+        {
+          asset: 'XLM',
+          identity: 'XLM (native)',
+          amount: '-1',
+          rawUnits: false,
+        },
+      ],
       partial: true,
     });
     expect(content).toContain('Movements may be missing');
@@ -286,7 +300,14 @@ describe('balance-change disclosure', () => {
 
   it('marks an amount whose precision is unknown', () => {
     const content = renderChanges({
-      changes: [{ asset: 'Token CDLZ…CYSC', amount: '-1000', rawUnits: true }],
+      changes: [
+        {
+          asset: 'Token CDLZFC…D3CYSC',
+          identity: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+          amount: '-1000',
+          rawUnits: true,
+        },
+      ],
       partial: false,
     });
     expect(content).toContain('smallest unit');

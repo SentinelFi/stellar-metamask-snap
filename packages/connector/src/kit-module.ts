@@ -72,15 +72,29 @@ export class StellarSnapKitModule {
   /**
    * Kit `signTransaction`.
    *
+   * The option bag is forwarded to the typed client, which applies the same
+   * rules as for a direct caller: `submit` is honoured, and `submitUrl` is
+   * refused with `-3` before the wallet is contacted, because the snap only
+   * submits to its own allowlisted endpoints and a kit user that named
+   * another one must not be left believing it was used.
+   *
    * @param xdr - Base64 transaction envelope XDR.
    * @param opts - Kit option bag.
    * @param opts.networkPassphrase - Expected network passphrase.
    * @param opts.address - Requested signer address.
+   * @param opts.submit - When true, the wallet also submits the signed
+   * transaction.
+   * @param opts.submitUrl - Not supported; any value is rejected with `-3`.
    * @returns The signed envelope and signer address.
    */
   async signTransaction(
     xdr: string,
-    opts?: { networkPassphrase?: string; address?: string },
+    opts?: {
+      networkPassphrase?: string;
+      address?: string;
+      submit?: boolean;
+      submitUrl?: string;
+    },
   ): Promise<{ signedTxXdr: string; signerAddress?: string }> {
     return this.#snap.signTransaction(xdr, opts ?? {});
   }
@@ -106,12 +120,14 @@ export class StellarSnapKitModule {
    *
    * @param message - The message to sign.
    * @param opts - Kit option bag.
+   * @param opts.networkPassphrase - Expected network passphrase; when
+   * present it is checked against the wallet's network.
    * @param opts.address - Requested signer address.
    * @returns The base64 signature and signer address.
    */
   async signMessage(
     message: string,
-    opts?: { address?: string },
+    opts?: { networkPassphrase?: string; address?: string },
   ): Promise<{ signedMessage: string; signerAddress?: string }> {
     return this.#snap.signMessage(message, opts ?? {});
   }

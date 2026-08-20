@@ -41,7 +41,25 @@
     "one goes missing, the bundling or minification behaviour has changed in a way",
     "that may also have disarmed the absence checks, so the script fails rather",
     "than reporting a clean result it can no longer justify. This is what keeps the",
-    "gate honest about its own power."
+    "gate honest about its own power.",
+    "",
+    "WHAT THE YARN AUDIT FEEDING THIS GATE DOES AND DOES NOT MEASURE. The vendored",
+    "Yarn 3 builds its audit map keyed by package NAME across every workspace in the",
+    "monorepo, so when two workspaces resolve different versions of one package,",
+    "a single version wins and is reported as if it were the snap's. Measured on",
+    "this repository: the snap resolves axios 1.18.0 (with follow-redirects 1.16.0",
+    "and form-data 4.0.6) through @stellar/stellar-sdk, the site resolves axios",
+    "1.12.1 through gatsby, and `yarn npm audit` run from packages/snap reports the",
+    "1.12.1 advisories with a path through the stellar SDK. The three entries below",
+    "therefore disposition advisories that may not be the snap's, and the same",
+    "mechanism would under-report if the roles reversed. That is why the entries",
+    "are keyed by module and why this file is not the only gate:",
+    "scripts/check-snap-graph-advisories.mjs computes the snap's exact",
+    "lockfile-resolved production closure from Yarn's own resolution of the",
+    "workspace and audits those versions against the registry directly. Its",
+    "allowlist is this same `modules` map. The yarn-fed gate keeps its distinct job,",
+    "which is to prove through `bundleMarkers` that these packages are absent from",
+    "the artifact that ships, whichever version any workspace resolved."
   ],
   "positiveControls": [
     {

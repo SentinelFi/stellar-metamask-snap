@@ -1,9 +1,14 @@
-import { Address, Asset, scValToNative, xdr } from '@stellar/stellar-sdk';
+import { Address, Asset, scValToNative, xdr } from '@stellar/stellar-sdk/base';
 import { Buffer } from 'buffer';
 
 import { formatTokenAmount } from './token';
 import type { TrackedToken } from '../state';
-import { formatAsset, formatTokenAsset, truncate } from '../ui/format';
+import {
+  formatAsset,
+  formatAssetFull,
+  formatTokenAsset,
+  formatUnknownTokenAsset,
+} from '../ui/format';
 
 /**
  * Decodes the token-movement events a Soroban simulation reports into a net
@@ -36,13 +41,26 @@ const MAX_EVENTS = 100;
 /** Distinct assets shown. Beyond this the summary is marked partial. */
 const MAX_BALANCE_ASSETS = 12;
 
-/** Stellar Asset Contracts always use 7 decimals, like the classic asset. */
-const SAC_DECIMALS = 7;
+/**
+ * Stellar Asset Contracts always use 7 decimals, like the classic asset.
+ * Exported because this is a protocol constant, not a convention: `addToken`
+ * uses it to refuse a verified SAC whose endpoint-reported decimals disagree,
+ * since only a lying endpoint can produce that answer.
+ */
+export const SAC_DECIMALS = 7;
 
 /** A net balance change for one asset. */
 export type BalanceChange = {
   /** Display label: `XLM`, `USDC (GA23…4XYZ)`, or `Token CDLZ…CYSC`. */
   asset: string;
+  /**
+   * The complete, lossless identity behind the label: `XLM (native)`, the
+   * full `CODE:ISSUER` of a verified Stellar Asset Contract, or the full
+   * contract address. The label shortens addresses for the row, and a
+   * shortened address is what a lookalike contract is ground to match, so
+   * the dialog offers this alongside for the user to compare in full.
+   */
+  identity: string;
   /** Signed net change, formatted at the asset's precision. */
   amount: string;
   /**
@@ -157,7 +175,11 @@ function toMovement(
 }
 
 /** How an asset is labelled and scaled in the summary. */
-type AssetIdentity = { label: string; decimals: number | null };
+type AssetIdentity = {
+  label: string;
+  identity: string;
+  decimals: number | null;
+};
 
 /**
  * Resolves the asset label and precision for an event.
@@ -202,7 +224,11 @@ function resolveAsset(
     // name to every later contract claiming the same one, which is precisely
     // the impersonation this check exists to stop.
     if (candidate && candidate.contract === contractId) {
-      return { label: candidate.label, decimals: candidate.decimals };
+      return {
+        label: candidate.label,
+        identity: candidate.identity,
+        decimals: candidate.decimals,
+      };
     }
   }
 
@@ -210,11 +236,16 @@ function resolveAsset(
   if (tracked) {
     return {
       label: formatTokenAsset(tracked.symbol, tracked.contractId),
+      identity: tracked.contractId,
       decimals: tracked.decimals,
     };
   }
 
-  return { label: `Token ${truncate(contractId, 4)}`, decimals: null };
+  return {
+    label: formatUnknownTokenAsset(contractId),
+    identity: contractId,
+    decimals: null,
+  };
 }
 
 /**
@@ -222,6 +253,40 @@ function resolveAsset(
  * entitled to use it on this network.
  */
 type SacIdentity = AssetIdentity & { contract: string };
+
+/**
+ * The classic asset identity a contract is entitled to, when it is that
+ * asset's Stellar Asset Contract.
+ *
+ * A token contract's self-reported `name()` is as forgeable as its symbol,
+ * so the name alone proves nothing. What it does give is a claim that can be
+ * checked: if the name parses as `CODE:ISSUER` (or `native`) and the Stellar
+ * Asset Contract address the snap derives for that asset on this network is
+ * the contract in question, then the contract is that asset by construction,
+ * and the dialog can say so. Any other contract gets null, and its symbol
+ * stays marked as unverified.
+ *
+ * @param name - The contract-reported name, or null when it could not be read.
+ * @param contractId - The contract being added.
+ * @param networkPassphrase - The active network passphrase, which the SAC
+ * derivation is bound to.
+ * @returns `XLM (native)` or the full `CODE:ISSUER`, or null when the
+ * contract is not the Stellar Asset Contract of the asset it names.
+ */
+export function verifiedStellarAssetIdentity(
+  name: string | null,
+  contractId: string,
+  networkPassphrase: string,
+): string | null {
+  if (name === null) {
+    return null;
+  }
+  const candidate = deriveSacIdentity(name, networkPassphrase);
+  if (candidate && candidate.contract === contractId) {
+    return candidate.identity;
+  }
+  return null;
+}
 
 /**
  * Derives what a claimed SAC asset name would look like, and which contract
@@ -251,6 +316,7 @@ function deriveSacIdentity(
     }
     return {
       label: formatAsset(asset),
+      identity: formatAssetFull(asset) ?? 'XLM (native)',
       decimals: SAC_DECIMALS,
       contract: asset.contractId(networkPassphrase),
     };
@@ -260,7 +326,12 @@ function deriveSacIdentity(
 }
 
 /** Accumulator for one asset's net movement. */
-type Tally = { label: string; decimals: number | null; delta: bigint };
+type Tally = {
+  label: string;
+  identity: string;
+  decimals: number | null;
+  delta: bigint;
+};
 
 /** A decoded contract event, reduced to the fields this module reads. */
 type DecodedEvent = {
@@ -403,14 +474,14 @@ export function summarizeBalanceChanges(
       trailing && trailing.switch().name === 'scvString'
         ? trailing.str().toString()
         : null;
-    const { label, decimals } = resolveAsset(
+    const { label, identity, decimals } = resolveAsset(
       assetTopic,
       contractId,
       networkPassphrase,
       tokens,
       sacCache,
     );
-    tallies.set(contractId, { label, decimals, delta });
+    tallies.set(contractId, { label, identity, decimals, delta });
   }
 
   // Outgoing first: what the transaction takes is the part a user needs to
@@ -419,8 +490,9 @@ export function summarizeBalanceChanges(
   const changes = [...tallies.values()]
     .filter((tally) => tally.delta !== 0n)
     .sort((left, right) => Number(left.delta > 0n) - Number(right.delta > 0n))
-    .map(({ label, decimals, delta }) => ({
+    .map(({ label, identity, decimals, delta }) => ({
       asset: label,
+      identity,
       amount:
         delta > 0n
           ? `+${formatTokenAmount(delta, decimals ?? 0)}`

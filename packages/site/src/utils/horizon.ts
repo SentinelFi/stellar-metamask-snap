@@ -4,9 +4,10 @@
  *
  * Horizon is the one network dependency this page has, and its responses are
  * endpoint-controlled input, so the rules the snap applies to the same data
- * apply here too: a bounded timeout on every request, redirects refused so a
- * 307 cannot replay the query somewhere else, and every consumed field
- * type-checked before it reaches the UI rather than spread into it. React
+ * apply here too: a bounded timeout on every request, a cap on the size of
+ * the body it will read, redirects refused so a 307 cannot replay the query
+ * somewhere else, and every consumed field type-checked before it reaches
+ * the UI rather than spread into it. React
  * escapes text, so this is not about script injection; it is about a missing
  * or wrong-typed field rendering as `undefined` in a row that a user reads as
  * a record of their own money.
@@ -19,6 +20,16 @@
 
 /** Bound every request so a slow endpoint cannot hang the page. */
 const REQUEST_TIMEOUT_MS = 10000;
+
+/**
+ * Upper bound on a Horizon response body. The body is endpoint-controlled
+ * input, and a page that buffers whatever it is sent can be made to allocate
+ * without limit; the only cost is this tab, but it is cheap to refuse. The
+ * largest legitimate response here (twenty operation records with their
+ * transactions joined) stays well under 100 KiB, so 1 MiB is generous. The
+ * snap applies the same bound to its own reads of the same hosts.
+ */
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 /** Rows requested from Horizon, and the most the table will render. */
 export const HISTORY_LIMIT = 20;
@@ -41,7 +52,57 @@ function str(source: Record<string, unknown>, key: string): string | null {
 }
 
 /**
+ * Reads a response body as text without letting it exceed the byte cap.
+ *
+ * The declared `Content-Length` is checked first, then the body is consumed
+ * incrementally and abandoned the moment the running total passes the cap,
+ * so a server that omits or understates the header cannot have the whole
+ * body buffered before the cap is applied. When the runtime exposes no body
+ * stream the buffered fallback still refuses to hand oversized data onward,
+ * which is the most it can do.
+ *
+ * @param response - The fetch response.
+ * @returns The body text, or null when it exceeds the cap.
+ */
+async function readTextBounded(response: Response): Promise<string | null> {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const bytes = await response.arrayBuffer();
+    return bytes.byteLength > MAX_RESPONSE_BYTES
+      ? null
+      : new TextDecoder().decode(bytes);
+  }
+
+  const decoder = new TextDecoder();
+  let text = '';
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    received += value.byteLength;
+    if (received > MAX_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+/**
  * Performs a bounded GET and parses JSON.
+ *
+ * Bounded in time (the abort timer spans the body read, not only the
+ * headers) and in size (see `readTextBounded`); either bound being exceeded
+ * reads as a failed request.
  *
  * @param url - The absolute URL.
  * @returns The parsed body, or null on any failure (including 404).
@@ -58,7 +119,8 @@ async function getJson(url: string): Promise<unknown | null> {
     if (!response.ok) {
       return null;
     }
-    return await response.json();
+    const text = await readTextBounded(response);
+    return text === null ? null : JSON.parse(text);
   } catch {
     return null;
   } finally {
@@ -184,6 +246,10 @@ function toEntry(
     type,
     label: LABELS[type] ?? type.replace(/_/gu, ' '),
     createdAt,
+    // Kept as reported (bounded, like every other field) so the row can show
+    // it as text; whether it is a well-formed hash is decided where it would
+    // become a link (`explorerTxUrl`), which refuses anything that is not 64
+    // hex characters rather than interpolating it into an explorer URL.
     hash: str(record, 'transaction_hash'),
     // Absent means successful on the default (non-failed) feed; only an
     // explicit `false` marks a failure.
