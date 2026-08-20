@@ -96,7 +96,7 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 
 ## Upstream contribution (file early — external review latency)
 
-- [x] **Filed:** [MetaMask/snaps#4097](https://github.com/MetaMask/snaps/pull/4097) — adds `{ path: ['m', "44'", "148'"], curve: 'ed25519', name: 'Stellar' }` to `packages/snaps-utils/src/derivation-paths.ts` (+ unit test) so the install prompt says "Manage **Stellar** accounts" instead of "Unknown network". Cosmetic but trust-relevant; see [PHASE-0.md](PHASE-0.md) for the root-cause analysis. **Track review; should land before allowlisting.**
+- [x] **Merged 2026-08-17:** [MetaMask/snaps#4097](https://github.com/MetaMask/snaps/pull/4097) — adds `{ path: ['m', "44'", "148'"], curve: 'ed25519', name: 'Stellar' }` to `packages/snaps-utils/src/derivation-paths.ts` (+ unit test) so the install prompt says "Manage **Stellar** accounts" instead of "Unknown network". Cosmetic but trust-relevant; see [PHASE-0.md](PHASE-0.md) for the root-cause analysis. Landed as commit `22be130`; ships with the next `@metamask/snaps-utils` release and reaches users when the MetaMask extension picks that release up, so re-verify the install prompt label in a current MetaMask before the Directory submission screenshots.
 
 ## Phase 5 — Audit & distribution — ✅ PREPARATION DONE 2026-08-10 (notes: [PHASE-5.md](PHASE-5.md)); external steps pending
 

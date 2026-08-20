@@ -123,7 +123,7 @@ Cosmetic only — it does not affect derivation, security, or functionality — 
 ## Outstanding before Phase 1 sign-off
 
 - [x] **Cross-wallet address confirmation — ✅ CONFIRMED 2026-08-10.** The throwaway Flask recovery phrase was imported into **Freighter** (SDF's reference wallet, independent BIP-39 + SLIP-10 implementation, in an isolated browser profile): Freighter derived `GCI7TJ7M62U6T3CAINS3NVONXSPJEGQINP6FR25JHXCC4WCH2HHVHU57` — **identical to the snap's address from real MetaMask Flask**. Combined with the SEP-5 vector tests (simulator) and the fixed-seed SES check, the derivation chain is now verified end to end on production software with no remaining caveats: same mnemonic → same account in MetaMask-via-snap and across the SEP-5 wallet ecosystem.
-- [x] ~~File the upstream `derivation-paths.ts` PR for the "Stellar" label~~ **Filed 2026-08-10: [MetaMask/snaps#4097](https://github.com/MetaMask/snaps/pull/4097)** (in review).
+- [x] ~~File the upstream `derivation-paths.ts` PR for the "Stellar" label~~ **Filed 2026-08-10, merged 2026-08-17: [MetaMask/snaps#4097](https://github.com/MetaMask/snaps/pull/4097)** (commit `22be130`; reaches users with the next `@metamask/snaps-utils` release once the extension picks it up).
 - [x] ~~Add a snap icon (SVG)~~ **Done** — [packages/snap/images/icon.svg](../packages/snap/images/icon.svg): the Stellar slashed-circle mark recreated as original vector art in a distinct gold-on-navy colorway (the press kit ships no SVG of the network mark), wired into the manifest `iconPath` and npm `files`.
 - [x] ~~Companion `packages/site` is still the stock template~~ **Done:** rebuilt on the connector in Phases 1 and 3 (see [PHASE-1.md](PHASE-1.md), [PHASE-3.md](PHASE-3.md)).
 
