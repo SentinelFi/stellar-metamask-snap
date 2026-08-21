@@ -1741,7 +1741,7 @@ function renderSimulation(
         // An absent estimate is not a zero estimate: rendering it as `0 XLM`
         // would claim the call is free, which nothing supports.
         <Row label="Estimated resource fee" variant="warning">
-          <Text>unavailable (not reported by the endpoint)</Text>
+          <Text>unavailable (no usable estimate from the endpoint)</Text>
         </Row>
       ) : (
         <Row label="Estimated resource fee">

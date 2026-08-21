@@ -922,13 +922,25 @@ const MAX_SIM_RESULTS = 10;
 const MAX_SIM_AUTH_PER_RESULT = 20;
 const MAX_SIM_AUTH_SIGNERS = 20;
 
+/**
+ * Digit cap on the endpoint-reported resource fee. On the wire a fee is an
+ * int64 stroop count, which is at most 19 decimal digits; the transport limit
+ * on the response body is a megabyte, so without a field-level bound a
+ * hostile endpoint could hand the dialog a near-megabyte "number" to convert
+ * and render. Anything longer than an int64 can be is not a fee estimate and
+ * is shown as unavailable instead.
+ */
+const MAX_RESOURCE_FEE_DIGITS = 19;
+
 export type SimulationSummary =
   | {
       ok: true;
       /**
        * Estimated resource fee in stroops, or null when the endpoint did not
-       * report one. Null rather than `'0'`: a missing estimate rendered as
-       * zero reads as "free", which is a claim nothing supports.
+       * report one (or reported a value no int64 fee could be, which is the
+       * same thing: no usable estimate). Null rather than `'0'`: a missing
+       * estimate rendered as zero reads as "free", which is a claim nothing
+       * supports.
        */
       minResourceFee: string | null;
       /** Addresses that must sign address-credential auth entries. */
@@ -1055,7 +1067,11 @@ export async function simulateForDisplay(
 
   return {
     ok: true,
-    minResourceFee: response.minResourceFee ?? null,
+    minResourceFee:
+      response.minResourceFee !== undefined &&
+      response.minResourceFee.length <= MAX_RESOURCE_FEE_DIGITS
+        ? response.minResourceFee
+        : null,
     authSigners,
     restoreRequired: Boolean(response.restorePreamble),
     ...(balanceChanges === undefined ? {} : { balanceChanges }),

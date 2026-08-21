@@ -156,7 +156,9 @@ export class StellarSnap {
    * under `snapId`. Set by `connect()` and `isInstalled()` when they verify
    * it, or by the lazy check in `invoke()` otherwise; cleared whenever a
    * check fails, so the next call re-reads `wallet_getSnaps` rather than
-   * trusting a stale answer. Always true for `local:` IDs, which carry no
+   * trusting a stale answer, and dropped before every signing or
+   * dialog-confirmed call so a snap updated mid-session is re-compared (see
+   * `#invokeSensitive`). Always true for `local:` IDs, which carry no
    * meaningful version.
    */
   #versionVerified: boolean;
@@ -363,9 +365,11 @@ export class StellarSnap {
    * unchanged. Nothing is remembered for that outcome either, so the check
    * simply repeats until the snap is installed and compared.
    *
-   * The memo is per client instance and is not re-read while the page is
-   * open: a user who updates the snap mid-session is the one case it does
-   * not see, and `connect()` re-verifies whenever a dapp asks it to.
+   * The memo is per client instance and is trusted only by the silent read
+   * methods: signing and the dialog-confirmed mutations drop it first (see
+   * {@link #invokeSensitive}), so a snap updated mid-session is re-compared
+   * against the pin before any of them proceeds, and `connect()` re-verifies
+   * whenever a dapp asks it to.
    *
    * @param provider - The resolved provider.
    */
@@ -495,12 +499,43 @@ export class StellarSnap {
   }
 
   /**
+   * Like {@link #invoke}, but re-verifies the pinned version first instead of
+   * trusting the per-page memo.
+   *
+   * The memo exists so silent reads (`getAddress`, `getNetwork`) cost one
+   * `wallet_getSnaps` per page, not one per call. That trade does not hold
+   * for signing and the dialog-confirmed mutations: MetaMask can update the
+   * snap under the same npm ID while the page stays open, and a request that
+   * produces a signature or changes wallet state must be compared against the
+   * pin at the moment it is made, not at the moment the page loaded. Dropping
+   * the memo here makes `#ensurePinnedVersion` read `wallet_getSnaps` again;
+   * one extra provider read on a call that already waits for a user dialog is
+   * noise, and a mid-session update fails closed with the same version-
+   * mismatch error `connect()` throws.
+   *
+   * @param method - The snap method name.
+   * @param params - Optional params object.
+   * @param validateResult - Structural validator for the expected shape.
+   * @returns The validated method result.
+   */
+  async #invokeSensitive<Type>(
+    method: string,
+    params: Record<string, unknown> | undefined,
+    validateResult: (value: unknown) => value is Type,
+  ): Promise<Type> {
+    if (this.snapId.startsWith('npm:')) {
+      this.#versionVerified = false;
+    }
+    return this.#invoke(method, params, validateResult);
+  }
+
+  /**
    * SEP-43 `requestAccess`: connect dialog on first use.
    *
    * @returns The wallet address.
    */
   async requestAccess(): Promise<GetAddressResult> {
-    return this.#invoke('requestAccess', undefined, isAddressResult);
+    return this.#invokeSensitive('requestAccess', undefined, isAddressResult);
   }
 
   /**
@@ -537,7 +572,11 @@ export class StellarSnap {
    * @returns The new network details.
    */
   async setNetwork(network: NetworkName): Promise<NetworkDetailsResult> {
-    return this.#invoke('setNetwork', { network }, isNetworkDetailsResult);
+    return this.#invokeSensitive(
+      'setNetwork',
+      { network },
+      isNetworkDetailsResult,
+    );
   }
 
   /**
@@ -571,7 +610,7 @@ export class StellarSnap {
     // position. Option bags are routinely forwarded from other layers (a
     // kit, a facade, a dapp's own config), and "the payload I named wins"
     // is the only rule a caller can reason about.
-    return this.#invoke(
+    return this.#invokeSensitive(
       'signTransaction',
       { ...options, xdr },
       isSignTransactionResult,
@@ -589,7 +628,7 @@ export class StellarSnap {
     authEntry: string,
     options: SignAuthEntryOptions = {},
   ): Promise<SignAuthEntryResult> {
-    return this.#invoke(
+    return this.#invokeSensitive(
       'signAuthEntry',
       { ...options, authEntry },
       isSignAuthEntryResult,
@@ -609,7 +648,7 @@ export class StellarSnap {
     message: string,
     options: SignMessageOptions = {},
   ): Promise<SignMessageResult> {
-    return this.#invoke(
+    return this.#invokeSensitive(
       'signMessage',
       { ...options, message },
       isSignMessageResult,
@@ -636,7 +675,7 @@ export class StellarSnap {
    * @returns The new active account.
    */
   async setActiveAccount(index: number): Promise<SetActiveAccountResult> {
-    return this.#invoke(
+    return this.#invokeSensitive(
       'setActiveAccount',
       { index },
       isSetActiveAccountResult,
@@ -682,7 +721,7 @@ export class StellarSnap {
     contractId: string,
     networkPassphrase?: string,
   ): Promise<AddTokenResult> {
-    return this.#invoke(
+    return this.#invokeSensitive(
       'addToken',
       {
         contractId,

@@ -167,7 +167,11 @@ export const DevBench = () => {
         .build()
         .toXDR();
 
-      return client.signTransaction(envelope);
+      return client.signTransaction(envelope, {
+        // Stated for the same reason the production flows state it: the
+        // wallet requires the caller's network on PUBLIC before signing.
+        networkPassphrase: network.networkPassphrase,
+      });
     });
 
   return (

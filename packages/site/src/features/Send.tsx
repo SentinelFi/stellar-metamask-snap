@@ -158,7 +158,13 @@ export const Send = () => {
     const envelope = builder.setTimeout(TX_TIMEOUT_SECONDS).build().toXDR();
 
     const result = await run(async (client) =>
-      client.signTransaction(envelope, { submit: true }),
+      client.signTransaction(envelope, {
+        submit: true,
+        // The wallet requires the caller to state the network on PUBLIC, so
+        // both sides can confirm they mean the same one before a mainnet
+        // signature is produced.
+        networkPassphrase: network.networkPassphrase,
+      }),
     );
     if (result) {
       setSubmission({

@@ -364,7 +364,9 @@ describe('simulation provenance', () => {
       tx: buildTx([PAYMENT]),
       simulation: { ...SIMULATION, minResourceFee: null },
     });
-    expect(content).toContain('unavailable (not reported by the endpoint)');
+    expect(content).toContain(
+      'unavailable (no usable estimate from the endpoint)',
+    );
     expect(content).not.toContain('"0 XLM"');
   });
 

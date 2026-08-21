@@ -752,6 +752,42 @@ describe('signing handlers: fail-closed gates', () => {
       );
       expect(dialogs).toHaveLength(1);
     });
+
+    it('shows the warning and exact form for a message with line breaks', async () => {
+      // `containsHiddenCharacters` deliberately tolerates tabs and line
+      // breaks, so gating the exact view on it let a site put field-like
+      // lines into a message with no warning and no escaped representation
+      // anywhere. The gate is the same lossy-inline condition `manageData`
+      // uses.
+      await signMessage(ORIGIN, {
+        message: 'amount: 1\nrecipient: mallory',
+      });
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).toContain('Display differs from signed text');
+      expect(dialog).toContain('exact, special characters escaped');
+      expect(dialog).toContain('amount: 1\\\\u{a}recipient: mallory');
+    });
+
+    it('shows the warning and exact form for a tab', async () => {
+      await signMessage(ORIGIN, { message: 'one\ttwo' });
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).toContain('Display differs from signed text');
+      expect(dialog).toContain('one\\\\u{9}two');
+    });
+
+    it('still warns for hidden and direction-altering characters', async () => {
+      await signMessage(ORIGIN, { message: 'pay 1‮001' });
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).toContain('Display differs from signed text');
+      expect(dialog).toContain('\\\\u{202e}');
+    });
+
+    it('shows no warning or exact form for a plain message', async () => {
+      await signMessage(ORIGIN, { message: 'hello world' });
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).not.toContain('Display differs from signed text');
+      expect(dialog).not.toContain('exact, special characters escaped');
+    });
   });
 
   describe('signTransaction: submission integrity', () => {

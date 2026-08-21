@@ -52,6 +52,18 @@ function str(source: Record<string, unknown>, key: string): string | null {
 }
 
 /**
+ * Abandons a response body that will not be read, so the browser can release
+ * the connection and stream resources instead of keeping them alive until
+ * garbage collection. Best effort: a body that is locked or already consumed
+ * has nothing to release.
+ *
+ * @param response - The fetch response whose body is being discarded.
+ */
+function discardBody(response: Response): void {
+  response.body?.cancel().catch(() => undefined);
+}
+
+/**
  * Reads a response body as text without letting it exceed the byte cap.
  *
  * The declared `Content-Length` is checked first, then the body is consumed
@@ -117,6 +129,7 @@ async function getJson(url: string): Promise<unknown | null> {
       signal: controller.signal,
     });
     if (!response.ok) {
+      discardBody(response);
       return null;
     }
     const text = await readTextBounded(response);
@@ -156,6 +169,9 @@ export async function accountExists(
         signal: controller.signal,
       },
     );
+    // Only the status is consumed on any of these paths, so the body is
+    // released on all of them.
+    discardBody(response);
     if (response.status === 404) {
       return false;
     }

@@ -378,8 +378,13 @@ export type SignMessageDialogProps = {
   /** The SEP-0005 index of the signing account. */
   accountIndex: number;
   message: string;
-  /** The message contains control/bidi characters that can spoof display. */
-  hasHiddenCharacters: boolean;
+  /**
+   * The message renders differently from the exact bytes being signed:
+   * hidden or direction-altering characters, but also ordinary tabs, line
+   * breaks, and collapsible spacing, any of which can make the preview read
+   * as something other than what is signed (`isLossyInline`).
+   */
+  messageIsLossy: boolean;
 };
 
 /**
@@ -401,8 +406,9 @@ export type SignMessageDialogProps = {
  * @param props.address - The signing account's Stellar address.
  * @param props.accountIndex - The signing account's SEP-0005 index.
  * @param props.message - The message to sign.
- * @param props.hasHiddenCharacters - Whether the message contains hidden
- * characters (the exact bytes are signed either way; the user is warned).
+ * @param props.messageIsLossy - Whether the message renders differently from
+ * the exact bytes signed (the exact bytes are signed either way; the user is
+ * warned and shown an escaped form).
  * @returns The dialog content.
  */
 export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
@@ -411,7 +417,7 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
   address,
   accountIndex,
   message,
-  hasHiddenCharacters,
+  messageIsLossy,
 }) => (
   <Box>
     <Heading>Sign message</Heading>
@@ -436,11 +442,11 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
         </Text>
       </Banner>
     )}
-    {hasHiddenCharacters ? (
-      <Banner title="Hidden characters" severity="warning">
+    {messageIsLossy ? (
+      <Banner title="Display differs from signed text" severity="warning">
         <Text>
-          This message contains invisible or direction-altering characters —
-          what you read here may not be what the site intends. Compare the exact
+          This message contains line breaks, tabs, or invisible characters —
+          what you read here may not be exactly what you sign. Compare the exact
           escaped form below. Only sign if you trust the requesting site.
         </Text>
       </Banner>
@@ -448,7 +454,7 @@ export const SignMessageDialog: SnapComponent<SignMessageDialogProps> = ({
     <Section>
       <Text>Message</Text>
       <Copyable value={message} />
-      {hasHiddenCharacters ? (
+      {messageIsLossy ? (
         // The block above shows (and copies) the raw message, in which
         // hidden characters stay hidden; this one makes every such code
         // point visible so the user can see exactly what they sign.

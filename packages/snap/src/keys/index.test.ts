@@ -158,21 +158,25 @@ describe('key derivation', () => {
       }
     });
 
-    it('performs no derivation for a repeated unowned address', async () => {
+    it('performs no derivation sweep for a repeated unowned address', async () => {
       // An origin can submit a valid-looking address the wallet does not hold
       // before any dialog or throttle applies. Resolution must not sweep and
-      // derive every revealed account each time it does.
+      // derive every revealed account each time it does: each repeat may cost
+      // exactly one parent-node fetch (which is how a changed secret recovery
+      // phrase is noticed before state is read), never one per revealed
+      // account.
       await expect(resolveSigningKeypair(FOREIGN_ADDRESS)).rejects.toThrow(
         'Unknown address',
       );
       const afterFirst = entropyRequests;
 
-      for (let attempt = 0; attempt < 20; attempt++) {
+      const attempts = 20;
+      for (let attempt = 0; attempt < attempts; attempt++) {
         await expect(resolveSigningKeypair(FOREIGN_ADDRESS)).rejects.toThrow(
           'Unknown address',
         );
       }
-      expect(entropyRequests).toBe(afterFirst);
+      expect(entropyRequests).toBe(afterFirst + attempts);
     });
 
     it('derives the entropy node once per resolution', async () => {

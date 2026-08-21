@@ -154,6 +154,20 @@ jobs:
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
 
+      # The connector publishes only `dist/`, and `dist/` is gitignored, so
+      # neither the cleanliness check below nor the snap tarball comparison
+      # sees it. Its seal is this digest, taken now, before any further step
+      # (typecheck, tests, SBOM) executes third-party code with write access
+      # to the checkout, and re-checked immediately before packing: a tool
+      # that alters the connector's build output after this point fails the
+      # release instead of being packed and published.
+      - name: Record the connector build-output digest
+        id: connector-build
+        run: |
+          DIST_SHA256="$( ( cd packages/connector && find dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) | sha256sum | cut -d' ' -f1 )"
+          echo "dist-sha256=$DIST_SHA256" >> "$GITHUB_OUTPUT"
+          echo "connector dist digest: $DIST_SHA256"
+
       # After the connector build: the site resolves connector types from
       # `dist/`. See the fuller note on the same step in ci.yml.
       - name: Typecheck (all workspaces)
@@ -213,7 +227,9 @@ jobs:
 
       # Pack both tarballs, compare the snap tarball's sealed files against
       # the committed ones (the manifest and icon against HEAD, the bundle
-      # against the file `mm-snap manifest` just validated), and record each
+      # against the file `mm-snap manifest` just validated), compare the
+      # connector tarball's contents against the build output whose digest
+      # was recorded before the post-build tooling ran, and record each
       # tarball's digest as a job output for the publish job to check.
       #
       # `prepack` runs scripts/check-publish-env.mjs, which refuses to pack
@@ -226,6 +242,7 @@ jobs:
         id: pack
         env:
           ALLOW_UNSIGNED_PACK: '1'
+          CONNECTOR_DIST_SHA256: ${{ steps.connector-build.outputs.dist-sha256 }}
         run: |
           tarball_name() {
             node -p "const p = require('./packages/$1/package.json'); p.name.replace(/^@/u, '').replace('/', '-') + '-' + p.version + '.tgz'"
@@ -243,6 +260,41 @@ jobs:
           tar -xOzf "$SNAP_TGZ" package/images/icon.svg | cmp - "$RUNNER_TEMP/icon.committed.svg"
           tar -xOzf "$SNAP_TGZ" package/dist/bundle.js | cmp - packages/snap/dist/bundle.js
           echo "Snap tarball contents match the committed manifest, the committed icon, and the validated bundle."
+
+          # Connector seal. First re-establish that `dist/` on disk is still
+          # the tree the build step produced (the digest predates every
+          # later step that executes third-party code), then byte-compare
+          # what was actually packed against that tree: the file sets must
+          # be identical, every dist entry must match, nothing beyond dist
+          # and the three files npm always includes may appear, and the
+          # packed package.json must be the committed one.
+          test -n "$CONNECTOR_DIST_SHA256"
+          DIST_SHA256_NOW="$( ( cd packages/connector && find dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) | sha256sum | cut -d' ' -f1 )"
+          if [ "$DIST_SHA256_NOW" != "$CONNECTOR_DIST_SHA256" ]; then
+            echo "packages/connector/dist changed after its verified build (recorded $CONNECTOR_DIST_SHA256, found $DIST_SHA256_NOW)"
+            exit 1
+          fi
+          EXTRACT="$RUNNER_TEMP/connector-package"
+          mkdir "$EXTRACT"
+          tar -xzf "$CONNECTOR_TGZ" -C "$EXTRACT"
+          ( cd packages/connector && find dist -type f | LC_ALL=C sort ) > "$RUNNER_TEMP/dist.built"
+          ( cd "$EXTRACT/package" && find dist -type f | LC_ALL=C sort ) > "$RUNNER_TEMP/dist.packed"
+          # An empty file list would make every comparison below pass
+          # vacuously; a connector with no build output is not sealable.
+          test -s "$RUNNER_TEMP/dist.built"
+          diff -u "$RUNNER_TEMP/dist.built" "$RUNNER_TEMP/dist.packed"
+          while IFS= read -r FILE; do
+            cmp "packages/connector/$FILE" "$EXTRACT/package/$FILE"
+          done < "$RUNNER_TEMP/dist.built"
+          UNEXPECTED="$( ( cd "$EXTRACT/package" && find . -type f | sed 's|^\./||' ) | grep -v '^dist/' | grep -vxF -e package.json -e README.md -e LICENSE || true )"
+          if [ -n "$UNEXPECTED" ]; then
+            echo "Unexpected files in the connector tarball:"
+            echo "$UNEXPECTED"
+            exit 1
+          fi
+          git show HEAD:packages/connector/package.json > "$RUNNER_TEMP/connector-package.committed.json"
+          cmp "$RUNNER_TEMP/connector-package.committed.json" "$EXTRACT/package/package.json"
+          echo "Connector tarball contents match the verified build output and the committed manifest."
 
           SNAP_SHA256="$(sha256sum "$SNAP_TGZ" | cut -d' ' -f1)"
           CONNECTOR_SHA256="$(sha256sum "$CONNECTOR_TGZ" | cut -d' ' -f1)"

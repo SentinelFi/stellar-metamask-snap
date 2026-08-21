@@ -54,7 +54,7 @@ import {
   simulateForDisplay,
 } from '../stellar/soroban';
 import { SignAuthEntryDialog, SignMessageDialog } from '../ui/dialogs';
-import { containsHiddenCharacters } from '../ui/format';
+import { isLossyInline } from '../ui/format';
 import {
   buildSignTransactionDialog,
   findUndisplayableOperation,
@@ -802,7 +802,7 @@ export async function signMessage(
           address={signerAddress}
           accountIndex={accountIndex}
           message={request.message}
-          hasHiddenCharacters={containsHiddenCharacters(request.message)}
+          messageIsLossy={isLossyInline(request.message)}
         />
       ),
     },

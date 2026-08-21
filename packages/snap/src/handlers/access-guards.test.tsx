@@ -70,6 +70,14 @@ const ADDRESS_1 = 'GBAW5XGWORWVFE2XTJYDTLDHXTY2Q2MO73HYCGB3XMFMQ562Q2W2GJQX';
 /** An address this wallet does not hold (SEP-0005 vector 2, account 0). */
 const FOREIGN = 'GC3MMSXBWHL6CPOAVERSJITX7BH76YU252WGLUOM5CJX3E7UCYZBTPJQ';
 
+/** Official SEP-0005 test vector 2, for the phrase-change tests. */
+const SEP5_MNEMONIC_2 =
+  'resource asthma orphan phone ice canvas fire useful arch jewel impose vague theory cushion top';
+
+/** Account 0 of {@link SEP5_MNEMONIC_2}. */
+const PHRASE_2_ADDRESS_0 =
+  'GAVXVW5MCK7Q66RIBWZZKZEDQTRXWCZUP4DIIFXCCENGW2P6W4OA34RH';
+
 const CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 const ORIGIN = 'https://dapp.example';
 
@@ -239,6 +247,31 @@ function captureStateWrites(): StateWrite[] {
     return real(args);
   };
   return writes;
+}
+
+/**
+ * Makes the mocked `snap_getBip32Entropy` answer with the subtree for
+ * {@link SEP5_MNEMONIC_2} from now on, without resetting any module cache:
+ * the case where MetaMask's primary secret recovery phrase changes while the
+ * snap's execution context (and everything it has latched) stays warm.
+ * `afterEach` deletes the global, so there is nothing to restore.
+ */
+async function swapEntropy(): Promise<void> {
+  const entropy = await SLIP10Node.fromDerivationPath({
+    derivationPath: [`bip39:${SEP5_MNEMONIC_2}`, `slip10:44'`, `slip10:148'`],
+    curve: 'ed25519',
+  });
+  const host = globalThis as unknown as {
+    snap: { request: (args: RequestArgs) => Promise<unknown> };
+  };
+  const real = host.snap.request;
+  host.snap.request = async (args: RequestArgs) => {
+    if (args.method === 'snap_getBip32Entropy') {
+      entropyFetches += 1;
+      return entropy.toJSON();
+    }
+    return real(args);
+  };
 }
 
 /**
@@ -627,6 +660,69 @@ describe('connection gate and account resolution', () => {
       expect(await getBalances(ORIGIN, {})).toMatchObject({
         address: ADDRESS_0,
       });
+    });
+  });
+
+  describe('a phrase change within one execution context', () => {
+    /*
+     * The tests above change the phrase *between* execution contexts: the
+     * store carries another fingerprint and the first derivation of a fresh
+     * context notices. MetaMask can also change its primary secret recovery
+     * phrase while a context stays warm, after the binding has already been
+     * verified once. That must not be a quieter case: the verification is
+     * per-phrase, not per-context, so the next grant read has to re-derive,
+     * notice the new fingerprint, and reset the old phrase's grants and
+     * account registry before anything is answered from them.
+     */
+
+    it('clears grants recorded under the previous phrase', async () => {
+      stored = stateV2({ origins: CONNECTED });
+
+      // Establish and verify the binding for the first phrase.
+      expect(await getAddress(ORIGIN)).toStrictEqual({ address: ADDRESS_0 });
+
+      await swapEntropy();
+
+      // The very next grant-gated call observes the change: the grant from
+      // the old wallet is reset, not answered with the new wallet's address.
+      expect(await getAddress(ORIGIN)).toStrictEqual({ address: '' });
+      expect(stored).toMatchObject({
+        origins: {},
+        resetNotice: 'phrase-changed',
+      });
+    });
+
+    it('refuses connected methods after the change', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      expect(await assertConnected(ORIGIN)).toBeUndefined();
+
+      await swapEntropy();
+
+      await expect(
+        setNetwork(ORIGIN, { network: 'FUTURENET' }),
+      ).rejects.toThrow('Origin is not connected');
+      expect(dialogs).toStrictEqual([]);
+    });
+
+    it('resolves signing against the reset state, not the old snapshot', async () => {
+      stored = stateV2({
+        origins: CONNECTED,
+        accounts: [0, 1],
+        activeAccount: 1,
+      });
+      const first = await resolveSigningKeypair();
+      expect(first.index).toBe(1);
+      expect(first.keypair.publicKey()).toBe(ADDRESS_1);
+
+      await swapEntropy();
+
+      // The old registry named index 1 as active; the reset discards that
+      // selection, so cold signing must present the new wallet's account 0
+      // rather than deriving the stale index under the new phrase.
+      const second = await resolveSigningKeypair();
+      expect(second.index).toBe(0);
+      expect(second.keypair.publicKey()).toBe(PHRASE_2_ADDRESS_0);
+      expect(stored).toMatchObject({ activeAccount: 0, accounts: [0] });
     });
   });
 

@@ -43,6 +43,17 @@ let contextFingerprint: string | null = null;
 let bindingReconciliation: Promise<void> | null = null;
 
 /**
+ * The fingerprint {@link bindingReconciliation} was started for, or null when
+ * none is latched. The latch is keyed to this rather than held for the whole
+ * execution context: MetaMask can change its primary secret recovery phrase
+ * while a context stays warm, and a reconciliation that ran for the previous
+ * fingerprint says nothing about the store's relationship to the new one. A
+ * fingerprint change therefore re-runs the reconciliation instead of reusing
+ * the settled promise.
+ */
+let reconciledFingerprint: string | null = null;
+
+/**
  * Whether the persisted binding has been *confirmed* in this execution
  * context, as opposed to merely attempted.
  *
@@ -63,6 +74,7 @@ export function resetAddressCache(): void {
   addressCache.clear();
   contextFingerprint = null;
   bindingReconciliation = null;
+  reconciledFingerprint = null;
   bindingVerified = false;
 }
 
@@ -112,50 +124,76 @@ async function getAccountParentNode(): Promise<SLIP10Node> {
  * @param node - The freshly fetched SEP-0005 parent node.
  */
 async function bindToEntropySource(node: SLIP10Node): Promise<void> {
-  const fingerprint = hash(Buffer.from(node.publicKey, 'hex')).toString('hex');
+  // `publicKeyBytes`, not the `publicKey` hex string: key-tree's hex getters
+  // are `0x`-prefixed, and `Buffer.from` with 'hex' stops at the first
+  // non-hex character, so hashing the string form digests an *empty* buffer.
+  // Every phrase then shares one constant fingerprint and no change is ever
+  // detected, which silently disables everything this function exists for.
+  const fingerprint = hash(Buffer.from(node.publicKeyBytes)).toString('hex');
   if (contextFingerprint !== null && contextFingerprint !== fingerprint) {
     addressCache.clear();
   }
   contextFingerprint = fingerprint;
   // The persisted reconciliation costs a state read and is only meaningful
-  // once per execution context, so it runs on the first key use and not on
-  // every parent-node fetch.
+  // once per fingerprint, so it runs on the first key use for the phrase
+  // being derived from and not on every parent-node fetch. Keying the latch
+  // to the fingerprint (rather than latching once per execution context) is
+  // what makes a mid-context phrase change re-run it: the settled promise for
+  // the previous phrase must not stand in for a reconciliation the new phrase
+  // has never had, or grants and account indices recorded under the old
+  // phrase would stay in force against the new one.
   // Best effort, for the same reason the signing handlers record their grant
   // best effort: this is bookkeeping *about* the key material, and a store
   // that cannot be written must not take key derivation down with it. That
   // would turn a state-write failure into an inability to sign, which is
   // strictly worse than a fingerprint recorded one context later. The
   // in-context cache invalidation above does not depend on it.
-  bindingReconciliation ??= reconcileEntropyBinding(fingerprint).then(
-    (reset) => {
-      // The store's binding is now known to describe the phrase being derived
-      // from, which is the precondition every grant read depends on.
-      bindingVerified = true;
-      if (reset) {
+  if (reconciledFingerprint !== fingerprint || bindingReconciliation === null) {
+    reconciledFingerprint = fingerprint;
+    // Unverified until the reconciliation for *this* fingerprint settles: a
+    // verification earned under the previous phrase does not carry over.
+    bindingVerified = false;
+    bindingReconciliation = reconcileEntropyBinding(fingerprint).then(
+      (reset) => {
+        // Guarded, because a settle can arrive after yet another fingerprint
+        // has superseded this one; only the current reconciliation may speak
+        // for the binding.
+        if (reconciledFingerprint === fingerprint) {
+          // The store's binding is now known to describe the phrase being
+          // derived from, which is the precondition every grant read depends
+          // on.
+          bindingVerified = true;
+        }
+        if (reset) {
+          addressCache.clear();
+        }
+        return undefined;
+      },
+      () => {
+        // Nothing is known about which phrase the stored grants belong to,
+        // and the rejection is swallowed below so derivation survives.
+        // Recording the failure is what lets the grant-gated callers refuse
+        // instead.
+        if (reconciledFingerprint === fingerprint) {
+          bindingVerified = false;
+          // Clear the latch so the next key use retries. Retrying is cheap:
+          // `lazyAccountParentNode` already collapses a request's parent-node
+          // fetches into one, so this costs at most one extra attempt per
+          // request, not one per derivation.
+          bindingReconciliation = null;
+          reconciledFingerprint = null;
+        }
+        // Drop the cache as well. Nothing derived from the store is
+        // known-good for this fingerprint while the binding is unverified,
+        // and the display path (`getWalletAddress` and, through it,
+        // `requestAccess`, `getAddress`, `fund`, and the home page) reads
+        // addresses straight out of it. Key derivation itself is untouched,
+        // which is the property the best-effort treatment exists to protect.
         addressCache.clear();
-      }
-      return undefined;
-    },
-    () => {
-      // Nothing is known about which phrase the stored grants belong to, and
-      // the rejection is swallowed below so derivation survives. Recording the
-      // failure is what lets the grant-gated callers refuse instead.
-      bindingVerified = false;
-      // Clear the latch so the next key use retries. Retrying is cheap:
-      // `lazyAccountParentNode` already collapses a request's parent-node
-      // fetches into one, so this costs at most one extra attempt per request,
-      // not one per derivation.
-      bindingReconciliation = null;
-      // Drop the cache as well. Nothing derived from the store is known-good
-      // for this fingerprint while the binding is unverified, and the display
-      // path (`getWalletAddress` and, through it, `requestAccess`,
-      // `getAddress`, `fund`, and the home page) reads addresses straight out
-      // of it. Key derivation itself is untouched, which is the property the
-      // best-effort treatment exists to protect.
-      addressCache.clear();
-      return undefined;
-    },
-  );
+        return undefined;
+      },
+    );
+  }
   await bindingReconciliation;
 }
 
@@ -185,40 +223,46 @@ async function bindToEntropySource(node: SLIP10Node): Promise<void> {
  * name no account and always show a dialog) keep working.
  *
  * Fetching the parent node explicitly, rather than calling
- * {@link getWalletAddress}, is what makes the retry real. That helper reads
+ * {@link getWalletAddress}, is what makes the check real. That helper reads
  * {@link addressCache} first, and a warm cache short-circuits the fetch
  * entirely: no fetch means no {@link bindToEntropySource}, which means no
- * reconciliation, which means `bindingVerified` can never become true again.
- * And the cache is necessarily warm on exactly the path that matters, because
- * the *failing* call repopulates it: the rejection arm clears the cache, then
- * derivation continues (by design) and writes the address straight back. So
- * routing through the cache turned one transient state-write failure into a
- * refusal that lasted for the rest of the execution context, for every caller
- * of this function. Regression test:
- * `src/handlers/access-guards.test.tsx`, "recovers once the store can be
- * written again".
+ * reconciliation, so neither a transient store failure nor a changed phrase
+ * would ever be observed again. The cache is necessarily warm on exactly the
+ * paths that matter, because derivation itself repopulates it. Regression
+ * test: `src/handlers/access-guards.test.tsx`, "recovers once the store can
+ * be written again".
+ *
+ * The fetch happens on every call, not only while unverified. A verification
+ * earned earlier in the execution context describes the phrase that was
+ * primary then; MetaMask can change its primary secret recovery phrase while
+ * the context stays warm, and a grant must only ever be honoured against the
+ * phrase that is primary *now*. Fetching the node is what surfaces the
+ * current fingerprint, and {@link bindToEntropySource} re-reconciles whenever
+ * it changed. One `snap_getBip32Entropy` per grant-gated request is the cost
+ * of that guarantee.
  *
  * Deriving the active account afterwards, rather than only fetching the node,
- * is what keeps this to a single `snap_getBip32Entropy`: it fills
- * {@link addressCache}, so the address lookup every caller does immediately
- * afterwards is a cache hit rather than a second crossing of the sandbox
- * boundary with the parent key material. The flag then short-circuits every
- * later call in the same execution context.
+ * fills {@link addressCache}, so the address lookup every caller does
+ * immediately afterwards is a cache hit rather than a second crossing of the
+ * sandbox boundary with the parent key material. The state read happens after
+ * the fetch, because the fetch is what settles a pending reconciliation: read
+ * before it, `activeAccount` could be an index recorded under a phrase the
+ * reconciliation is about to reset.
  *
  * @throws An external-service error when the binding cannot be confirmed.
  */
 export async function ensureEntropyBinding(): Promise<void> {
-  if (!bindingVerified) {
-    const { activeAccount } = await getState();
-    const node = await getAccountParentNode();
-    addressCache.set(activeAccount, await deriveAddress(node, activeAccount));
-  }
+  const node = await getAccountParentNode();
   if (!bindingVerified) {
     throw externalServiceError(
       'The wallet could not confirm which secret recovery phrase this snap ' +
         'stored its data under, so connected-site permissions cannot be used ' +
         'right now. Try again shortly.',
     );
+  }
+  const { activeAccount } = await getState();
+  if (!addressCache.has(activeAccount)) {
+    addressCache.set(activeAccount, await deriveAddress(node, activeAccount));
   }
 }
 
@@ -519,19 +563,31 @@ export async function getOwnedAccounts(
 export async function resolveSigningAccount(
   requestedAddress?: string,
 ): Promise<{ index: number; address: string }> {
+  // Fetch the parent node before reading state, not after. Fetching is what
+  // detects a changed secret recovery phrase and settles the persisted-state
+  // reconciliation that resets accounts recorded under the old one; a state
+  // snapshot taken first could hand this function an account index from the
+  // previous phrase, and the dialog would then present (and the wallet sign
+  // for) a selection the reset was about to discard. The getter is shared
+  // with the address resolution below, so this stays one fetch per request.
+  const getNode = lazyAccountParentNode();
+  await getNode();
   const state = await getState();
   if (requestedAddress === undefined) {
-    return {
-      index: state.activeAccount,
-      address: await getAddressForIndex(state.activeAccount),
-    };
+    const [active] = await resolveAddresses([state.activeAccount], getNode);
+    if (active === undefined) {
+      // `resolveAddresses` answers one pair per requested index; asserted
+      // rather than cast away.
+      throw new Error('Failed to derive the active account.');
+    }
+    return active;
   }
 
   // Resolve through the address index, so an address the wallet does not hold
   // is rejected without deriving a signing key at all. Repeating an unowned
   // address is then a map lookup rather than a full sweep of every revealed
   // account.
-  const owned = await resolveAddresses(state.accounts);
+  const owned = await resolveAddresses(state.accounts, getNode);
   const match = owned.find((entry) => entry.address === requestedAddress);
   if (match === undefined) {
     throw invalidRequest('Unknown address: this wallet does not hold it.');

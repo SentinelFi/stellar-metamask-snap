@@ -60,5 +60,32 @@ export const useMetaMask = () => {
     detect().catch(() => undefined);
   }, [provider, detectFlask, getSnap]);
 
+  // Re-read the installed snap whenever the tab regains focus or becomes
+  // visible again. The snapshot above is taken once per provider, and
+  // MetaMask can update the snap under the same npm ID while this page stays
+  // open; updating it means leaving the tab, so focus is the moment the
+  // snapshot can have gone stale. The connector additionally re-verifies the
+  // pinned version before every signing call, so this keeps the *displayed*
+  // readiness honest rather than being the only guard.
+  useEffect(() => {
+    if (!provider) {
+      return undefined;
+    }
+    const refresh = () => {
+      getSnap().catch(() => undefined);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refresh();
+      }
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [provider, getSnap]);
+
   return { isFlask, snapsDetected, installedSnap, getSnap };
 };

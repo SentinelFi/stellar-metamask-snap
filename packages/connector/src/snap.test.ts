@@ -332,11 +332,13 @@ describe('StellarSnap', () => {
       method: 'wallet_requestSnaps',
       params: { [SNAP_ID]: { version: '0.1.0' } },
     });
-    // connect() already verified the installed version from the
-    // wallet_requestSnaps result, so the following requestAccess invocation
-    // does not read wallet_getSnaps again.
+    // requestAccess is a dialog-confirmed call, so it drops the memo the
+    // wallet_requestSnaps verification just set and re-reads wallet_getSnaps:
+    // MetaMask can update the snap under the same ID mid-session, and every
+    // sensitive call is compared against the pin at the moment it is made.
     expect(requests.map((request) => request.method)).toStrictEqual([
       'wallet_requestSnaps',
+      'wallet_getSnaps',
       'wallet_invokeSnap',
     ]);
   });
@@ -529,6 +531,28 @@ describe('StellarSnap version check on invocation', () => {
     expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
     expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
     expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
+  });
+
+  it('fails a signing call closed after a mid-session snap update', async () => {
+    // The memo is trusted only by silent reads. MetaMask can update the snap
+    // under the same npm ID while the page stays open; the next signing or
+    // dialog-confirmed call must re-read wallet_getSnaps and refuse, not run
+    // against a release the page never compared to the pin.
+    const { provider, requests, setInstalled } = providerWithMutableVersion();
+    const snap = new StellarSnap({ provider });
+
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+
+    setInstalled('0.2.0');
+    // The silent read still answers from the memo...
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+    // ...and the sensitive call is what re-compares and fails closed.
+    await expect(snap.signMessage('hello')).rejects.toMatchObject({
+      code: -3,
+      message: expect.stringContaining('0.2.0'),
+    });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(2);
   });
 
   it('skips the check for local development snaps', async () => {

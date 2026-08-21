@@ -191,6 +191,38 @@ describe('simulateForDisplay', () => {
     });
   });
 
+  it('keeps a resource fee at the int64 digit ceiling', async () => {
+    // 19 digits is the widest an int64 stroop count can be; the bound must
+    // not eat a legitimate maximal estimate.
+    const fee = '9'.repeat(19);
+    mockRpc({ minResourceFee: fee });
+
+    expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({
+      ok: true,
+      minResourceFee: fee,
+    });
+  });
+
+  it('reports an oversized resource fee as unavailable, keeping the rest', async () => {
+    // The transport cap bounds the response at a megabyte, not the field: a
+    // hostile endpoint can still put a near-megabyte digit string here, and
+    // BigInt conversion plus rendering it would be the dialog's problem. The
+    // fee becomes unavailable; the summary's other data survives.
+    mockRpc({
+      minResourceFee: '9'.repeat(20),
+      latestLedger: 99,
+      results: [{ auth: [authEntry(ACCOUNT)] }],
+    });
+
+    expect(await simulateForDisplay(RPC, ENVELOPE)).toStrictEqual({
+      ok: true,
+      minResourceFee: null,
+      authSigners: [ACCOUNT],
+      restoreRequired: false,
+      latestLedger: 99,
+    });
+  });
+
   it('deduplicates auth signers across results', async () => {
     mockRpc({
       minResourceFee: '1',

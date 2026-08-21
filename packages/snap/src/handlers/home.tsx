@@ -17,7 +17,7 @@ import {
   Text,
 } from '@metamask/snaps-sdk/jsx';
 
-import { getOwnedAccounts } from '../keys';
+import { ensureEntropyBinding, getOwnedAccounts } from '../keys';
 import type { StoreResetReason, TrackedToken } from '../state';
 import { clearResetNotice, getState } from '../state';
 import type { NetworkName } from '../state/networks';
@@ -257,6 +257,25 @@ const HomePage: SnapComponent<HomePageProps> = ({
  * @returns The home page content.
  */
 export async function homePage() {
+  // The entropy binding settles before the state read below, so the snapshot
+  // this page renders is the post-reconciliation one. Deriving first is what
+  // detects a changed secret recovery phrase and resets the grants and
+  // account registry recorded under the old one; read state first and one
+  // render could combine origins and indices from the previous phrase with
+  // addresses derived from the new one.
+  //
+  // Derivation crosses the sandbox boundary and can fail (a denied or
+  // unavailable entropy source, or a store whose binding cannot be
+  // confirmed). Letting that escape would take the whole page down, and this
+  // page is the only place a user can revoke a site's grant or stop tracking
+  // a token, neither of which needs a key. So the account section degrades on
+  // its own and the rest of the page still renders.
+  let accountsUnavailable = false;
+  try {
+    await ensureEntropyBinding();
+  } catch {
+    accountsUnavailable = true;
+  }
   // One state read for the whole render. Each `getState()` is a separate
   // `snap_manageState` decrypt, and this page needs the network, the active
   // account, the account list, the origins, and the tracked tokens: reading
@@ -265,17 +284,13 @@ export async function homePage() {
   // could in principle differ.
   const state = await getState();
   const network = NETWORKS[state.network];
-  // Derivation crosses the sandbox boundary and can fail (a denied or
-  // unavailable entropy source). Letting that escape would take the whole page
-  // down, and this page is the only place a user can revoke a site's grant or
-  // stop tracking a token, neither of which needs a key. So the account section
-  // degrades on its own and the rest of the page still renders.
   let accounts: AccountRow[] = [];
-  let accountsUnavailable = false;
-  try {
-    accounts = await getOwnedAccounts(state);
-  } catch {
-    accountsUnavailable = true;
+  if (!accountsUnavailable) {
+    try {
+      accounts = await getOwnedAccounts(state);
+    } catch {
+      accountsUnavailable = true;
+    }
   }
   const activeIndex = state.activeAccount;
   const address =
