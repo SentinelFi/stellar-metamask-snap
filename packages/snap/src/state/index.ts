@@ -432,6 +432,40 @@ async function withStateLock<Type>(fn: () => Promise<Type>): Promise<Type> {
 }
 
 /**
+ * Refuses a write whose approval was collected under a secret recovery phrase
+ * the store no longer belongs to.
+ *
+ * Every dialog-driven mutation passes the fingerprint its request was bound
+ * to (see `EntropyBinding` in `src/keys/index.ts`), and the comparison runs
+ * inside the state lock against the store as it is at commit time. A
+ * primary-phrase change while the dialog was open reconciles the store to the
+ * new phrase's fingerprint, and this is what stops the old approval from
+ * acting on the new wallet's state: the consent was given by an origin whose
+ * grant belonged to the previous phrase, and the grant itself has already
+ * been reset by then.
+ *
+ * `undefined` skips the comparison. It exists for tests exercising the lock
+ * behaviour in isolation; every dialog-driven caller passes the real value.
+ *
+ * @param state - The store, as read inside the lock.
+ * @param expectedFingerprint - The fingerprint the approval was bound to.
+ * @throws An invalid-request error when the store belongs to another phrase.
+ */
+function assertStoreFingerprint(
+  state: SnapState,
+  expectedFingerprint: string | undefined,
+): void {
+  if (
+    expectedFingerprint !== undefined &&
+    state.entropyFingerprint !== expectedFingerprint
+  ) {
+    throw invalidRequest(
+      'The active secret recovery phrase changed while the dialog was open. Try again.',
+    );
+  }
+}
+
+/**
  * Resolves the active network configuration.
  *
  * @returns The active network's config.
@@ -447,11 +481,23 @@ export async function getActiveNetwork(): Promise<NetworkConfig> {
  * confirmation dialog can never clobber grants or tokens added while the
  * dialog was open.
  *
+ * The network preference itself is not phrase-derived (it survives a phrase
+ * change), but the authority to change it is: the request was admitted on a
+ * grant belonging to one phrase, and the switch is wallet-global. The
+ * fingerprint comparison keeps an approval collected under that grant from
+ * changing the network of a wallet the origin was never connected to.
+ *
  * @param network - The network to activate.
+ * @param expectedFingerprint - The entropy fingerprint the request was bound
+ * to, or `undefined` to skip the check (tests only).
  */
-export async function setActiveNetwork(network: NetworkName): Promise<void> {
+export async function setActiveNetwork(
+  network: NetworkName,
+  expectedFingerprint: string | undefined,
+): Promise<void> {
   await withStateLock(async () => {
     const state = await getState();
+    assertStoreFingerprint(state, expectedFingerprint);
     if (state.network !== network) {
       await saveState({ ...state, network });
     }
@@ -496,14 +542,7 @@ export async function revealAccount(
 ): Promise<void> {
   await withStateLock(async () => {
     const state = await getState();
-    if (
-      expectedFingerprint !== undefined &&
-      state.entropyFingerprint !== expectedFingerprint
-    ) {
-      throw invalidRequest(
-        'The active secret recovery phrase changed while the dialog was open. Try again.',
-      );
-    }
+    assertStoreFingerprint(state, expectedFingerprint);
     if (state.accounts.includes(index)) {
       return;
     }
@@ -546,14 +585,7 @@ export async function revealAccountsThrough(
 ): Promise<number[]> {
   return withStateLock(async () => {
     const state = await getState();
-    if (
-      expectedFingerprint !== undefined &&
-      state.entropyFingerprint !== expectedFingerprint
-    ) {
-      throw invalidRequest(
-        'The active secret recovery phrase changed while the dialog was open. Try again.',
-      );
-    }
+    assertStoreFingerprint(state, expectedFingerprint);
     if (!Number.isInteger(target) || target < 0) {
       throw invalidRequest('Invalid account index.');
     }
@@ -587,13 +619,22 @@ export async function revealAccountsThrough(
  * Switches the active account via a locked read-modify-write, mirroring
  * {@link setActiveNetwork}. Membership is re-checked inside the lock: a
  * stale pre-dialog snapshot can never activate an index that is no longer
- * (or was never) revealed.
+ * (or was never) revealed. The fingerprint is compared first, for the reason
+ * {@link revealAccount} gives: an account index names a different address
+ * under a different phrase, so an approval shown for one wallet's account
+ * must not activate another wallet's.
  *
  * @param index - The revealed account index to activate.
+ * @param expectedFingerprint - The entropy fingerprint the displayed account
+ * was resolved under, or `undefined` to skip the check (tests only).
  */
-export async function setActiveAccount(index: number): Promise<void> {
+export async function setActiveAccount(
+  index: number,
+  expectedFingerprint: string | undefined,
+): Promise<void> {
   await withStateLock(async () => {
     const state = await getState();
+    assertStoreFingerprint(state, expectedFingerprint);
     if (!state.accounts.includes(index)) {
       throw invalidRequest('Unknown account index.');
     }
@@ -877,17 +918,26 @@ export async function getTokens(network: NetworkName): Promise<TrackedToken[]> {
  * inside the lock: the caller's pre-dialog check reads a snapshot that can
  * go stale while the confirmation dialog is open.
  *
+ * The token registry is kept across a phrase change, but the request that
+ * adds to it was admitted on a grant that is not: the fingerprint comparison
+ * keeps an approval collected under the previous phrase's grant from writing
+ * into a store that now belongs to a wallet the origin is not connected to.
+ *
  * @param network - The network name.
  * @param token - The token to add.
+ * @param expectedFingerprint - The entropy fingerprint the request was bound
+ * to, or `undefined` to skip the check (tests only).
  * @returns True when newly added, false when already present.
  * @throws An invalid-request error when the cap is already reached.
  */
 export async function addToken(
   network: NetworkName,
   token: TrackedToken,
+  expectedFingerprint: string | undefined,
 ): Promise<boolean> {
   return withStateLock(async () => {
     const state = await getState();
+    assertStoreFingerprint(state, expectedFingerprint);
     const tokens = state.tokens ?? {};
     const forNetwork = tokens[network] ?? [];
     if (forNetwork.some((entry) => entry.contractId === token.contractId)) {

@@ -7,12 +7,16 @@ import {
   jest,
 } from '@jest/globals';
 import { SLIP10Node } from '@metamask/key-tree';
-import type { Keypair, Transaction, xdr } from '@stellar/stellar-sdk';
+import type { Keypair, Transaction } from '@stellar/stellar-sdk';
 import {
+  Account,
+  Address,
   Asset,
   nativeToScVal,
   Networks,
+  Operation,
   TransactionBuilder,
+  xdr,
 } from '@stellar/stellar-sdk';
 
 import { getAddress, requestAccess } from './access';
@@ -25,12 +29,13 @@ import {
 } from './account';
 import { getAccounts, setActiveAccount } from './accounts';
 import { setNetwork } from './network';
+import { signAuthEntry, signMessage, signTransaction } from './sign';
 import {
   deriveSigningKeypair,
   ensureEntropyBinding,
+  getActiveAddress,
   getAddressForIndex,
   getOwnedAccounts,
-  getWalletAddress,
   resetAddressCache,
   resolveSigningAccount,
 } from '../keys';
@@ -92,6 +97,10 @@ let fetchCalls: string[];
 let writesFail: boolean;
 /** How many times the parent node was fetched, per {@link entropyFetches}. */
 let entropyFetches: number;
+/** The `m/44'/148'` subtree the mocked `snap_getBip32Entropy` answers with. */
+let activeEntropy: SLIP10Node;
+/** The subtree for {@link SEP5_MNEMONIC}, to switch back to. */
+let phraseOneEntropy: SLIP10Node;
 
 /**
  * Builds a version-2 state object.
@@ -257,40 +266,38 @@ function captureStateWrites(): StateWrite[] {
  * {@link SEP5_MNEMONIC_2} from now on, without resetting any module cache:
  * the case where MetaMask's primary secret recovery phrase changes while the
  * snap's execution context (and everything it has latched) stays warm.
- * `afterEach` deletes the global, so there is nothing to restore.
  */
 async function swapEntropy(): Promise<void> {
-  const entropy = await SLIP10Node.fromDerivationPath({
+  activeEntropy = await SLIP10Node.fromDerivationPath({
     derivationPath: [`bip39:${SEP5_MNEMONIC_2}`, `slip10:44'`, `slip10:148'`],
     curve: 'ed25519',
   });
-  const host = globalThis as unknown as {
-    snap: { request: (args: RequestArgs) => Promise<unknown> };
-  };
-  const real = host.snap.request;
-  host.snap.request = async (args: RequestArgs) => {
-    if (args.method === 'snap_getBip32Entropy') {
-      entropyFetches += 1;
-      return entropy.toJSON();
-    }
-    return real(args);
-  };
+}
+
+/** Switches the primary phrase back to {@link SEP5_MNEMONIC}. */
+function restoreEntropy(): void {
+  activeEntropy = phraseOneEntropy;
 }
 
 /**
- * Holds the next matching `snap.request` call until released, so a test can
- * suspend one request at a known await point while a second request runs past
- * it. Later matching calls pass through untouched. `afterEach` deletes the
+ * Holds a matching `snap.request` call until released, so a test can suspend
+ * one request at a known await point while a second request runs past it.
+ * Later matching calls pass through untouched. `afterEach` deletes the
  * global, so there is nothing to restore.
  *
  * Declared at module scope because the match is a conditional, which
  * `jest/no-conditional-in-test` refuses in a test body.
  *
  * @param matches - Which request to hold.
+ * @param skip - How many matching calls to let through before holding one,
+ * so a request can be suspended at, say, its third state read.
  * @returns `hit`, true once the held call has arrived, and `release`, which
  * lets it proceed.
  */
-function gateNextRequest(matches: (args: RequestArgs) => boolean): {
+function gateNextRequest(
+  matches: (args: RequestArgs) => boolean,
+  skip = 0,
+): {
   hit: () => boolean;
   release: () => void;
 } {
@@ -298,6 +305,7 @@ function gateNextRequest(matches: (args: RequestArgs) => boolean): {
     snap: { request: (args: RequestArgs) => Promise<unknown> };
   };
   const real = host.snap.request;
+  let remaining = skip;
   let arrived = false;
   let armed = true;
   let release: () => void = () => undefined;
@@ -306,11 +314,48 @@ function gateNextRequest(matches: (args: RequestArgs) => boolean): {
   });
   host.snap.request = async (args: RequestArgs) => {
     if (armed && matches(args)) {
+      if (remaining > 0) {
+        remaining -= 1;
+      } else {
+        armed = false;
+        arrived = true;
+        await gate;
+      }
+    }
+    return real(args);
+  };
+  return { hit: () => arrived, release };
+}
+
+/**
+ * The `fetch` counterpart of {@link gateNextRequest}: holds the next outbound
+ * request whose URL matches, so a handler can be suspended in the middle of
+ * a network lookup.
+ *
+ * @param matches - Which URL to hold.
+ * @returns `hit` and `release`, as for {@link gateNextRequest}.
+ */
+function gateNextFetch(matches: (url: string) => boolean): {
+  hit: () => boolean;
+  release: () => void;
+} {
+  const host = globalThis as unknown as {
+    fetch: (url: string, init?: unknown) => Promise<unknown>;
+  };
+  const real = host.fetch;
+  let arrived = false;
+  let armed = true;
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  host.fetch = async (url: string, init?: unknown) => {
+    if (armed && matches(url)) {
       armed = false;
       arrived = true;
       await gate;
     }
-    return real(args);
+    return real(url, init);
   };
   return { hit: () => arrived, release };
 }
@@ -325,6 +370,71 @@ function gateNextRequest(matches: (args: RequestArgs) => boolean): {
  */
 function isStateRead(args: RequestArgs): boolean {
   return args.method === 'snap_manageState' && args.params.operation === 'get';
+}
+
+/**
+ * Matches a parent-node fetch, for {@link gateNextRequest}.
+ *
+ * @param args - The intercepted request.
+ * @returns True for a `snap_getBip32Entropy` call.
+ */
+function isEntropyFetch(args: RequestArgs): boolean {
+  return args.method === 'snap_getBip32Entropy';
+}
+
+/**
+ * A classic payment from account 0, for the signing schedules below. Built
+ * fresh per call so each method signs its own envelope.
+ *
+ * @returns The envelope XDR.
+ */
+function classicPaymentXdr(): string {
+  return new TransactionBuilder(new Account(ADDRESS_0, '1'), {
+    fee: '100',
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.payment({
+        destination: ADDRESS_1,
+        asset: Asset.native(),
+        amount: '1',
+      }),
+    )
+    .setTimeout(300)
+    .build()
+    .toXDR();
+}
+
+/**
+ * An address-credential authorization entry naming the given account, so
+ * `signAuthEntry` resolves that account the way an explicit `address` option
+ * does on the other signing methods.
+ *
+ * @param address - The authorizing account.
+ * @returns The entry's base64 XDR.
+ */
+function addressAuthEntryXdr(address: string): string {
+  return new xdr.SorobanAuthorizationEntry({
+    credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+      new xdr.SorobanAddressCredentials({
+        address: new Address(address).toScAddress(),
+        nonce: new xdr.Int64(1n),
+        signatureExpirationLedger: 0,
+        signature: xdr.ScVal.scvVec([]),
+      }),
+    ),
+    rootInvocation: new xdr.SorobanAuthorizedInvocation({
+      function:
+        xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(CONTRACT).toScAddress(),
+            functionName: 'transfer',
+            args: [],
+          }),
+        ),
+      subInvocations: [],
+    }),
+  }).toXDR('base64');
 }
 
 /**
@@ -418,6 +528,8 @@ describe('connection gate and account resolution', () => {
     fetchCalls = [];
     writesFail = false;
     entropyFetches = 0;
+    phraseOneEntropy = entropy;
+    activeEntropy = entropy;
     // The address cache, the entropy binding, the balance cache, the request
     // limits and the dialog throttle are all module state that outlives a
     // test otherwise.
@@ -444,7 +556,7 @@ describe('connection gate and account resolution', () => {
             return null;
           case 'snap_getBip32Entropy':
             entropyFetches += 1;
-            return entropy.toJSON();
+            return activeEntropy.toJSON();
           case 'snap_dialog':
             dialogs.push(args.params.content);
             return dialogResponse;
@@ -492,9 +604,14 @@ describe('connection gate and account resolution', () => {
       );
     });
 
-    it('admits an origin holding a grant', async () => {
+    it('admits an origin holding a grant, returning the binding it verified', async () => {
       stored = stateV2({ origins: CONNECTED });
-      expect(await assertConnected(ORIGIN)).toBeUndefined();
+      const binding = await assertConnected(ORIGIN);
+      expect(binding.fingerprint).toStrictEqual(expect.any(String));
+      // The snapshot is the one the grant was read from, and it carries the
+      // fingerprint the grant was verified against.
+      expect(binding.state.entropyFingerprint).toBe(binding.fingerprint);
+      expect(Object.keys(binding.state.origins)).toStrictEqual([ORIGIN]);
     });
 
     it('is keyed on the exact origin, not a prefix or suffix of it', async () => {
@@ -747,7 +864,9 @@ describe('connection gate and account resolution', () => {
 
     it('refuses connected methods after the change', async () => {
       stored = stateV2({ origins: CONNECTED });
-      expect(await assertConnected(ORIGIN)).toBeUndefined();
+      expect(await assertConnected(ORIGIN)).toMatchObject({
+        fingerprint: expect.any(String),
+      });
 
       await swapEntropy();
 
@@ -794,32 +913,38 @@ describe('connection gate and account resolution', () => {
     it('a derivation retained across the change cannot repopulate the cache', async () => {
       stored = stateV2({ accounts: [0, 1], activeAccount: 1 });
 
-      // Establish the first phrase's binding without warming the index the
-      // held request will derive.
-      expect(await getAddressForIndex(0)).toBe(ADDRESS_0);
+      // Establish the first phrase's binding. This warms the active index
+      // (1) and leaves index 0, which the held request will be made to
+      // derive, cold.
+      const first = await ensureEntropyBinding();
+      expect(await getActiveAddress(first)).toBe(ADDRESS_1);
 
-      // Hold a request between its parent-node fetch (first phrase) and its
-      // state read, the window in which its node can be superseded.
+      // Hold a cold-signing resolution between its parent-node fetch (first
+      // phrase) and its state read, the window in which its node can be
+      // superseded while it still holds it.
       const gate = gateNextRequest(isStateRead);
-      const held = ensureEntropyBinding();
+      const held = resolveSigningAccount();
       held.catch(() => undefined);
       await waitUntil(gate.hit);
 
       // A fresh request observes the new phrase: the cache is cleared and
       // the store reconciled (accounts reset, active account back to 0).
       await swapEntropy();
-      const fresh = await getAddressForIndex(1);
-      expect(fresh).not.toBe(ADDRESS_1);
+      const second = await ensureEntropyBinding();
+      expect(second.state).toMatchObject({ accounts: [0], activeAccount: 0 });
+      expect(await getAddressForIndex(second, 1)).not.toBe(ADDRESS_1);
 
-      // The held request now resumes with a node from the previous phrase.
-      // Its completion must be refused: caching the old-phrase address at
-      // the reset active index would make every later display answer with
-      // an address this wallet no longer holds.
+      // The held request now reads the reset store (active account 0) and
+      // derives that index with the node it retained from the previous
+      // phrase. Its completion must be refused: caching the old-phrase
+      // address at the reset active index would make every later display
+      // answer with an address this wallet no longer holds.
       gate.release();
       await expect(held).rejects.toThrow('secret recovery phrase changed');
 
-      expect(await getWalletAddress()).toBe(PHRASE_2_ADDRESS_0);
-      expect(await getAddressForIndex(0)).toBe(PHRASE_2_ADDRESS_0);
+      const current = await ensureEntropyBinding();
+      expect(await getActiveAddress(current)).toBe(PHRASE_2_ADDRESS_0);
+      expect(await getAddressForIndex(current, 0)).toBe(PHRASE_2_ADDRESS_0);
     });
 
     it('an approval spanning the change does not create a grant for the new phrase', async () => {
@@ -849,6 +974,250 @@ describe('connection gate and account resolution', () => {
       await expect(assertConnected(ORIGIN)).rejects.toThrow(
         'Origin is not connected',
       );
+    });
+  });
+
+  describe('handler work after the grant check stays bound to the phrase that passed it', () => {
+    /*
+     * The grant check is one moment; the handler's work after it is not. A
+     * concurrent request can observe a changed secret recovery phrase and
+     * reconcile the store to the new wallet between that check and the
+     * handler's later reads, derivations, and writes. A boolean gate would
+     * let the handler carry on: read the new wallet's active account, derive
+     * its address, fund it, or enumerate it, all under consent given for the
+     * old one, and an explicit-address signing request would compare its
+     * address against the new wallet's registry, turning a grant for the old
+     * wallet into a membership probe of the new.
+     *
+     * Each schedule below holds a connected method just past its final grant
+     * check, lets a second request reconcile the store to the new phrase,
+     * then releases the first and asserts that it fails closed: nothing of
+     * the new wallet is disclosed, no side effect lands, and the new phrase's
+     * state is left exactly as the reconciliation wrote it.
+     */
+
+    /** What the store looks like once reconciled to the second phrase. */
+    const PHRASE_2_STORE = {
+      accounts: [0],
+      activeAccount: 0,
+      origins: {},
+      network: 'TESTNET',
+      resetNotice: 'phrase-changed',
+    };
+
+    /**
+     * Changes the phrase and lets a fresh request reconcile the store to it
+     * while the held request stays suspended.
+     */
+    async function reconcileToPhraseTwo(): Promise<void> {
+      await swapEntropy();
+      const binding = await ensureEntropyBinding();
+      expect(binding.state).toMatchObject({ accounts: [0], origins: {} });
+    }
+
+    it('getBalances does not disclose once the phrase changed during its lookup', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      // Held inside the Horizon lookup: the grant check has passed and the
+      // address is resolved, and the only thing left is to hand back data.
+      const gate = gateNextFetch((url) => url.includes('/accounts/'));
+      const held = getBalances(ORIGIN, {});
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      await reconcileToPhraseTwo();
+
+      gate.release();
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(stored).toMatchObject(PHRASE_2_STORE);
+    });
+
+    it('fund refuses before friendbot once the phrase changed', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      // Held at the parent-node fetch that resolving the named account
+      // needs: the first fetch is the grant check's own, the second is the
+      // handler's work after it.
+      const gate = gateNextRequest(isEntropyFetch, 1);
+      const held = fund(ORIGIN, { address: ADDRESS_1 });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      await reconcileToPhraseTwo();
+
+      gate.release();
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(fetchCalls.some((url) => url.includes('friendbot'))).toBe(false);
+      expect(stored).toMatchObject(PHRASE_2_STORE);
+    });
+
+    it('getAccounts does not enumerate the new wallet', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const gate = gateNextRequest(isEntropyFetch, 1);
+      const held = getAccounts(ORIGIN);
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      await reconcileToPhraseTwo();
+
+      gate.release();
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(stored).toMatchObject(PHRASE_2_STORE);
+    });
+
+    it('getAddress refuses a snapshot that belongs to the new phrase', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      // Held at the binding's own snapshot read: the grant read and the
+      // reconciliation's read come first. A snapshot read after the store
+      // was reconciled to another phrase carries that phrase's fingerprint,
+      // and a grant read out of it would be the new wallet's.
+      const gate = gateNextRequest(isStateRead, 2);
+      const held = getAddress(ORIGIN);
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      await reconcileToPhraseTwo();
+
+      gate.release();
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(stored).toMatchObject(PHRASE_2_STORE);
+    });
+
+    const approvedAfterChange: [string, () => Promise<unknown>][] = [
+      ['setNetwork', async () => setNetwork(ORIGIN, { network: 'FUTURENET' })],
+      ['setActiveAccount', async () => setActiveAccount(ORIGIN, { index: 1 })],
+      ['addToken', async () => addToken(ORIGIN, { contractId: CONTRACT })],
+    ];
+
+    it.each(approvedAfterChange)(
+      '%s does not commit an approval collected before the change',
+      async (_name, call) => {
+        stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+        const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+        const held = call();
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        await reconcileToPhraseTwo();
+
+        // The user approves a dialog that described the previous wallet.
+        // The commit compares the fingerprint inside the state lock and
+        // refuses; the new phrase's store is untouched.
+        gate.release();
+        await expect(held).rejects.toThrow('secret recovery phrase changed');
+        expect(stored).toMatchObject(PHRASE_2_STORE);
+        expect(JSON.stringify(stored)).not.toContain(CONTRACT);
+      },
+    );
+
+    const explicitAddressSigners: [
+      string,
+      (address: string) => Promise<unknown>,
+    ][] = [
+      [
+        'signTransaction',
+        async (address) =>
+          signTransaction(ORIGIN, { xdr: classicPaymentXdr(), address }),
+      ],
+      [
+        'signMessage',
+        async (address) => signMessage(ORIGIN, { message: 'hello', address }),
+      ],
+      [
+        'signAuthEntry',
+        async (address) =>
+          signAuthEntry(ORIGIN, { authEntry: addressAuthEntryXdr(address) }),
+      ],
+    ];
+
+    /**
+     * Runs one explicit-address signing request across the phrase change and
+     * returns how it was refused.
+     *
+     * @param call - The signing method under test.
+     * @param address - The address it names.
+     * @returns The refusal message.
+     */
+    async function refusalAcrossChange(
+      call: (address: string) => Promise<unknown>,
+      address: string,
+    ): Promise<string> {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      restoreEntropy();
+      resetAddressCache();
+      // Held at the parent-node fetch account resolution makes after the
+      // grant check's own.
+      const gate = gateNextRequest(isEntropyFetch, 1);
+      const held = call(address);
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      await reconcileToPhraseTwo();
+
+      gate.release();
+      return held.then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      );
+    }
+
+    it.each(explicitAddressSigners)(
+      '%s refuses an address the new wallet holds exactly as it refuses one it does not',
+      async (_name, call) => {
+        // An origin granted under the old phrase names the new wallet's
+        // account 0, then an address no wallet here holds. Before the dialog,
+        // the two must be indistinguishable: a different answer would tell
+        // the origin which addresses the new wallet holds.
+        const owned = await refusalAcrossChange(call, PHRASE_2_ADDRESS_0);
+        const foreign = await refusalAcrossChange(call, FOREIGN);
+        expect(owned).toContain('secret recovery phrase changed');
+        expect(foreign).toBe(owned);
+        expect(dialogs).toHaveLength(0);
+      },
+    );
+
+    it('an older reconciliation cannot vouch for a later period of the same phrase', async () => {
+      // A phrase can change from one to another and back while the first
+      // phrase's reconciliation is still in flight. That reconciliation then
+      // settles having found a store that belonged to the phrase, but two
+      // later reconciliations are queued behind it, and the store the second
+      // period of the phrase will actually have is the one *they* produce.
+      // A latch keyed on the fingerprint alone would let the older
+      // completion mark the binding verified for the newer period.
+      stored = stateV2({ origins: CONNECTED });
+      // Persist the first phrase's fingerprint, then forget it in-context so
+      // the next binding reconciles afresh.
+      await ensureEntropyBinding();
+      resetAddressCache();
+
+      // Hold the first request inside its reconciliation's state read (the
+      // grant read comes first).
+      const gate = gateNextRequest(isStateRead, 1);
+      const held = getAddress(ORIGIN);
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      // The phrase changes away and back while it is held; each change
+      // queues its own reconciliation behind the held one.
+      await swapEntropy();
+      const second = ensureEntropyBinding();
+      second.catch(() => undefined);
+      await waitUntil(() => entropyFetches >= 3);
+      restoreEntropy();
+      const third = ensureEntropyBinding();
+      third.catch(() => undefined);
+      await waitUntil(() => entropyFetches >= 4);
+
+      gate.release();
+      // The held request's reconciliation settles first, and for its
+      // fingerprint, but it no longer holds the ticket: the request must not
+      // be answered on its strength.
+      await expect(held).rejects.toThrow('could not confirm');
+      // The request for the other phrase is superseded in turn.
+      await expect(second).rejects.toThrow('secret recovery phrase changed');
+      // Only the reconciliation that was started for the phrase's second
+      // period vouches for it, and the store it produced carries no grant.
+      const binding = await third;
+      expect(binding.state.origins).toStrictEqual({});
+      expect(await getAddress(ORIGIN)).toStrictEqual({ address: '' });
     });
   });
 
@@ -1005,7 +1374,9 @@ describe('connection gate and account resolution', () => {
         address: ADDRESS_0,
       });
       expect(dialogs).toHaveLength(1);
-      expect(await assertConnected(ORIGIN)).toBeUndefined();
+      expect(await assertConnected(ORIGIN)).toMatchObject({
+        fingerprint: expect.any(String),
+      });
     });
 
     it('requestAccess throws -4 and records nothing when rejected', async () => {
@@ -1298,7 +1669,9 @@ describe('connection gate and account resolution', () => {
   describe('getOwnedAccounts', () => {
     it('returns every revealed account with its derived address', async () => {
       stored = stateV2({ accounts: [0, 1] });
-      expect(await getOwnedAccounts()).toStrictEqual([
+      expect(
+        await getOwnedAccounts(await ensureEntropyBinding()),
+      ).toStrictEqual([
         { index: 0, address: ADDRESS_0 },
         { index: 1, address: ADDRESS_1 },
       ]);
@@ -1309,7 +1682,7 @@ describe('connection gate and account resolution', () => {
       // address that failed to resolve must not surface as `undefined` in a
       // dapp-facing result.
       stored = stateV2({ accounts: [0, 1] });
-      const owned = await getOwnedAccounts();
+      const owned = await getOwnedAccounts(await ensureEntropyBinding());
       for (const entry of owned) {
         expect(typeof entry.address).toBe('string');
         expect(entry.address).toMatch(/^G[A-Z2-7]{55}$/u);

@@ -283,6 +283,23 @@ describe('getHorizonLatestLedger', () => {
     mockFetch(new Error('offline'));
     expect(await getHorizonLatestLedger(HORIZON)).toBeNull();
   });
+
+  it('returns null for a height the protocol cannot represent', async () => {
+    // A ledger sequence is a uint32 on the wire, and the value bounds how
+    // long an authorization stays valid: a height above that range, or one
+    // that only passes an integer check because it lost precision, is not a
+    // ledger and must not enter the expiry arithmetic.
+    mockFetch(mockResponse({ core_latest_ledger: 0x1_0000_0000 }));
+    expect(await getHorizonLatestLedger(HORIZON)).toBeNull();
+
+    mockFetch(mockResponse({ core_latest_ledger: 2 ** 53 }));
+    expect(await getHorizonLatestLedger(HORIZON)).toBeNull();
+  });
+
+  it('accepts the exact uint32 ceiling', async () => {
+    mockFetch(mockResponse({ core_latest_ledger: 0xffff_ffff }));
+    expect(await getHorizonLatestLedger(HORIZON)).toBe(0xffff_ffff);
+  });
 });
 
 describe('requestFriendbot', () => {

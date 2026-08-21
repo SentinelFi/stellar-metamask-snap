@@ -1,11 +1,14 @@
 import { assertConnected } from './account';
-import { getAddressForIndex, getOwnedAccounts } from '../keys';
+import {
+  assertBindingCurrent,
+  getAddressForIndex,
+  getOwnedAccounts,
+} from '../keys';
 import { invalidRequest, userRejected } from '../rpc/errors';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import { SetActiveAccountParams, validate } from '../rpc/validation';
 import {
-  getState,
-  hasCurrentDisclosure,
+  grantHasCurrentDisclosure,
   setActiveAccount as setActiveAccountState,
 } from '../state';
 import { SwitchAccountDialog } from '../ui/dialogs';
@@ -20,26 +23,31 @@ export type AccountInfo = { index: number; address: string };
  * not offer a fingerprinting surface beyond what a connected origin already
  * has via `getAddress`.
  *
+ * Everything it discloses comes from the binding the grant check produced:
+ * the registry is the binding's snapshot and the addresses are derived under
+ * the binding's phrase, so a phrase change overlapping the request cannot
+ * turn a grant for the previous wallet into an enumeration of the new one.
+ *
  * @param origin - The requesting dapp origin.
  * @returns The revealed accounts and the active index.
  */
 export async function getAccounts(
   origin: string,
 ): Promise<{ accounts: AccountInfo[]; activeIndex: number }> {
-  await assertConnected(origin);
+  const binding = await assertConnected(origin);
   // Enumeration is only permitted under the disclosure that describes it. A
   // grant predating that disclosure (including any migrated from state
   // version 1) must be re-approved first, so the capability is never acquired
   // silently by updating the snap.
-  if (!(await hasCurrentDisclosure(origin))) {
+  if (!grantHasCurrentDisclosure(binding.state.origins, origin)) {
     throw invalidRequest(
       'This site was connected before account enumeration was disclosed. ' +
         'Call requestAccess to re-confirm the connection first.',
     );
   }
-  const state = await getState();
-  const accounts = await getOwnedAccounts(state);
-  return { accounts, activeIndex: state.activeAccount };
+  const accounts = await getOwnedAccounts(binding);
+  assertBindingCurrent(binding);
+  return { accounts, activeIndex: binding.state.activeAccount };
 }
 
 /**
@@ -57,9 +65,9 @@ export async function setActiveAccount(
   origin: string,
   params: unknown,
 ): Promise<AccountInfo> {
-  await assertConnected(origin);
+  const binding = await assertConnected(origin);
   const { index } = validate(params, SetActiveAccountParams);
-  const state = await getState();
+  const { state } = binding;
 
   if (!state.accounts.includes(index)) {
     throw invalidRequest(
@@ -67,7 +75,7 @@ export async function setActiveAccount(
     );
   }
 
-  const address = await getAddressForIndex(index);
+  const address = await getAddressForIndex(binding, index);
   if (state.activeAccount !== index) {
     recordDialogOpened(origin);
     const approved = await snap.request({
@@ -92,8 +100,9 @@ export async function setActiveAccount(
     // active) must not reset the count.
     clearDialogRejections(origin);
     // Re-read and commit under the state lock; membership is re-checked
-    // there against the post-dialog state.
-    await setActiveAccountState(index);
+    // there against the post-dialog state, and the fingerprint against the
+    // phrase the displayed address was derived under.
+    await setActiveAccountState(index, binding.fingerprint);
   }
 
   return { index, address };

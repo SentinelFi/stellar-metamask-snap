@@ -84,22 +84,29 @@ const MAX_ERROR_MESSAGE_LENGTH = 500;
 /**
  * The snap RPC methods whose invocation may trust the per-instance version
  * memo. Everything else - signing, dialog-confirmed mutations, the dialog-free
- * `fund`, and any method name this connector does not recognize - forces a
- * fresh `wallet_getSnaps` comparison at the moment of the call.
+ * `fund`, the connected privacy reads, and any method name this connector
+ * does not recognize - forces a fresh `wallet_getSnaps` comparison at the
+ * moment of the call.
  *
  * An explicit allowlist rather than a "sensitive methods" list, because the
  * raw `invoke()` escape hatch accepts arbitrary method names: a list of known
  * bad names would silently wave through anything new or misspelled, while an
- * allowlist fails toward the fresh check. Only the silent reads are here, and
- * they are the only calls whose per-page cost the memo exists to save.
+ * allowlist fails toward the fresh check.
+ *
+ * Only the *public* reads are here: the two network methods disclose the
+ * wallet's network preference, which any origin may read from the snap
+ * without a grant. `getAddress`, `getAccounts`, and `getBalances` are silent
+ * too, but they are not public: they disclose the wallet's addresses, the
+ * linked account inventory, and balances, and the last one drives
+ * wallet-mediated network calls. A replacement snap installed under the same
+ * npm ID mid-session holds the same granted permissions, so invoking one of
+ * those against it would run the replacement's code over exactly the data the
+ * pin exists to protect; a memo written before the update cannot vouch for
+ * it. Those reads therefore take the fresh comparison on every call, and the
+ * memo saves its one `wallet_getSnaps` read only for calls that disclose
+ * nothing about the wallet.
  */
-const READ_ONLY_SNAP_METHODS = new Set([
-  'getAddress',
-  'getNetwork',
-  'getNetworkDetails',
-  'getAccounts',
-  'getBalances',
-]);
+const READ_ONLY_SNAP_METHODS = new Set(['getNetwork', 'getNetworkDetails']);
 
 /** The SEP-43 codes an error is allowed to carry into dapp logic. */
 const KNOWN_SEP43_CODES = new Set<number>(Object.values(SEP43_ERROR_CODES));
@@ -177,7 +184,7 @@ export class StellarSnap {
    * it, or by the lazy check in `invoke()` otherwise; cleared whenever a
    * check fails, so the next call re-reads `wallet_getSnaps` rather than
    * trusting a stale answer, and dropped before every call outside the
-   * read-only allowlist so a snap updated mid-session is re-compared (see
+   * public-read allowlist so a snap updated mid-session is re-compared (see
    * `invoke()`). Always true for `local:` IDs, which carry no meaningful
    * version.
    */
@@ -379,10 +386,10 @@ export class StellarSnap {
    * version and only need to be present.
    *
    * A true answer for an `npm:` ID also satisfies the per-call version
-   * check for the silent read methods, so a dapp that asks this first pays
-   * for one `wallet_getSnaps` read, not two. Signing, dialog-confirmed
-   * mutations, `fund`, and raw invocations outside the read-only allowlist
-   * still perform their own fresh comparison at call time.
+   * check for the public read methods (`getNetwork`, `getNetworkDetails`),
+   * so a dapp that asks this first pays for one `wallet_getSnaps` read, not
+   * two. Every other method, the address, account and balance reads
+   * included, still performs its own fresh comparison at call time.
    *
    * @returns True when installed (and, for npm snaps, at the pinned
    * version).
@@ -423,8 +430,8 @@ export class StellarSnap {
    * unchanged. Nothing is remembered for that outcome either, so the check
    * simply repeats until the snap is installed and compared.
    *
-   * The memo is per client instance and is trusted only by the silent read
-   * methods: every call outside the read-only allowlist drops it first (see
+   * The memo is per client instance and is trusted only by the public read
+   * methods: every call outside that allowlist drops it first (see
    * `invoke()`), so a snap updated mid-session is re-compared against the
    * pin before any of them proceeds, and `connect()` re-verifies whenever a
    * dapp asks it to.
@@ -434,7 +441,9 @@ export class StellarSnap {
    * read that started earlier observed the installed version before the
    * demand for freshness existed, so reusing it would let a snap updated in
    * between slip past the very check the drop forced. Such a call starts its
-   * own lookup; waiters from the older generation keep theirs.
+   * own lookup; waiters from the older generation keep theirs. The
+   * converse, a lookup that is superseded by a *later* generation while it
+   * is in flight, is handled by `#ensureCurrentPinnedVersion`.
    *
    * @param provider - The resolved provider.
    */
@@ -471,6 +480,35 @@ export class StellarSnap {
       if (this.#versionCheck === check) {
         this.#versionCheck = null;
       }
+    }
+  }
+
+  /**
+   * The fresh comparison a non-public call takes: demands a new generation,
+   * then awaits a lookup until the one it awaited is still the newest
+   * demand at the moment it settles.
+   *
+   * `#ensurePinnedVersion` answers each caller with the lookup of the
+   * generation that caller captured. That is correct for the caller's own
+   * demand, but two sensitive calls can overlap: the second opens a newer
+   * generation while the first's lookup is in flight, and if the newer
+   * lookup is the one that notices an update, the first call would still
+   * proceed on its own, older, success. `#recordVersion` already keeps that
+   * older success out of the shared memo; this keeps it from satisfying the
+   * older caller too. A call whose generation has been superseded repeats
+   * the check for the current generation, sharing the in-flight lookup when
+   * there is one, and invokes only on a result no later demand has
+   * outdated. Recursive rather than looped so each repeat is one plain
+   * await; it terminates because every repeat awaits a generation that is
+   * strictly newer than the last, and generations are only opened by calls.
+   *
+   * @param provider - The resolved provider.
+   */
+  async #ensureCurrentPinnedVersion(provider: Eip1193Provider): Promise<void> {
+    const generation = this.#versionGeneration;
+    await this.#ensurePinnedVersion(provider);
+    if (generation !== this.#versionGeneration) {
+      await this.#ensureCurrentPinnedVersion(provider);
     }
   }
 
@@ -523,18 +561,20 @@ export class StellarSnap {
    * pinned one (see `#ensurePinnedVersion`), so even the raw path cannot
    * quietly talk to a different release than the one this client names. The
    * method name is arbitrary here, so the per-page memo is trusted only for
-   * the read-only allowlist; any other name - a signing method, a mutation,
-   * or something this connector has never heard of - drops the memo and is
-   * compared against a `wallet_getSnaps` read begun after this call was
-   * made. MetaMask can update the snap under the same npm ID while the page
-   * stays open, and a raw signing call must not run against a release the
-   * page never compared to the pin.
+   * the public-read allowlist; any other name - a signing method, a
+   * mutation, a connected privacy read, or something this connector has
+   * never heard of - drops the memo and is compared against a
+   * `wallet_getSnaps` read begun after this call was made and not outdated
+   * by a later one. MetaMask can update the snap under the same npm ID while
+   * the page stays open, and a raw signing call must not run against a
+   * release the page never compared to the pin.
    *
    * The typed wrappers funnel through here, so the same classification
    * governs them: `signTransaction` and its peers, the dialog-confirmed
-   * mutations, and the dialog-free `fund` all take the fresh check; the
-   * silent reads answer from the memo. One extra provider read on a call
-   * that produces a signature or changes wallet state is noise, and a
+   * mutations, the dialog-free `fund`, and the address, account and balance
+   * reads all take the fresh check; only the network reads answer from the
+   * memo. One extra provider read on a call that produces a signature,
+   * changes wallet state, or discloses wallet data is noise, and a
    * mid-session update fails closed with the same version-mismatch error
    * `connect()` throws.
    *
@@ -549,8 +589,10 @@ export class StellarSnap {
     const provider = await this.getProvider();
     if (this.snapId.startsWith('npm:') && !READ_ONLY_SNAP_METHODS.has(method)) {
       this.#requireFreshVersionCheck();
+      await this.#ensureCurrentPinnedVersion(provider);
+    } else {
+      await this.#ensurePinnedVersion(provider);
     }
-    await this.#ensurePinnedVersion(provider);
     try {
       return await provider.request({
         method: 'wallet_invokeSnap',
@@ -604,6 +646,11 @@ export class StellarSnap {
   /**
    * SEP-43 `getAddress`: silent; empty string when not granted.
    *
+   * Silent towards the user, but not public: it discloses the wallet's
+   * address, so like `getAccounts` and `getBalances` it is compared against
+   * the pinned version with a fresh `wallet_getSnaps` read on every call
+   * rather than answering from the per-page memo (see `invoke()`).
+   *
    * @returns The wallet address or `{ address: '' }`.
    */
   async getAddress(): Promise<GetAddressResult> {
@@ -612,6 +659,11 @@ export class StellarSnap {
 
   /**
    * SEP-43 `getNetwork`.
+   *
+   * A public read: the snap answers it for any origin, and it discloses
+   * nothing about the wallet beyond its network preference. It and
+   * `getNetworkDetails` are the only calls that answer from the per-page
+   * version memo once it is verified (see `invoke()`).
    *
    * @returns The active network and passphrase.
    */

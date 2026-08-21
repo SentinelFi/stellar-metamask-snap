@@ -593,6 +593,39 @@ describe('signing handlers: fail-closed gates', () => {
       expect(dialogs).toHaveLength(0);
     });
 
+    it('refuses on a test network too when only one ledger source answers', async () => {
+      // Range validation bounds what a source may report, but it cannot tell
+      // an inflated in-range height from a real one: a sole RPC answering a
+      // high but representable sequence would still set the default lifetime
+      // by itself while the dialog shows the fixed 60-ledger default. The
+      // independent confirmation is the only check that catches that, so it
+      // is required on every network, not left to the one the wallet is on.
+      stored = stateV2({ origins: CONNECTED });
+      stubLedgerSources({ horizon: null, rpc: 4_000_000_000 });
+      await expect(
+        signAuthEntry(ORIGIN, {
+          authEntry: encode(addressAuthEntry(ADDRESS_0)),
+        }),
+      ).rejects.toThrow('Only one of the two ledger sources');
+      expect(dialogs).toHaveLength(0);
+    });
+
+    it('signs on a test network when both ledger sources answer', async () => {
+      // The counterpart: the test-network refusal above must be caused by the
+      // missing second source, and the minimum of the two is what bounds the
+      // lifetime, so an inflated RPC height cannot extend it past Horizon's.
+      stored = stateV2({ origins: CONNECTED });
+      stubLedgerSources({ horizon: 100_000, rpc: 4_000_000_000 });
+      const result = await signAuthEntry(ORIGIN, {
+        authEntry: encode(addressAuthEntry(ADDRESS_0)),
+      });
+      expect(result.signerAddress).toBe(ADDRESS_0);
+      expect(dialogs).toHaveLength(1);
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).toContain(String(100_000 + 60));
+      expect(dialog).not.toContain(String(4_000_000_000 + 60));
+    });
+
     it('signs on PUBLIC when both ledger sources agree', async () => {
       // The counterpart to the test above: the refusal must be caused by the
       // missing second source, not by something else on the PUBLIC path.
@@ -601,19 +634,6 @@ describe('signing handlers: fail-closed gates', () => {
       const result = await signAuthEntry(ORIGIN, {
         authEntry: encode(addressAuthEntry(ADDRESS_0)),
         networkPassphrase: Networks.PUBLIC,
-      });
-      expect(result.signerAddress).toBe(ADDRESS_0);
-      expect(dialogs).toHaveLength(1);
-    });
-
-    it('accepts a single ledger source on a test network', async () => {
-      // Both test-network endpoints are SDF, and a test-network signature is
-      // not worth trading development ergonomics for. The stricter rule is
-      // scoped to PUBLIC, mirroring `assertNetworkStated`.
-      stored = stateV2({ origins: CONNECTED });
-      stubLedgerSources({ horizon: null, rpc: 100_000 });
-      const result = await signAuthEntry(ORIGIN, {
-        authEntry: encode(addressAuthEntry(ADDRESS_0)),
       });
       expect(result.signerAddress).toBe(ADDRESS_0);
       expect(dialogs).toHaveLength(1);

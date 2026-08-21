@@ -2,7 +2,7 @@ import { assertConnected } from './account';
 import { userRejected } from '../rpc/errors';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import { SetNetworkParams, validate } from '../rpc/validation';
-import { getActiveNetwork, getState, setActiveNetwork } from '../state';
+import { getActiveNetwork, setActiveNetwork } from '../state';
 import type { NetworkName } from '../state/networks';
 import { NETWORKS } from '../state/networks';
 import { NetworkDialog } from '../ui/dialogs';
@@ -59,9 +59,9 @@ export async function setNetwork(
   origin: string,
   params: unknown,
 ): Promise<NetworkDetails> {
-  await assertConnected(origin);
+  const binding = await assertConnected(origin);
   const { network: target } = validate(params, SetNetworkParams);
-  const state = await getState();
+  const { state } = binding;
 
   if (state.network !== target) {
     recordDialogOpened(origin);
@@ -82,8 +82,9 @@ export async function setNetwork(
     // active) must not reset the count.
     clearDialogRejections(origin);
     // Re-read and write under the state lock: the pre-dialog snapshot may
-    // be stale by the time the user approves.
-    await setActiveNetwork(target);
+    // be stale by the time the user approves, and the fingerprint proves the
+    // store still belongs to the phrase whose grant admitted this request.
+    await setActiveNetwork(target, binding.fingerprint);
   }
 
   const network = NETWORKS[target];

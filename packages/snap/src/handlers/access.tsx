@@ -1,11 +1,11 @@
-import { ensureEntropyBinding, getWalletAddress } from '../keys';
+import { ensureEntropyBinding, getActiveAddress } from '../keys';
 import { externalServiceError, userRejected } from '../rpc/errors';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
   connectOrigin,
-  getState,
-  hasCurrentDisclosure,
+  grantHasCurrentDisclosure,
   isOriginConnected,
+  originHasGrant,
 } from '../state';
 import { ConnectDialog } from '../ui/dialogs';
 
@@ -26,22 +26,23 @@ export async function requestAccess(
 ): Promise<{ address: string }> {
   // Before the disclosure check below, not merely before the dialog: that check
   // reads a stored grant, and a grant recorded under a different secret
-  // recovery phrase must be cleared before it can be honoured. The address
-  // lookup that follows is a cache hit, since this derives the active account.
+  // recovery phrase must be cleared before it can be honoured. The grant is
+  // read from the binding's own snapshot, which is known to belong to the
+  // phrase the address below is derived under; the address lookup is a cache
+  // hit, since the binding derives the active account.
   //
-  // The fingerprint is kept for the grant write at the end: it names the
-  // wallet the dialog below is about, and `connectOrigin` compares it against
-  // the store before recording anything, so an approval given while this
-  // phrase was active cannot create a grant for a phrase that replaced it
+  // The binding is kept for the grant write at the end: its fingerprint names
+  // the wallet the dialog below is about, and `connectOrigin` compares it
+  // against the store before recording anything, so an approval given while
+  // this phrase was active cannot create a grant for a phrase that replaced it
   // while the dialog was open.
-  const entropyFingerprint = await ensureEntropyBinding();
-  const address = await getWalletAddress();
+  const binding = await ensureEntropyBinding();
+  const address = await getActiveAddress(binding);
 
-  if (await hasCurrentDisclosure(origin)) {
+  if (grantHasCurrentDisclosure(binding.state.origins, origin)) {
     return { address };
   }
 
-  const state = await getState();
   recordDialogOpened(origin);
   const approved = await snap.request({
     method: 'snap_dialog',
@@ -51,7 +52,7 @@ export async function requestAccess(
         <ConnectDialog
           origin={origin}
           address={address}
-          network={state.network}
+          network={binding.state.network}
         />
       ),
     },
@@ -65,7 +66,7 @@ export async function requestAccess(
   // reset the count.
   clearDialogRejections(origin);
 
-  const granted = await connectOrigin(origin, entropyFingerprint);
+  const granted = await connectOrigin(origin, binding.fingerprint);
   if (!granted) {
     // The primary secret recovery phrase changed while the dialog was open:
     // the consent on screen described the previous wallet's address, so
@@ -89,7 +90,9 @@ export async function requestAccess(
  * changed secret recovery phrase and clears the grants recorded under the old
  * one. So the single call that revoked a grant would still answer it, handing
  * an origin an address for a wallet it had never been granted access to. The
- * second read observes the reconciliation and returns an empty string instead.
+ * second read is of the binding's own snapshot, which observed the
+ * reconciliation and belongs to the phrase the address is derived under, so
+ * a grant from another phrase yields an empty string instead.
  *
  * The cheap first read is what keeps an origin with no grant from costing a key
  * derivation, preserving the property that an unconnected caller cannot drive
@@ -102,9 +105,9 @@ export async function getAddress(origin: string): Promise<{ address: string }> {
   if (!(await isOriginConnected(origin))) {
     return { address: '' };
   }
-  await ensureEntropyBinding();
-  if (!(await isOriginConnected(origin))) {
+  const binding = await ensureEntropyBinding();
+  if (!originHasGrant(binding.state.origins, origin)) {
     return { address: '' };
   }
-  return { address: await getWalletAddress() };
+  return { address: await getActiveAddress(binding) };
 }

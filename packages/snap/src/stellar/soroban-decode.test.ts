@@ -9,6 +9,7 @@ import {
   xdr,
 } from '@stellar/stellar-sdk';
 
+import { MAX_LEDGER_SEQUENCE } from './ledger';
 import {
   boundAuthExpiration,
   decodeAuthEntry,
@@ -507,6 +508,39 @@ describe('boundAuthExpiration', () => {
     expect(boundAuthExpiration(0, null)).toStrictEqual({
       ok: false,
       reason: 'noLedger',
+    });
+  });
+
+  it('treats a current ledger that is not a representable sequence as unknown', () => {
+    // The response parsers already bound what a source may report, but this
+    // is the arithmetic that turns the height into a signed expiry, so it
+    // re-checks rather than trusting its callers: nothing that is not a
+    // positive uint32 may set a lifetime.
+    for (const latest of [0, -1, 1.5, 2 ** 53, MAX_LEDGER_SEQUENCE + 1]) {
+      expect(boundAuthExpiration(0, latest)).toStrictEqual({
+        ok: false,
+        reason: 'noLedger',
+      });
+      expect(boundAuthExpiration(NOW + 500, latest)).toStrictEqual({
+        ok: false,
+        reason: 'noLedger',
+      });
+    }
+  });
+
+  it('refuses a default lifetime the expiry field cannot hold', () => {
+    // `signatureExpirationLedger` is a uint32: a default that would overflow
+    // it is refused, and one that lands exactly on the ceiling is accepted.
+    expect(boundAuthExpiration(0, MAX_LEDGER_SEQUENCE)).toStrictEqual({
+      ok: false,
+      reason: 'noLedger',
+    });
+    expect(
+      boundAuthExpiration(0, MAX_LEDGER_SEQUENCE - DEFAULT_AUTH_TTL_LEDGERS),
+    ).toStrictEqual({
+      ok: true,
+      validUntil: MAX_LEDGER_SEQUENCE,
+      ledgersRemaining: DEFAULT_AUTH_TTL_LEDGERS,
     });
   });
 });

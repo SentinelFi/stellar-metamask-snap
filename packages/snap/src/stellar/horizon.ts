@@ -1,9 +1,7 @@
 import { SnapError } from '@metamask/snaps-sdk';
 import {
   array,
-  integer,
   is,
-  min,
   number,
   optional,
   pattern,
@@ -13,6 +11,7 @@ import {
 } from '@metamask/superstruct';
 
 import { discardBody, readJsonBounded } from './http';
+import { LedgerSequenceStruct } from './ledger';
 import { externalServiceError } from '../rpc/errors';
 import { sanitizeInlineText } from '../ui/format';
 
@@ -338,7 +337,7 @@ export async function getAccountChecks(
 /** The Horizon root fields consumed by {@link getHorizonLatestLedger}. */
 const HorizonRootStruct = type({
   // eslint-disable-next-line @typescript-eslint/naming-convention
-  core_latest_ledger: min(integer(), 1),
+  core_latest_ledger: LedgerSequenceStruct,
 });
 
 /**

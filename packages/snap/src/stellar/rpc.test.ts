@@ -78,6 +78,27 @@ describe('getLatestLedger', () => {
     );
   });
 
+  it('rejects a sequence the protocol cannot represent', async () => {
+    // A ledger sequence is a uint32 on the wire, and this value bounds how
+    // long an authorization signature stays valid. A height above that range
+    // cannot be a ledger, and a value that passes an integer check only
+    // because it lost precision is not exact enough to do arithmetic on.
+    mockFetch(mockResponse(rpcResult({ sequence: 0x1_0000_0000 })));
+    await expect(getLatestLedger(RPC)).rejects.toThrow(
+      'Malformed Stellar RPC response (getLatestLedger).',
+    );
+
+    mockFetch(mockResponse(rpcResult({ sequence: 2 ** 53 })));
+    await expect(getLatestLedger(RPC)).rejects.toThrow(
+      'Malformed Stellar RPC response (getLatestLedger).',
+    );
+  });
+
+  it('accepts the exact uint32 ceiling', async () => {
+    mockFetch(mockResponse(rpcResult({ sequence: 0xffff_ffff })));
+    expect(await getLatestLedger(RPC)).toBe(0xffff_ffff);
+  });
+
   it('sanitizes endpoint error messages before rethrowing them', async () => {
     mockFetch(
       mockResponse({
@@ -189,6 +210,12 @@ describe('simulateTransaction', () => {
     );
 
     mockFetch(mockResponse(rpcResult({ latestLedger: 99.5 })));
+    await expect(simulateTransaction(RPC, 'AAAA')).rejects.toThrow(
+      'Malformed Stellar RPC response (simulateTransaction).',
+    );
+
+    // Nor one the protocol cannot represent: a ledger sequence is a uint32.
+    mockFetch(mockResponse(rpcResult({ latestLedger: 0x1_0000_0000 })));
     await expect(simulateTransaction(RPC, 'AAAA')).rejects.toThrow(
       'Malformed Stellar RPC response (simulateTransaction).',
     );

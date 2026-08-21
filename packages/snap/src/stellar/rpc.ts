@@ -3,9 +3,7 @@ import type { Infer, Struct } from '@metamask/superstruct';
 import {
   array,
   enums,
-  integer,
   is,
-  min,
   optional,
   pattern,
   string,
@@ -13,6 +11,7 @@ import {
 } from '@metamask/superstruct';
 
 import { discardBody, readJsonBounded } from './http';
+import { LedgerSequenceStruct } from './ledger';
 import { externalServiceError } from '../rpc/errors';
 import { sanitizeInlineText } from '../ui/format';
 
@@ -26,7 +25,7 @@ import { sanitizeInlineText } from '../ui/format';
 /** A 64-character hex transaction hash. */
 const TxHash = pattern(string(), /^[0-9a-f]{64}$/iu);
 
-const LatestLedgerStruct = type({ sequence: min(integer(), 1) });
+const LatestLedgerStruct = type({ sequence: LedgerSequenceStruct });
 
 const SimulationStruct = type({
   error: optional(string()),
@@ -40,10 +39,10 @@ const SimulationStruct = type({
   restorePreamble: optional(
     type({ transactionData: string(), minResourceFee: string() }),
   ),
-  // Bounded like every other ledger-height field: a height is a positive
-  // integer, and this value is what a future consumer would reach for first,
-  // so it must carry the same guarantee as its validated siblings.
-  latestLedger: optional(min(integer(), 1)),
+  // Bounded like every other ledger-height field: this value is what a future
+  // consumer would reach for first, so it must carry the same guarantee as
+  // its validated siblings.
+  latestLedger: optional(LedgerSequenceStruct),
 });
 
 const SendTransactionStruct = type({

@@ -1,7 +1,9 @@
+import type { EntropyBinding } from '../keys';
 import {
+  assertBindingCurrent,
   ensureEntropyBinding,
+  getActiveAddress,
   getOwnedAccounts,
-  getWalletAddress,
 } from '../keys';
 import {
   externalServiceError,
@@ -15,13 +17,15 @@ import {
   OptionalAddressParams,
   validate,
 } from '../rpc/validation';
+import type { TrackedToken } from '../state';
 import {
   addToken as addTokenToState,
-  getActiveNetwork,
-  getTokens,
   isOriginConnected,
   MAX_TRACKED_TOKENS,
+  originHasGrant,
 } from '../state';
+import type { NetworkConfig } from '../state/networks';
+import { NETWORKS } from '../state/networks';
 import { SAC_DECIMALS, verifiedStellarAssetIdentity } from '../stellar/events';
 import type { AccountSummary, HorizonBalance } from '../stellar/horizon';
 import { getAccountSummary, requestFriendbot } from '../stellar/horizon';
@@ -61,12 +65,24 @@ export type AccountBalances = AccountSummary & {
  * read is the cheap common case and keeps an origin with no grant at all from
  * costing a key derivation, which is what an ungated caller would otherwise be
  * able to drive. Only once a grant is found does the entropy binding get
- * established, and the second read then observes whatever that reconciliation
- * did: a grant recorded under a different phrase has been cleared by then, so
- * this refuses rather than acting on consent given for another wallet. Several
- * of the methods behind this gate derive nothing at all (`setNetwork`,
- * `addToken`), and the ones that do derive only after passing it, so without
- * the explicit call the reconciliation would run too late to matter here.
+ * established, and the second read is of the binding's own snapshot: a state
+ * read that observed the reconciliation and is stamped with the fingerprint
+ * the wallet derives under. A grant recorded under a different phrase has
+ * been cleared from that snapshot, so this refuses rather than acting on
+ * consent given for another wallet. Several of the methods behind this gate
+ * derive nothing at all (`setNetwork`, `addToken`), and the ones that do
+ * derive only after passing it, so without the explicit call the
+ * reconciliation would run too late to matter here.
+ *
+ * The binding is returned, not discarded, and that is what makes the gate
+ * hold past this function. A boolean answer says "a grant existed when I
+ * looked"; a concurrent request can observe a new phrase and reset the store
+ * between that look and the handler's later state reads and derivations, and
+ * the handler would then read the new wallet's active account, derive its
+ * address, and answer an origin whose only consent was for the old one. Every
+ * handler behind this gate therefore resolves accounts through the returned
+ * binding (same fingerprint, same snapshot), revalidates it before disclosing
+ * wallet-derived data, and passes its fingerprint into any state write.
  *
  * {@link ensureEntropyBinding} throws when the binding cannot be confirmed,
  * which surfaces as an external-service error rather than a refusal to connect.
@@ -74,12 +90,13 @@ export type AccountBalances = AccountSummary & {
  * honest answer is that the wallet cannot currently tell.
  *
  * @param origin - The requesting dapp origin.
+ * @returns The binding the grant was verified under.
  */
-export async function assertConnected(origin: string): Promise<void> {
+export async function assertConnected(origin: string): Promise<EntropyBinding> {
   if (await isOriginConnected(origin)) {
-    await ensureEntropyBinding();
-    if (await isOriginConnected(origin)) {
-      return;
+    const binding = await ensureEntropyBinding();
+    if (originHasGrant(binding.state.origins, origin)) {
+      return binding;
     }
   }
   throw invalidRequest('Origin is not connected. Call requestAccess first.');
@@ -100,9 +117,9 @@ export async function fund(
   origin: string,
   params: unknown,
 ): Promise<{ funded: true; address: string }> {
-  await assertConnected(origin);
+  const binding = await assertConnected(origin);
   const request = validate(params ?? {}, OptionalAddressParams);
-  const network = await getActiveNetwork();
+  const network = NETWORKS[binding.state.network];
 
   if (!network.friendbotUrl) {
     throw invalidRequest(
@@ -110,15 +127,20 @@ export async function fund(
     );
   }
 
-  let address = await getWalletAddress();
+  let address = await getActiveAddress(binding);
   if (request.address !== undefined && request.address !== address) {
-    const owned = await getOwnedAccounts();
+    const owned = await getOwnedAccounts(binding);
     const match = owned.find((entry) => entry.address === request.address);
     if (!match) {
       throw invalidRequest('fund can only target an account of this wallet.');
     }
     address = match.address;
   }
+  // The friendbot call is a side effect on the resolved account, driven by a
+  // grant for the wallet that account belongs to. Checked at the last moment
+  // before it is made, so a phrase change observed since the grant check
+  // cannot let the previous wallet's grant fund the new wallet's account.
+  assertBindingCurrent(binding);
   await requestFriendbot(network.friendbotUrl, address);
   return { funded: true, address };
 }
@@ -127,12 +149,16 @@ export async function fund(
  * Resolves a dapp-requested address to one of the wallet's revealed
  * accounts, failing closed on anything else.
  *
+ * @param binding - The request's entropy binding.
  * @param requested - The dapp-supplied `address` option.
  * @returns The matching owned address.
  * @throws An invalid-request error when the wallet does not hold it.
  */
-async function resolveOwnedAddress(requested: string): Promise<string> {
-  const owned = await getOwnedAccounts();
+async function resolveOwnedAddress(
+  binding: EntropyBinding,
+  requested: string,
+): Promise<string> {
+  const owned = await getOwnedAccounts(binding);
   const match = owned.find((entry) => entry.address === requested);
   if (!match) {
     throw invalidRequest(
@@ -169,11 +195,14 @@ export function resetBalanceCache(): void {
  *
  * @param network - The active network config.
  * @param address - The resolved wallet account address.
+ * @param tokens - The tokens tracked on that network, from the request's
+ * bound state snapshot.
  * @returns The account summary.
  */
 async function readBalances(
-  network: Awaited<ReturnType<typeof getActiveNetwork>>,
+  network: NetworkConfig,
   address: string,
+  tokens: TrackedToken[],
 ): Promise<AccountBalances> {
   const summary = await getAccountSummary(network.horizonUrl, address);
 
@@ -198,7 +227,6 @@ async function readBalances(
   // that was asked. `tokensUnavailable` marks the omission so a caller cannot
   // read a short list as "this account holds no tokens", which is the same
   // rule the safety warnings follow.
-  const tokens = await getTokens(network.name);
   const budgeted = tokens.length === 0 || takeTokenReadBudget(tokens.length);
   const tokenBalances = budgeted
     ? (
@@ -236,6 +264,31 @@ async function readBalances(
 }
 
 /**
+ * Hands a balance lookup's result to the requesting origin, provided the
+ * binding that admitted the request still describes the wallet.
+ *
+ * The lookup is a network round trip (or several), which is exactly the
+ * window in which a concurrent request can observe a changed phrase and
+ * reset the grants the caller was admitted on. The balances themselves were
+ * looked up for an address of the binding's wallet, so a stale binding does
+ * not make them the *new* wallet's; but disclosing them under a grant the
+ * wallet has since reset is still answering a request the store no longer
+ * authorises, and the caller's retry will be refused at the gate.
+ *
+ * @param binding - The binding the request was admitted under.
+ * @param lookup - The (possibly shared) in-flight lookup.
+ * @returns The balances, once the binding is confirmed current.
+ */
+async function disclose(
+  binding: EntropyBinding,
+  lookup: Promise<AccountBalances>,
+): Promise<AccountBalances> {
+  const balances = await lookup;
+  assertBindingCurrent(binding);
+  return balances;
+}
+
+/**
  * `getBalances` — classic Horizon balances plus tracked Soroban token
  * balances (read via simulation) for the active network. Like `fund`, only
  * the wallet's own accounts may be queried: the wallet is not a lookup
@@ -254,21 +307,21 @@ export async function getBalances(
   origin: string,
   params: unknown,
 ): Promise<AccountBalances> {
-  await assertConnected(origin);
+  const binding = await assertConnected(origin);
   const request = validate(params ?? {}, OptionalAddressParams);
-  const network = await getActiveNetwork();
+  const network = NETWORKS[binding.state.network];
 
-  const active = await getWalletAddress();
+  const active = await getActiveAddress(binding);
   const address =
     request.address === undefined || request.address === active
       ? active
-      : await resolveOwnedAddress(request.address);
+      : await resolveOwnedAddress(binding, request.address);
 
   const key = `${network.name} ${address}`;
   const now = Date.now();
   const cached = balanceCache.get(key);
   if (cached && now - cached.at < BALANCE_CACHE_TTL_MS) {
-    return cached.promise;
+    return disclose(binding, cached.promise);
   }
   if (balanceCache.size >= MAX_BALANCE_CACHE_ENTRIES) {
     const oldest = balanceCache.keys().next().value;
@@ -276,7 +329,11 @@ export async function getBalances(
       balanceCache.delete(oldest);
     }
   }
-  const promise = readBalances(network, address);
+  const promise = readBalances(
+    network,
+    address,
+    binding.state.tokens?.[network.name] ?? [],
+  );
   balanceCache.set(key, { at: now, promise });
   // A failure must not be served from cache for the rest of the window. The
   // eviction is identity-checked because a lookup can outlive its own TTL
@@ -289,7 +346,7 @@ export async function getBalances(
       balanceCache.delete(key);
     }
   });
-  return promise;
+  return disclose(binding, promise);
 }
 
 /**
@@ -305,9 +362,9 @@ export async function addToken(
   origin: string,
   params: unknown,
 ): Promise<{ contractId: string; symbol: string; decimals: number }> {
-  await assertConnected(origin);
+  const binding = await assertConnected(origin);
   const request = validate(params, AddTokenParams);
-  const network = await getActiveNetwork();
+  const network = NETWORKS[binding.state.network];
 
   if (
     request.networkPassphrase !== undefined &&
@@ -321,7 +378,7 @@ export async function addToken(
     throw invalidRequest('Invalid contract ID.');
   }
 
-  const tracked = await getTokens(network.name);
+  const tracked = binding.state.tokens?.[network.name] ?? [];
   const alreadyTracked = tracked.some(
     (entry) => entry.contractId === request.contractId,
   );
@@ -415,10 +472,16 @@ export async function addToken(
   // An approved dialog breaks the consecutive-rejection chain.
   clearDialogRejections(origin);
 
-  await addTokenToState(network.name, {
-    contractId: request.contractId,
-    symbol: metadata.symbol,
-    decimals: metadata.decimals,
-  });
+  // Committed under the state lock, where the fingerprint proves the store
+  // still belongs to the phrase whose grant admitted this request.
+  await addTokenToState(
+    network.name,
+    {
+      contractId: request.contractId,
+      symbol: metadata.symbol,
+      decimals: metadata.decimals,
+    },
+    binding.fingerprint,
+  );
   return { contractId: request.contractId, ...metadata };
 }

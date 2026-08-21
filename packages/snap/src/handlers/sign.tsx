@@ -10,6 +10,7 @@ import {
 import { Buffer } from 'buffer';
 
 import { assertConnected } from './account';
+import type { EntropyBinding } from '../keys';
 import {
   deriveSigningKeypair,
   resolveSigningAccount,
@@ -18,6 +19,7 @@ import {
 import {
   externalServiceError,
   invalidRequest,
+  SEP43_ERROR_CODES,
   userRejected,
 } from '../rpc/errors';
 import { takePredialogBudget } from '../rpc/limiter';
@@ -156,17 +158,29 @@ async function recordGrantBestEffort(
  * The grant is checked before the address is resolved, so a caller without
  * one gets the same error whether or not the wallet holds the address.
  *
+ * The binding the grant check produced is handed back for the resolution
+ * itself, and that closes the same oracle from the other side. Resolution
+ * reads the account registry and derives addresses, and a phrase change
+ * between the grant check and that work would otherwise have it compare the
+ * named address against the *new* wallet's accounts: an origin granted under
+ * the old phrase could then tell, from whether it reached a dialog, which
+ * addresses the new wallet holds. Bound to the grant's fingerprint, a
+ * resolution across a phrase change refuses before any address is compared,
+ * so a held and an unheld address produce the same refusal.
+ *
  * @param origin - The requesting dapp origin.
  * @param requestedAddress - The selected address, when one was named.
+ * @returns The binding the selection was authorised under, or undefined
+ * when no selection was made (cold signing for the active account).
  */
 async function assertAccountSelectionAllowed(
   origin: string,
   requestedAddress?: string,
-): Promise<void> {
+): Promise<EntropyBinding | undefined> {
   if (requestedAddress === undefined) {
-    return;
+    return undefined;
   }
-  await assertConnected(origin);
+  return assertConnected(origin);
 }
 
 /**
@@ -245,12 +259,15 @@ export async function signTransaction(
   // below, so no account secret is live during the simulation, the Horizon
   // lookups, or the dialog the user may leave open for the whole 60s
   // `maxRequestTime` window. See `resolveSigningAccount` in ../keys.
-  await assertAccountSelectionAllowed(origin, request.address);
+  const selection = await assertAccountSelectionAllowed(
+    origin,
+    request.address,
+  );
   const {
     index: accountIndex,
     address: signerAddress,
     entropyFingerprint,
-  } = await resolveSigningAccount(request.address);
+  } = await resolveSigningAccount(request.address, selection);
 
   // Resolve the transaction that carries the operations: for a fee bump that
   // is the inner transaction, so a fee-bumped Soroban tx is still recognised
@@ -620,13 +637,27 @@ export async function signAuthEntry(
   // The entry names the account, so the entry itself is the selection: an
   // entry naming any account but the active one needs a grant, exactly like
   // an explicit `address` option.
-  await assertAccountSelectionAllowed(origin, decoded.address);
+  const selection = await assertAccountSelectionAllowed(
+    origin,
+    decoded.address,
+  );
   // Address only; the signing key is derived after approval, below, so no
   // account secret is live across the two ledger reads or the dialog.
   let signer: Awaited<ReturnType<typeof resolveSigningAccount>>;
   try {
-    signer = await resolveSigningAccount(decoded.address);
-  } catch {
+    signer = await resolveSigningAccount(decoded.address, selection);
+  } catch (error) {
+    // Only the unknown-address refusal is restated in the entry's terms. A
+    // binding lost to a phrase change is a different condition with a
+    // different remedy, and it is raised before any address is compared, so
+    // it already reads the same whether or not the wallet holds the account.
+    if (
+      error instanceof SnapError &&
+      (error.data as { code?: unknown } | undefined)?.code !==
+        SEP43_ERROR_CODES.invalidRequest
+    ) {
+      throw error;
+    }
     throw invalidRequest(
       'The authorization entry names a different account than this wallet.',
     );
@@ -652,19 +683,20 @@ export async function signAuthEntry(
   // minimum means a lying source can only shorten a lifetime (at worst a
   // spurious "expired" rejection), never extend one.
   //
-  // That last property is what {@link requiredLedgerSources} enforces, and it
-  // is worth being precise about why it needs enforcing at all. A minimum over
-  // one value is that value. So "take the minimum of the sources we can reach"
+  // That last property only holds while both sources answer, and it is worth
+  // being precise about why that needs enforcing at all. A minimum over one
+  // value is that value. So "take the minimum of the sources we can reach"
   // silently becomes "trust whichever source answered" the moment the other
   // one does not, and the case where that happens is not exotic: Horizon
-  // answering 429 under load is enough. The result would be a mainnet
-  // authorization whose real lifetime is set entirely by the gateway, with a
-  // dialog confidently reporting a duration computed from the same inflated
-  // number. Requiring both sources on PUBLIC restores the property the
-  // paragraph above claims. Test networks keep the single-source behaviour:
-  // there both endpoints are SDF, and a test-network signature is not worth
-  // trading development ergonomics for. This mirrors `assertNetworkStated`
-  // above, which likewise tightens only where being wrong is expensive.
+  // answering 429 under load is enough. The result would be an authorization
+  // whose real lifetime is set entirely by one endpoint, with a dialog
+  // confidently reporting a duration computed from the same inflated number.
+  // Both sources are therefore required on every network, not only on
+  // PUBLIC. Range validation (`LedgerSequenceStruct`) bounds what a source
+  // can report but cannot tell an inflated height from a real one, so the
+  // independent confirmation is the only check that catches it, and a
+  // test-network signature is not worth leaving that check to the network
+  // the wallet happens to be on.
   //
   // Both reads are pre-dialog network work. They sit behind a connection
   // grant, unlike the `signTransaction` safety lookups: an address-credential
@@ -683,7 +715,6 @@ export async function signAuthEntry(
   // signature's lifetime, and this module already refuses to sign when the
   // height cannot be verified. Denial therefore takes the same fail-closed
   // path as an unreachable endpoint.
-  const requiredLedgerSources = network.name === 'PUBLIC' ? 2 : 1;
   let latestLedger: number | null = null;
   let answeredSources = 0;
   const budgeted = takePredialogBudget(connected, 2);
@@ -696,10 +727,7 @@ export async function signAuthEntry(
       (sequence): sequence is number => sequence !== null,
     );
     answeredSources = ledgerSources.length;
-    latestLedger =
-      answeredSources >= requiredLedgerSources
-        ? Math.min(...ledgerSources)
-        : null;
+    latestLedger = answeredSources === 2 ? Math.min(...ledgerSources) : null;
   }
 
   const bounded = boundAuthExpiration(
@@ -718,14 +746,14 @@ export async function signAuthEntry(
     // Same fail-closed outcome in every case; the message distinguishes the
     // three ways of getting here, because the caller's remedy differs.
     if (budgeted && answeredSources > 0) {
-      // Only reachable on PUBLIC: one source answered and the other did not,
-      // so there is a height but nothing to check it against.
+      // One source answered and the other did not, so there is a height but
+      // nothing to check it against.
       throw externalServiceError(
         'Only one of the two ledger sources could be reached, so the ' +
           'authorization expiry could not be cross-checked. A single endpoint ' +
           'that overstates the ledger height would make this authorization ' +
-          'outlive what the dialog shows, so it is refused on PUBLIC rather ' +
-          'than signed against an unverified height. Try again shortly.',
+          'outlive what the dialog shows, so it is refused rather than ' +
+          'signed against an unverified height. Try again shortly.',
       );
     }
     throw externalServiceError(
@@ -821,13 +849,16 @@ export async function signMessage(
     );
   }
 
-  await assertAccountSelectionAllowed(origin, request.address);
+  const selection = await assertAccountSelectionAllowed(
+    origin,
+    request.address,
+  );
   // Address only; the signing key is derived after approval, below.
   const {
     index: accountIndex,
     address: signerAddress,
     entropyFingerprint,
-  } = await resolveSigningAccount(request.address);
+  } = await resolveSigningAccount(request.address, selection);
 
   recordDialogOpened(origin);
   const approved = await snap.request({

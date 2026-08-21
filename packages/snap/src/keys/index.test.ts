@@ -4,6 +4,7 @@ import { Keypair } from '@stellar/stellar-sdk';
 
 import {
   deriveSigningKeypair,
+  ensureEntropyBinding,
   getOwnedAccounts,
   resetAddressCache,
   resolveSigningAccount,
@@ -194,7 +195,9 @@ describe('key derivation', () => {
 
   describe('getOwnedAccounts', () => {
     it('lists every revealed account in index order', async () => {
-      expect(await getOwnedAccounts()).toStrictEqual([
+      expect(
+        await getOwnedAccounts(await ensureEntropyBinding()),
+      ).toStrictEqual([
         { index: 0, address: SEP5_ADDRESS_0 },
         { index: 1, address: SEP5_ADDRESS_1 },
         { index: 2, address: SEP5_ADDRESS_2 },
@@ -203,8 +206,12 @@ describe('key derivation', () => {
 
     it('derives the entropy node once for the whole set', async () => {
       // Called on every home-page render and by fund/getBalances/getAccounts.
-      await getOwnedAccounts();
-      expect(entropyRequests).toBe(1);
+      // The binding's own fetch derives the active account; resolving the
+      // rest of the set then costs one more fetch, not one per index.
+      const binding = await ensureEntropyBinding();
+      const afterBinding = entropyRequests;
+      await getOwnedAccounts(binding);
+      expect(entropyRequests).toBe(afterBinding + 1);
     });
   });
 

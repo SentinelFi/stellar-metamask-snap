@@ -10,6 +10,7 @@ import { Buffer } from 'buffer';
 
 import type { BalanceChangeSummary } from './events';
 import { summarizeBalanceChanges } from './events';
+import { isLedgerSequence } from './ledger';
 import { simulateTransaction } from './rpc';
 import { takePredialogBudget } from '../rpc/limiter';
 import type { TrackedToken } from '../state';
@@ -642,6 +643,13 @@ export type AuthExpiryResult =
  * (RPC unreachable) no expiry can be verified against the maximum lifetime,
  * so every request fails closed rather than passing through unverified.
  *
+ * The current ledger is re-validated here rather than trusted from the
+ * callers' response parsing: this is the arithmetic that turns the height
+ * into a signed expiry, and it must not run on a value that is not a real
+ * ledger sequence. A height so close to the `uint32` ceiling that the default
+ * lifetime would not fit is treated the same way, since the field cannot
+ * carry the result.
+ *
  * @param requestedLedger - The dapp's `signatureExpirationLedger` (0 = unset).
  * @param latestLedger - The current ledger, or null when it could not be read.
  * @returns The bounded result, or a rejection reason.
@@ -650,13 +658,17 @@ export function boundAuthExpiration(
   requestedLedger: number,
   latestLedger: number | null,
 ): AuthExpiryResult {
-  if (latestLedger === null) {
+  if (latestLedger === null || !isLedgerSequence(latestLedger)) {
     return { ok: false, reason: 'noLedger' };
   }
   if (requestedLedger === 0) {
+    const validUntil = latestLedger + DEFAULT_AUTH_TTL_LEDGERS;
+    if (!isLedgerSequence(validUntil)) {
+      return { ok: false, reason: 'noLedger' };
+    }
     return {
       ok: true,
-      validUntil: latestLedger + DEFAULT_AUTH_TTL_LEDGERS,
+      validUntil,
       ledgersRemaining: DEFAULT_AUTH_TTL_LEDGERS,
     };
   }

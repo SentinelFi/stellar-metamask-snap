@@ -17,6 +17,7 @@ import {
   Text,
 } from '@metamask/snaps-sdk/jsx';
 
+import type { EntropyBinding } from '../keys';
 import { ensureEntropyBinding, getOwnedAccounts } from '../keys';
 import type { StoreResetReason, TrackedToken } from '../state';
 import { clearResetNotice, getState } from '../state';
@@ -275,24 +276,31 @@ export async function homePage() {
   // page is the only place a user can revoke a site's grant or stop tracking
   // a token, neither of which needs a key. So the account section degrades on
   // its own and the rest of the page still renders.
-  let accountsUnavailable = false;
+  let binding: EntropyBinding | null = null;
   try {
-    await ensureEntropyBinding();
+    binding = await ensureEntropyBinding();
   } catch {
-    accountsUnavailable = true;
+    binding = null;
   }
-  // One state read for the whole render. Each `getState()` is a separate
-  // `snap_manageState` decrypt, and this page needs the network, the active
-  // account, the account list, the origins, and the tracked tokens: reading
-  // them through four helpers that each re-read state cost four decrypts of
-  // the same value, and left the page assembled from four snapshots that
-  // could in principle differ.
-  const state = await getState();
+  // One state read for the whole render, and it is the binding's own. Each
+  // `getState()` is a separate `snap_manageState` decrypt, and this page
+  // needs the network, the active account, the account list, the origins,
+  // and the tracked tokens: reading them through four helpers that each
+  // re-read state cost four decrypts of the same value, and left the page
+  // assembled from four snapshots that could in principle differ. Rendering
+  // from the binding's snapshot also keeps the page self-consistent across a
+  // phrase change: the origins and indices it shows and the addresses it
+  // derives all describe the same wallet, rather than a registry read under
+  // one phrase next to addresses derived under the next. Only when the
+  // binding could not be established (and the account section is already
+  // degraded) is a plain read used for the rest of the page.
+  const state = binding?.state ?? (await getState());
   const network = NETWORKS[state.network];
+  let accountsUnavailable = binding === null;
   let accounts: AccountRow[] = [];
-  if (!accountsUnavailable) {
+  if (binding !== null) {
     try {
-      accounts = await getOwnedAccounts(state);
+      accounts = await getOwnedAccounts(binding);
     } catch {
       accountsUnavailable = true;
     }

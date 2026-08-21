@@ -27,7 +27,6 @@ import {
 import { route } from './rpc/router';
 import {
   disconnectOrigin,
-  getState,
   MAX_ACCOUNT_INDEX,
   nextAccountIndex,
   removeToken,
@@ -192,14 +191,14 @@ async function findAccountFlow(query: string): Promise<boolean> {
   // the end, so an approval collected for this phrase's addresses cannot
   // reveal a different phrase's accounts if the phrase changes while the
   // dialog is open.
-  const entropyFingerprint = await ensureEntropyBinding();
-  const from = nextAccountIndex(await getState());
+  const binding = await ensureEntropyBinding();
+  const from = nextAccountIndex(binding.state);
   if (index < from) {
     await notify(`Account ${index} is already in your account list.`);
     return false;
   }
 
-  const address = await getAddressForIndex(index);
+  const address = await getAddressForIndex(binding, index);
   const approved = await snap.request({
     method: 'snap_dialog',
     params: {
@@ -217,7 +216,7 @@ async function findAccountFlow(query: string): Promise<boolean> {
   if (!approved) {
     return false;
   }
-  const added = await revealAccountsThrough(index, from, entropyFingerprint);
+  const added = await revealAccountsThrough(index, from, binding.fingerprint);
   return added.length > 0;
 }
 
@@ -233,8 +232,8 @@ async function addAccountFlow(): Promise<boolean> {
   // binding before reading the account registry, and carry the fingerprint
   // into the commit so a phrase change while the dialog is open cannot turn
   // this approval into a reveal for the new phrase's wallet.
-  const entropyFingerprint = await ensureEntropyBinding();
-  const index = nextAccountIndex(await getState());
+  const binding = await ensureEntropyBinding();
+  const index = nextAccountIndex(binding.state);
   if (index >= MAX_ACCOUNT_INDEX) {
     await notify(
       `Account limit reached: at most ${MAX_ACCOUNT_INDEX} accounts.`,
@@ -242,7 +241,7 @@ async function addAccountFlow(): Promise<boolean> {
     return false;
   }
 
-  const address = await getAddressForIndex(index);
+  const address = await getAddressForIndex(binding, index);
   const approved = await snap.request({
     method: 'snap_dialog',
     params: {
@@ -253,7 +252,7 @@ async function addAccountFlow(): Promise<boolean> {
   if (!approved) {
     return false;
   }
-  await revealAccount(index, entropyFingerprint);
+  await revealAccount(index, binding.fingerprint);
   return true;
 }
 
@@ -310,13 +309,18 @@ async function applyUserInput(
     // `Number` is not enough on its own: it reads an empty suffix as 0 and
     // accepts hex, exponent, and whitespace-padded forms, none of which this
     // page ever renders.
+    //
+    // Membership is read from a bound snapshot and the commit carries its
+    // fingerprint: the index on the button was rendered for one phrase's
+    // wallet, and a click landing after a phrase change must not activate
+    // the same index in another's.
     const suffix = event.name.slice(USE_ACCOUNT_PREFIX.length);
     const index = INDEX_PATTERN.test(suffix) ? Number(suffix) : -1;
-    const { accounts } = await getState();
-    if (!accounts.includes(index)) {
+    const binding = await ensureEntropyBinding();
+    if (!binding.state.accounts.includes(index)) {
       return false;
     }
-    await setActiveAccount(index);
+    await setActiveAccount(index, binding.fingerprint);
     return true;
   }
   if (event.name === ADD_ACCOUNT_BUTTON) {
