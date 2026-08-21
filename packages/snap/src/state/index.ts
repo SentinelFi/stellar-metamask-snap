@@ -657,16 +657,43 @@ export async function hasCurrentDisclosure(origin: string): Promise<boolean> {
  * under an older disclosure is upgraded in place, which is what re-approving
  * the connect dialog is for.
  *
+ * A grant is durable consent for a specific wallet, so the write proves,
+ * inside the state lock, that the store still belongs to the secret recovery
+ * phrase the approval was shown for. The caller captured
+ * `expectedFingerprint` when it derived the address its dialog displayed; a
+ * primary-phrase change while that dialog was open reconciles the store to
+ * the new phrase's fingerprint, and this comparison is what stops the old
+ * approval from attaching a grant to the new wallet's state. On a mismatch
+ * nothing is written and `false` is returned; the caller decides whether to
+ * surface that or drop the ancillary grant silently.
+ *
+ * `undefined` skips the comparison and is for callers that hold no derived
+ * display to anchor the consent to (today: tests exercising the lock and
+ * reset-notice behaviour). Every dialog-driven caller passes the real value.
+ *
  * @param origin - The dapp origin the user approved.
+ * @param expectedFingerprint - The entropy fingerprint the approved dialog's
+ * address was derived under, or `undefined` to skip the check.
+ * @returns True when the grant is recorded (or already current); false when
+ * the store's fingerprint no longer matches and nothing was written.
  */
-export async function connectOrigin(origin: string): Promise<void> {
+export async function connectOrigin(
+  origin: string,
+  expectedFingerprint: string | undefined,
+): Promise<boolean> {
   if (!isSafeStateKey(origin)) {
-    return;
+    return false;
   }
-  await withStateLock(async () => {
+  return withStateLock(async () => {
     const state = await getState();
+    if (
+      expectedFingerprint !== undefined &&
+      state.entropyFingerprint !== expectedFingerprint
+    ) {
+      return false;
+    }
     if (grantHasCurrentDisclosure(state.origins, origin)) {
-      return;
+      return true;
     }
     const existing = originHasGrant(state.origins, origin)
       ? state.origins[origin]
@@ -691,6 +718,7 @@ export async function connectOrigin(origin: string): Promise<void> {
     // timestamp: a future change that prunes unconditionally would silently
     // start dropping the grant it was asked to record.
     await saveState({ ...state, origins: normalizeOrigins(origins) });
+    return true;
   });
 }
 

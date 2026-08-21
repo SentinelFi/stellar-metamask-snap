@@ -932,6 +932,35 @@ const MAX_SIM_AUTH_SIGNERS = 20;
  */
 const MAX_RESOURCE_FEE_DIGITS = 19;
 
+/**
+ * The largest fee an int64 can carry. The digit cap alone still admits
+ * 19-digit values above it (up to `9999999999999999999`), and a fee the
+ * protocol cannot represent is not an estimate of anything: presenting one
+ * as usable would let a hostile endpoint show the user a protocol-impossible
+ * figure in a confirmation dialog. Values above this render as unavailable,
+ * exactly like an over-long one.
+ */
+const MAX_RESOURCE_FEE = 9223372036854775807n;
+
+/**
+ * Screens the endpoint-reported resource fee down to a value an int64 fee can
+ * actually be, or null when there is no usable estimate.
+ *
+ * The digit-length check runs first so the `BigInt` conversion is only ever
+ * applied to a bounded string; the field is already pattern-validated to be
+ * all digits, so the conversion cannot throw. Leading-zero forms are compared
+ * by value, not by length.
+ *
+ * @param fee - The reported `minResourceFee`, when present.
+ * @returns The fee string as reported, or null when absent or impossible.
+ */
+function usableResourceFee(fee: string | undefined): string | null {
+  if (fee === undefined || fee.length > MAX_RESOURCE_FEE_DIGITS) {
+    return null;
+  }
+  return BigInt(fee) <= MAX_RESOURCE_FEE ? fee : null;
+}
+
 export type SimulationSummary =
   | {
       ok: true;
@@ -1067,11 +1096,7 @@ export async function simulateForDisplay(
 
   return {
     ok: true,
-    minResourceFee:
-      response.minResourceFee !== undefined &&
-      response.minResourceFee.length <= MAX_RESOURCE_FEE_DIGITS
-        ? response.minResourceFee
-        : null,
+    minResourceFee: usableResourceFee(response.minResourceFee),
     authSigners,
     restoreRequired: Boolean(response.restorePreamble),
     ...(balanceChanges === undefined ? {} : { balanceChanges }),

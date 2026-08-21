@@ -97,6 +97,59 @@ function providerWithMutableVersion() {
 }
 
 /**
+ * Like {@link providerWithMutableVersion}, but every `wallet_getSnaps` read
+ * stays pending until the test releases it, and the response reports the
+ * version installed at the moment the read *began*: a lookup that was in
+ * flight when the user updated the snap answers with what it observed, not
+ * with the state at resolution time.
+ *
+ * @returns The mock provider, the recorded request list, a setter for the
+ * reported version, and the queue of pending `wallet_getSnaps` releases in
+ * arrival order.
+ */
+function providerWithDeferredSnapReads() {
+  const requests: RecordedRequest[] = [];
+  let installed = '0.1.0';
+  const releases: (() => void)[] = [];
+  const provider: Eip1193Provider = {
+    request: jest.fn(async (args: RecordedRequest) => {
+      requests.push(args);
+      if (args.method === 'wallet_getSnaps') {
+        const snapshot = { [SNAP_ID]: { version: installed } };
+        return new Promise((resolve) => {
+          releases.push(() => resolve(snapshot));
+        });
+      }
+      return { address: ADDRESS };
+    }) as Eip1193Provider['request'],
+  };
+  return {
+    provider,
+    requests,
+    releases,
+    setInstalled: (version: string) => {
+      installed = version;
+    },
+  };
+}
+
+/**
+ * Yields event-loop turns until the probe reports true, so a test can hold a
+ * call at a known pending point before driving the next step. Each iteration
+ * yields a macrotask rather than a bare microtask, so awaited timers and I/O
+ * keep running; a probe that never turns true is caught by the test timeout.
+ * Declared at module scope because the loop is a conditional, which
+ * `jest/no-conditional-in-test` refuses in a test body.
+ *
+ * @param probe - Returns true once the awaited condition holds.
+ */
+async function waitUntil(probe: () => boolean): Promise<void> {
+  while (!probe()) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+/**
  * Builds a mock EIP-1193 provider that records requests and answers snap
  * invocations from a method → result/error table.
  *
@@ -553,6 +606,80 @@ describe('StellarSnap version check on invocation', () => {
     });
     expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
     expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(2);
+  });
+
+  it('fails a raw signing invocation closed after a mid-session update', async () => {
+    // invoke() accepts arbitrary method names, so the memo is trusted only
+    // for the read-only allowlist. A raw signMessage would otherwise bypass
+    // the fresh comparison the typed wrapper performs, running whatever
+    // release now sits under the npm ID.
+    const { provider, requests, setInstalled } = providerWithMutableVersion();
+    const snap = new StellarSnap({ provider });
+
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+
+    setInstalled('0.2.0');
+    await expect(
+      snap.invoke('signMessage', { message: 'hello' }),
+    ).rejects.toMatchObject({
+      code: -3,
+      message: expect.stringContaining('0.2.0'),
+    });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
+  });
+
+  it('fails the dialog-free fund call closed after a mid-session update', async () => {
+    // fund is side-effecting but shows no snap dialog, so nothing downstream
+    // would surface a release change to the user; it must take the same
+    // fresh comparison as the signing methods, not ride the silent-read
+    // memo.
+    const { provider, requests, setInstalled } = providerWithMutableVersion();
+    const snap = new StellarSnap({ provider });
+
+    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
+
+    setInstalled('0.2.0');
+    await expect(snap.fund()).rejects.toMatchObject({
+      code: -3,
+      message: expect.stringContaining('0.2.0'),
+    });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
+  });
+
+  it('does not satisfy a sensitive call with a lookup begun before it', async () => {
+    // A silent read can leave a wallet_getSnaps lookup in flight when a
+    // sensitive call arrives. That lookup observed the installed version
+    // before the sensitive call was made, so a snap updated in between
+    // would pass a check that predates it. The sensitive call must await a
+    // lookup begun after itself.
+    const { provider, requests, releases, setInstalled } =
+      providerWithDeferredSnapReads();
+    const snap = new StellarSnap({ provider });
+
+    const read = snap.getAddress();
+    await waitUntil(() => releases.length === 1);
+
+    // The snap updates while the read's lookup is still pending; the
+    // sensitive call must start its own lookup rather than share it.
+    setInstalled('0.2.0');
+    const sensitive = snap.signMessage('hello');
+    await waitUntil(() => releases.length === 2);
+
+    // The stale lookup settles first, reporting the version it observed
+    // before the update. Only the read that started it may trust that
+    // answer.
+    releases[0]?.();
+    releases[1]?.();
+
+    expect(await read).toStrictEqual({ address: ADDRESS });
+    await expect(sensitive).rejects.toMatchObject({
+      code: -3,
+      message: expect.stringContaining('0.2.0'),
+    });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
   });
 
   it('skips the check for local development snaps', async () => {

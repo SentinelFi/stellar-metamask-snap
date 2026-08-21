@@ -81,6 +81,26 @@ const SNAP_ID_PATTERN = /^(?:npm:|local:)./u;
 /** Cap on error text copied from upstream into thrown errors. */
 const MAX_ERROR_MESSAGE_LENGTH = 500;
 
+/**
+ * The snap RPC methods whose invocation may trust the per-instance version
+ * memo. Everything else - signing, dialog-confirmed mutations, the dialog-free
+ * `fund`, and any method name this connector does not recognize - forces a
+ * fresh `wallet_getSnaps` comparison at the moment of the call.
+ *
+ * An explicit allowlist rather than a "sensitive methods" list, because the
+ * raw `invoke()` escape hatch accepts arbitrary method names: a list of known
+ * bad names would silently wave through anything new or misspelled, while an
+ * allowlist fails toward the fresh check. Only the silent reads are here, and
+ * they are the only calls whose per-page cost the memo exists to save.
+ */
+const READ_ONLY_SNAP_METHODS = new Set([
+  'getAddress',
+  'getNetwork',
+  'getNetworkDetails',
+  'getAccounts',
+  'getBalances',
+]);
+
 /** The SEP-43 codes an error is allowed to carry into dapp logic. */
 const KNOWN_SEP43_CODES = new Set<number>(Object.values(SEP43_ERROR_CODES));
 
@@ -156,19 +176,32 @@ export class StellarSnap {
    * under `snapId`. Set by `connect()` and `isInstalled()` when they verify
    * it, or by the lazy check in `invoke()` otherwise; cleared whenever a
    * check fails, so the next call re-reads `wallet_getSnaps` rather than
-   * trusting a stale answer, and dropped before every signing or
-   * dialog-confirmed call so a snap updated mid-session is re-compared (see
-   * `#invokeSensitive`). Always true for `local:` IDs, which carry no
-   * meaningful version.
+   * trusting a stale answer, and dropped before every call outside the
+   * read-only allowlist so a snap updated mid-session is re-compared (see
+   * `invoke()`). Always true for `local:` IDs, which carry no meaningful
+   * version.
    */
   #versionVerified: boolean;
 
   /**
+   * Counts the demands for a *fresh* version comparison. Bumped whenever a
+   * non-read-only call drops the memo, and stamped onto every lookup when it
+   * starts. Only a lookup begun in the current generation may mark the pin
+   * verified or be awaited as the fresh check: without the stamp, a call that
+   * cleared the memo could still be satisfied by a `wallet_getSnaps` read
+   * that started (and observed the installed version) before the call was
+   * made, which is exactly the staleness dropping the memo exists to refuse.
+   */
+  #versionGeneration = 0;
+
+  /**
    * The in-flight lazy version check, shared so that concurrent first calls
    * (a page that fires `getAddress()` and `getNetwork()` together) read
-   * `wallet_getSnaps` once rather than once each.
+   * `wallet_getSnaps` once rather than once each. Tagged with the generation
+   * it was started in; a caller from a newer generation starts its own
+   * lookup instead of reusing this one.
    */
-  #versionCheck: Promise<void> | null = null;
+  #versionCheck: { generation: number; promise: Promise<void> } | null = null;
 
   constructor(options: StellarSnapOptions = {}) {
     const snapId = options.snapId ?? DEFAULT_SNAP_ID;
@@ -306,12 +339,34 @@ export class StellarSnap {
    * a verified pin is not re-read on every call and a failed comparison is
    * not remembered past the call that observed it.
    *
+   * The memo is written only when the lookup that produced the comparison
+   * began in the current generation. A lookup from an older generation
+   * observed the installed version before some later call demanded a fresh
+   * check, so its (possibly stale) success must not satisfy that demand -
+   * though the outcome still answers the older call that started it, which
+   * is what the return value is for.
+   *
    * @param installed - The version MetaMask reported.
+   * @param generation - The value of `#versionGeneration` when the lookup
+   * that produced `installed` began.
    * @returns True when it equals the pin.
    */
-  #recordVersion(installed: string | null): boolean {
-    this.#versionVerified = installed === this.version;
-    return this.#versionVerified;
+  #recordVersion(installed: string | null, generation: number): boolean {
+    const matches = installed === this.version;
+    if (generation === this.#versionGeneration) {
+      this.#versionVerified = matches;
+    }
+    return matches;
+  }
+
+  /**
+   * Drops the version memo and opens a new check generation, so the next
+   * `#ensurePinnedVersion` performs (and awaits) a `wallet_getSnaps` read
+   * begun *after* this moment rather than reusing any earlier lookup.
+   */
+  #requireFreshVersionCheck(): void {
+    this.#versionGeneration += 1;
+    this.#versionVerified = false;
   }
 
   /**
@@ -324,8 +379,10 @@ export class StellarSnap {
    * version and only need to be present.
    *
    * A true answer for an `npm:` ID also satisfies the per-call version
-   * check in `invoke()`, so a dapp that asks this first pays for one
-   * `wallet_getSnaps` read, not two.
+   * check for the silent read methods, so a dapp that asks this first pays
+   * for one `wallet_getSnaps` read, not two. Signing, dialog-confirmed
+   * mutations, `fund`, and raw invocations outside the read-only allowlist
+   * still perform their own fresh comparison at call time.
    *
    * @returns True when installed (and, for npm snaps, at the pinned
    * version).
@@ -333,11 +390,12 @@ export class StellarSnap {
   async isInstalled(): Promise<boolean> {
     try {
       const provider = await this.getProvider();
+      const generation = this.#versionGeneration;
       const snaps = await provider.request({ method: 'wallet_getSnaps' });
       if (!this.snapId.startsWith('npm:')) {
         return this.#hasEntry(snaps);
       }
-      return this.#recordVersion(this.#installedVersion(snaps));
+      return this.#recordVersion(this.#installedVersion(snaps), generation);
     } catch {
       return false;
     }
@@ -366,10 +424,17 @@ export class StellarSnap {
    * simply repeats until the snap is installed and compared.
    *
    * The memo is per client instance and is trusted only by the silent read
-   * methods: signing and the dialog-confirmed mutations drop it first (see
-   * {@link #invokeSensitive}), so a snap updated mid-session is re-compared
-   * against the pin before any of them proceeds, and `connect()` re-verifies
-   * whenever a dapp asks it to.
+   * methods: every call outside the read-only allowlist drops it first (see
+   * `invoke()`), so a snap updated mid-session is re-compared against the
+   * pin before any of them proceeds, and `connect()` re-verifies whenever a
+   * dapp asks it to.
+   *
+   * A call that dropped the memo opened a new generation, and only a lookup
+   * begun in that generation may answer it: an in-flight `wallet_getSnaps`
+   * read that started earlier observed the installed version before the
+   * demand for freshness existed, so reusing it would let a snap updated in
+   * between slip past the very check the drop forced. Such a call starts its
+   * own lookup; waiters from the older generation keep theirs.
    *
    * @param provider - The resolved provider.
    */
@@ -377,25 +442,35 @@ export class StellarSnap {
     if (this.#versionVerified) {
       return;
     }
-    this.#versionCheck ??= (async () => {
-      let snaps: unknown;
-      try {
-        snaps = await provider.request({ method: 'wallet_getSnaps' });
-      } catch (error) {
-        throw toStellarSnapError(error);
-      }
-      if (!this.#hasEntry(snaps)) {
-        return;
-      }
-      const installed = this.#installedVersion(snaps);
-      if (!this.#recordVersion(installed)) {
-        throw this.#versionMismatchError(installed);
-      }
-    })();
+    const generation = this.#versionGeneration;
+    let check = this.#versionCheck;
+    if (check === null || check.generation !== generation) {
+      const promise = (async () => {
+        let snaps: unknown;
+        try {
+          snaps = await provider.request({ method: 'wallet_getSnaps' });
+        } catch (error) {
+          throw toStellarSnapError(error);
+        }
+        if (!this.#hasEntry(snaps)) {
+          return;
+        }
+        const installed = this.#installedVersion(snaps);
+        if (!this.#recordVersion(installed, generation)) {
+          throw this.#versionMismatchError(installed);
+        }
+      })();
+      check = { generation, promise };
+      this.#versionCheck = check;
+    }
     try {
-      await this.#versionCheck;
+      await check.promise;
     } finally {
-      this.#versionCheck = null;
+      // Clear only what this caller awaited: a newer generation may already
+      // have installed its own lookup here.
+      if (this.#versionCheck === check) {
+        this.#versionCheck = null;
+      }
     }
   }
 
@@ -412,6 +487,7 @@ export class StellarSnap {
    */
   async connect(): Promise<GetAddressResult> {
     const provider = await this.getProvider();
+    const generation = this.#versionGeneration;
     let result: unknown;
     try {
       result = await provider.request({
@@ -427,7 +503,7 @@ export class StellarSnap {
     }
     if (this.snapId.startsWith('npm:')) {
       const installed = this.#installedVersion(result);
-      if (!this.#recordVersion(installed)) {
+      if (!this.#recordVersion(installed, generation)) {
         throw this.#versionMismatchError(installed);
       }
     }
@@ -443,9 +519,24 @@ export class StellarSnap {
    * validating shapes. Callers of the raw form take on that job themselves.
    *
    * What it does share with the typed methods is the version check: for an
-   * `npm:` snap the first invocation confirms that the installed release is
-   * the pinned one (see `#ensurePinnedVersion`), so even the raw path cannot
-   * quietly talk to a different release than the one this client names.
+   * `npm:` snap every invocation confirms that the installed release is the
+   * pinned one (see `#ensurePinnedVersion`), so even the raw path cannot
+   * quietly talk to a different release than the one this client names. The
+   * method name is arbitrary here, so the per-page memo is trusted only for
+   * the read-only allowlist; any other name - a signing method, a mutation,
+   * or something this connector has never heard of - drops the memo and is
+   * compared against a `wallet_getSnaps` read begun after this call was
+   * made. MetaMask can update the snap under the same npm ID while the page
+   * stays open, and a raw signing call must not run against a release the
+   * page never compared to the pin.
+   *
+   * The typed wrappers funnel through here, so the same classification
+   * governs them: `signTransaction` and its peers, the dialog-confirmed
+   * mutations, and the dialog-free `fund` all take the fresh check; the
+   * silent reads answer from the memo. One extra provider read on a call
+   * that produces a signature or changes wallet state is noise, and a
+   * mid-session update fails closed with the same version-mismatch error
+   * `connect()` throws.
    *
    * @param method - The snap method name.
    * @param params - Optional params object.
@@ -456,6 +547,9 @@ export class StellarSnap {
     params?: Record<string, unknown>,
   ): Promise<unknown> {
     const provider = await this.getProvider();
+    if (this.snapId.startsWith('npm:') && !READ_ONLY_SNAP_METHODS.has(method)) {
+      this.#requireFreshVersionCheck();
+    }
     await this.#ensurePinnedVersion(provider);
     try {
       return await provider.request({
@@ -499,43 +593,12 @@ export class StellarSnap {
   }
 
   /**
-   * Like {@link #invoke}, but re-verifies the pinned version first instead of
-   * trusting the per-page memo.
-   *
-   * The memo exists so silent reads (`getAddress`, `getNetwork`) cost one
-   * `wallet_getSnaps` per page, not one per call. That trade does not hold
-   * for signing and the dialog-confirmed mutations: MetaMask can update the
-   * snap under the same npm ID while the page stays open, and a request that
-   * produces a signature or changes wallet state must be compared against the
-   * pin at the moment it is made, not at the moment the page loaded. Dropping
-   * the memo here makes `#ensurePinnedVersion` read `wallet_getSnaps` again;
-   * one extra provider read on a call that already waits for a user dialog is
-   * noise, and a mid-session update fails closed with the same version-
-   * mismatch error `connect()` throws.
-   *
-   * @param method - The snap method name.
-   * @param params - Optional params object.
-   * @param validateResult - Structural validator for the expected shape.
-   * @returns The validated method result.
-   */
-  async #invokeSensitive<Type>(
-    method: string,
-    params: Record<string, unknown> | undefined,
-    validateResult: (value: unknown) => value is Type,
-  ): Promise<Type> {
-    if (this.snapId.startsWith('npm:')) {
-      this.#versionVerified = false;
-    }
-    return this.#invoke(method, params, validateResult);
-  }
-
-  /**
    * SEP-43 `requestAccess`: connect dialog on first use.
    *
    * @returns The wallet address.
    */
   async requestAccess(): Promise<GetAddressResult> {
-    return this.#invokeSensitive('requestAccess', undefined, isAddressResult);
+    return this.#invoke('requestAccess', undefined, isAddressResult);
   }
 
   /**
@@ -572,11 +635,7 @@ export class StellarSnap {
    * @returns The new network details.
    */
   async setNetwork(network: NetworkName): Promise<NetworkDetailsResult> {
-    return this.#invokeSensitive(
-      'setNetwork',
-      { network },
-      isNetworkDetailsResult,
-    );
+    return this.#invoke('setNetwork', { network }, isNetworkDetailsResult);
   }
 
   /**
@@ -610,7 +669,7 @@ export class StellarSnap {
     // position. Option bags are routinely forwarded from other layers (a
     // kit, a facade, a dapp's own config), and "the payload I named wins"
     // is the only rule a caller can reason about.
-    return this.#invokeSensitive(
+    return this.#invoke(
       'signTransaction',
       { ...options, xdr },
       isSignTransactionResult,
@@ -628,7 +687,7 @@ export class StellarSnap {
     authEntry: string,
     options: SignAuthEntryOptions = {},
   ): Promise<SignAuthEntryResult> {
-    return this.#invokeSensitive(
+    return this.#invoke(
       'signAuthEntry',
       { ...options, authEntry },
       isSignAuthEntryResult,
@@ -648,7 +707,7 @@ export class StellarSnap {
     message: string,
     options: SignMessageOptions = {},
   ): Promise<SignMessageResult> {
-    return this.#invokeSensitive(
+    return this.#invoke(
       'signMessage',
       { ...options, message },
       isSignMessageResult,
@@ -675,7 +734,7 @@ export class StellarSnap {
    * @returns The new active account.
    */
   async setActiveAccount(index: number): Promise<SetActiveAccountResult> {
-    return this.#invokeSensitive(
+    return this.#invoke(
       'setActiveAccount',
       { index },
       isSetActiveAccountResult,
@@ -684,6 +743,11 @@ export class StellarSnap {
 
   /**
    * Friendbot funding (test networks; requires a connected origin).
+   *
+   * Side-effecting and dialog-free, so it is not on the read-only allowlist:
+   * like the signing methods, each call is compared against the pinned
+   * version with a fresh `wallet_getSnaps` read rather than the per-page
+   * memo (see `invoke()`).
    *
    * @param address - Optional address; defaults to the wallet account.
    * @returns The funded address.
@@ -721,7 +785,7 @@ export class StellarSnap {
     contractId: string,
     networkPassphrase?: string,
   ): Promise<AddTokenResult> {
-    return this.#invokeSensitive(
+    return this.#invoke(
       'addToken',
       {
         contractId,

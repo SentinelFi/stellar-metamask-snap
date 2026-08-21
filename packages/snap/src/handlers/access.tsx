@@ -1,5 +1,5 @@
 import { ensureEntropyBinding, getWalletAddress } from '../keys';
-import { userRejected } from '../rpc/errors';
+import { externalServiceError, userRejected } from '../rpc/errors';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
   connectOrigin,
@@ -28,7 +28,13 @@ export async function requestAccess(
   // reads a stored grant, and a grant recorded under a different secret
   // recovery phrase must be cleared before it can be honoured. The address
   // lookup that follows is a cache hit, since this derives the active account.
-  await ensureEntropyBinding();
+  //
+  // The fingerprint is kept for the grant write at the end: it names the
+  // wallet the dialog below is about, and `connectOrigin` compares it against
+  // the store before recording anything, so an approval given while this
+  // phrase was active cannot create a grant for a phrase that replaced it
+  // while the dialog was open.
+  const entropyFingerprint = await ensureEntropyBinding();
   const address = await getWalletAddress();
 
   if (await hasCurrentDisclosure(origin)) {
@@ -59,7 +65,17 @@ export async function requestAccess(
   // reset the count.
   clearDialogRejections(origin);
 
-  await connectOrigin(origin);
+  const granted = await connectOrigin(origin, entropyFingerprint);
+  if (!granted) {
+    // The primary secret recovery phrase changed while the dialog was open:
+    // the consent on screen described the previous wallet's address, so
+    // neither a grant nor that address may be handed to the origin.
+    throw externalServiceError(
+      'The active secret recovery phrase changed while the connection ' +
+        'request was in progress, so the approval no longer applies. Try ' +
+        'again.',
+    );
+  }
   return { address };
 }
 

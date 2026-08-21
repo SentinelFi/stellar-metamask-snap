@@ -28,6 +28,75 @@ const addressCache = new Map<number, string>();
 let contextFingerprint: string | null = null;
 
 /**
+ * The fingerprint each fetched parent node was observed under, immutable for
+ * the node's lifetime.
+ *
+ * Requests overlap: one request can retain a parent node while another
+ * observes a changed secret recovery phrase, clears the cache, and moves
+ * {@link contextFingerprint} on. The retained node still derives valid-looking
+ * addresses for a phrase the wallet no longer uses, and nothing about the node
+ * itself says so. Recording the fingerprint per node is what lets a completion
+ * prove, at the moment it caches or returns a result, that the phrase it
+ * derived from is still the active one.
+ */
+const nodeFingerprints = new WeakMap<SLIP10Node, string>();
+
+/**
+ * Whether the given parent node still belongs to the active secret recovery
+ * phrase.
+ *
+ * @param node - A parent node previously passed through
+ * {@link bindToEntropySource}.
+ * @returns True when its fingerprint is the one currently observed.
+ */
+function isNodeCurrent(node: SLIP10Node): boolean {
+  const fingerprint = nodeFingerprints.get(node);
+  return fingerprint !== undefined && fingerprint === contextFingerprint;
+}
+
+/**
+ * Refuses a completion whose parent node was superseded by a change of secret
+ * recovery phrase while the request was in flight.
+ *
+ * An address derived from a superseded node describes the *previous* wallet.
+ * Returning it would hand an origin an address the wallet no longer holds,
+ * and caching it would let every later call repeat that answer with no
+ * fingerprint change left to detect. The request is rejected instead; a
+ * retry derives from the phrase that is now active.
+ *
+ * @param node - The parent node the pending work derived from.
+ * @throws An external-service error when the node is no longer current.
+ */
+function assertNodeCurrent(node: SLIP10Node): void {
+  if (!isNodeCurrent(node)) {
+    throw externalServiceError(
+      'The active secret recovery phrase changed while this request was ' +
+        'running, so its result no longer describes this wallet. Try again.',
+    );
+  }
+}
+
+/**
+ * Stores a derived address in the memo, only when the node it was derived
+ * from still belongs to the active phrase.
+ *
+ * The currency check happens *here*, synchronously at the write, and not only
+ * inside {@link deriveAddress}: between a derivation settling and its caller's
+ * continuation running, another request's binding can observe a new phrase and
+ * clear the cache. A write guarded only upstream would then repopulate the
+ * cleared cache with the old phrase's address.
+ *
+ * @param node - The parent node the address was derived from.
+ * @param index - The account index.
+ * @param address - The derived address.
+ */
+function cacheAddress(node: SLIP10Node, index: number, address: string): void {
+  if (isNodeCurrent(node)) {
+    addressCache.set(index, address);
+  }
+}
+
+/**
  * The in-flight (or settled) persisted-binding reconciliation for this
  * execution context, or null when it has not run or last failed.
  *
@@ -130,6 +199,9 @@ async function bindToEntropySource(node: SLIP10Node): Promise<void> {
   // Every phrase then shares one constant fingerprint and no change is ever
   // detected, which silently disables everything this function exists for.
   const fingerprint = hash(Buffer.from(node.publicKeyBytes)).toString('hex');
+  // Recorded immutably against the node itself, so work that retained this
+  // node across a later phrase change can prove which phrase it derives for.
+  nodeFingerprints.set(node, fingerprint);
   if (contextFingerprint !== null && contextFingerprint !== fingerprint) {
     addressCache.clear();
   }
@@ -249,11 +321,22 @@ async function bindToEntropySource(node: SLIP10Node): Promise<void> {
  * before it, `activeAccount` could be an index recorded under a phrase the
  * reconciliation is about to reset.
  *
+ * Returns the fingerprint the binding was confirmed for. A caller that goes
+ * on to *write* a grant needs it: the dialog it shows describes this phrase,
+ * and a phrase change while the dialog is open must not let the approval land
+ * in the new phrase's state. Passing this value to `connectOrigin` is what
+ * makes that check possible, and it is the node's own fingerprint rather than
+ * whatever is current at return time, so a concurrent change cannot swap in
+ * the newer value between the fetch and the capture.
+ *
+ * @returns The confirmed entropy fingerprint.
  * @throws An external-service error when the binding cannot be confirmed.
  */
-export async function ensureEntropyBinding(): Promise<void> {
+export async function ensureEntropyBinding(): Promise<string> {
   const node = await getAccountParentNode();
-  if (!bindingVerified) {
+  assertNodeCurrent(node);
+  const fingerprint = nodeFingerprints.get(node);
+  if (!bindingVerified || fingerprint === undefined) {
     throw externalServiceError(
       'The wallet could not confirm which secret recovery phrase this snap ' +
         'stored its data under, so connected-site permissions cannot be used ' +
@@ -262,8 +345,9 @@ export async function ensureEntropyBinding(): Promise<void> {
   }
   const { activeAccount } = await getState();
   if (!addressCache.has(activeAccount)) {
-    addressCache.set(activeAccount, await deriveAddress(node, activeAccount));
+    cacheAddress(node, activeAccount, await deriveAddress(node, activeAccount));
   }
+  return fingerprint;
 }
 
 /**
@@ -333,6 +417,12 @@ async function deriveFromNode(
  * {@link wipeKeypair}). Mitigation, not a guarantee, in the sense
  * {@link deriveFromNode} sets out.
  *
+ * The node's currency is asserted after the derivation settles: a request that
+ * retained this node across a change of secret recovery phrase would otherwise
+ * complete with an address of the previous wallet, after the change had
+ * already been observed, reconciled, and cache-cleared by a newer request.
+ * See {@link assertNodeCurrent}.
+ *
  * @param node - The SEP-0005 parent node.
  * @param index - The SEP-0005 account index.
  * @returns The `G...` address.
@@ -340,7 +430,9 @@ async function deriveFromNode(
 async function deriveAddress(node: SLIP10Node, index: number): Promise<string> {
   const keypair = await deriveFromNode(node, index);
   try {
-    return keypair.publicKey();
+    const address = keypair.publicKey();
+    assertNodeCurrent(node);
+    return address;
   } finally {
     wipeKeypair(keypair);
   }
@@ -449,8 +541,9 @@ async function resolveAddresses(
       if (cached !== undefined) {
         return { index, address: cached };
       }
-      const address = await deriveAddress(node ?? (await getNode()), index);
-      addressCache.set(index, address);
+      const parent = node ?? (await getNode());
+      const address = await deriveAddress(parent, index);
+      cacheAddress(parent, index, address);
       return { index, address };
     }),
   );
@@ -480,8 +573,9 @@ export async function findAccountIndexByAddress(
   for (let index = 0; index < MAX_ACCOUNT_INDEX; index += 1) {
     let candidate = addressCache.get(index);
     if (candidate === undefined) {
-      candidate = await deriveAddress(await getNode(), index);
-      addressCache.set(index, candidate);
+      const node = await getNode();
+      candidate = await deriveAddress(node, index);
+      cacheAddress(node, index, candidate);
     }
     if (candidate === address) {
       return index;
@@ -501,8 +595,9 @@ export async function getAddressForIndex(index: number): Promise<string> {
   if (cached !== undefined) {
     return cached;
   }
-  const address = await deriveAddress(await getAccountParentNode(), index);
-  addressCache.set(index, address);
+  const node = await getAccountParentNode();
+  const address = await deriveAddress(node, index);
+  cacheAddress(node, index, address);
   return address;
 }
 
@@ -556,13 +651,23 @@ export async function getOwnedAccounts(
  * of it, and the same caveat holds: this narrows the window, it does not close
  * it.
  *
+ * The result also carries the entropy fingerprint the resolution was made
+ * under. The address returned here is what the confirmation dialog displays,
+ * so the fingerprint names the wallet the user's approval is *about*; a
+ * handler that records a grant from that approval passes it to
+ * `connectOrigin`, which refuses to attach the grant to a store whose phrase
+ * has since changed. It is the fingerprint of the node actually used, not
+ * whatever is current at return time, so a concurrent phrase change cannot
+ * swap in the newer value between the fetch and the capture.
+ *
  * @param requestedAddress - The `address` option, when the dapp sent one.
- * @returns The signing account's index and address.
+ * @returns The signing account's index and address, and the entropy
+ * fingerprint the resolution observed.
  * @throws An invalid-request error when the address is not held.
  */
 export async function resolveSigningAccount(
   requestedAddress?: string,
-): Promise<{ index: number; address: string }> {
+): Promise<{ index: number; address: string; entropyFingerprint: string }> {
   // Fetch the parent node before reading state, not after. Fetching is what
   // detects a changed secret recovery phrase and settles the persisted-state
   // reconciliation that resets accounts recorded under the old one; a state
@@ -571,7 +676,13 @@ export async function resolveSigningAccount(
   // for) a selection the reset was about to discard. The getter is shared
   // with the address resolution below, so this stays one fetch per request.
   const getNode = lazyAccountParentNode();
-  await getNode();
+  const node = await getNode();
+  const entropyFingerprint = nodeFingerprints.get(node);
+  if (entropyFingerprint === undefined) {
+    // Every node passes through `bindToEntropySource`, which records the
+    // fingerprint; asserted rather than cast away.
+    throw new Error('The parent node carries no entropy fingerprint.');
+  }
   const state = await getState();
   if (requestedAddress === undefined) {
     const [active] = await resolveAddresses([state.activeAccount], getNode);
@@ -580,7 +691,7 @@ export async function resolveSigningAccount(
       // rather than cast away.
       throw new Error('Failed to derive the active account.');
     }
-    return active;
+    return { ...active, entropyFingerprint };
   }
 
   // Resolve through the address index, so an address the wallet does not hold
@@ -592,7 +703,7 @@ export async function resolveSigningAccount(
   if (match === undefined) {
     throw invalidRequest('Unknown address: this wallet does not hold it.');
   }
-  return match;
+  return { ...match, entropyFingerprint };
 }
 
 /**

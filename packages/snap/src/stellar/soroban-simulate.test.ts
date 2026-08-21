@@ -191,10 +191,44 @@ describe('simulateForDisplay', () => {
     });
   });
 
-  it('keeps a resource fee at the int64 digit ceiling', async () => {
-    // 19 digits is the widest an int64 stroop count can be; the bound must
-    // not eat a legitimate maximal estimate.
-    const fee = '9'.repeat(19);
+  it('keeps a resource fee at the exact int64 maximum', async () => {
+    // The largest fee the protocol can represent; the bound must not eat a
+    // legitimate maximal estimate.
+    const fee = '9223372036854775807';
+    mockRpc({ minResourceFee: fee });
+
+    expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({
+      ok: true,
+      minResourceFee: fee,
+    });
+  });
+
+  it('reports a fee of int64 maximum plus one as unavailable', async () => {
+    // Still 19 digits, so the digit cap alone admits it, but no int64 fee
+    // can ever be this value: a protocol-impossible figure is not an
+    // estimate and must not appear as one in a confirmation dialog.
+    mockRpc({ minResourceFee: '9223372036854775808' });
+
+    expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({
+      ok: true,
+      minResourceFee: null,
+    });
+  });
+
+  it('reports a 19-nines fee as unavailable', async () => {
+    // The widest 19-digit value, well above what an int64 can carry.
+    mockRpc({ minResourceFee: '9'.repeat(19) });
+
+    expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({
+      ok: true,
+      minResourceFee: null,
+    });
+  });
+
+  it('keeps a leading-zero fee whose value is representable', async () => {
+    // The bound compares by value, not by digit count: nineteen characters
+    // spelling the number one are a perfectly usable estimate.
+    const fee = '0000000000000000001';
     mockRpc({ minResourceFee: fee });
 
     expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({

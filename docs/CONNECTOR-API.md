@@ -56,7 +56,7 @@ Whether MetaMask is present and supports snaps. Ask this before offering the wal
 
 ### `isInstalled(): Promise<boolean>`
 
-Whether this snap is installed **at the pinned version**. For `npm:` IDs a version mismatch reads as not installed. Local development snaps carry no meaningful version and only need to be present. A true answer also satisfies the per-call version check, so asking this first costs one `wallet_getSnaps` read, not two.
+Whether this snap is installed **at the pinned version**. For `npm:` IDs a version mismatch reads as not installed. Local development snaps carry no meaningful version and only need to be present. A true answer also satisfies the per-call version check for the silent read methods, so asking this first costs one `wallet_getSnaps` read, not two; signing, mutations, `fund`, and raw calls outside the read-only allowlist still perform their own fresh comparison at call time.
 
 ### `connect(): Promise<{ address: string }>`
 
@@ -64,11 +64,11 @@ Installs or reconnects the snap, then requests wallet access. The `wallet_reques
 
 ### `invoke(method: string, params?: object): Promise<unknown>`
 
-The escape hatch for methods with no typed wrapper. Returns `unknown`: the response crossed the provider boundary and nothing has checked its shape. It does share the version check with the typed methods, so even the raw path cannot quietly talk to a release other than the pinned one.
+The escape hatch for methods with no typed wrapper. Returns `unknown`: the response crossed the provider boundary and nothing has checked its shape. It shares the version check with the typed methods, so even the raw path cannot quietly talk to a release other than the pinned one. The method name is arbitrary here, so only the read-only allowlist (`getAddress`, `getNetwork`, `getNetworkDetails`, `getAccounts`, `getBalances`) may answer from the per-page memo; any other name, signing methods included, is compared against a fresh `wallet_getSnaps` read begun after the call was made.
 
 ### Version mismatch
 
-Every method that contacts the snap (the typed ones, `invoke()`, and through them the Freighter facade and the Wallets Kit module) throws a `StellarSnapError` with code `-3` when MetaMask reports a version of the snap other than the pinned one installed under the snap ID. The message names both versions. The check runs once per client instance on the first call, is repeated after a refusal (the user may update the snap between calls), and is skipped for `local:` IDs. A snap that is not installed at all is not a mismatch: MetaMask refuses the invocation itself, exactly as before, so pre-install handling is unchanged.
+Every method that contacts the snap (the typed ones, `invoke()`, and through them the Freighter facade and the Wallets Kit module) throws a `StellarSnapError` with code `-3` when MetaMask reports a version of the snap other than the pinned one installed under the snap ID. The message names both versions. For the silent read methods the check runs once per client instance and is remembered; signing, dialog-confirmed mutations, `fund`, and raw calls outside the read-only allowlist re-read `wallet_getSnaps` on every call, and each such call awaits a lookup begun after it was made rather than one already in flight, so a snap updated mid-session fails closed. The check is repeated after any refusal (the user may update the snap between calls), and is skipped for `local:` IDs. A snap that is not installed at all is not a mismatch: MetaMask refuses the invocation itself, exactly as before, so pre-install handling is unchanged.
 
 ## Access and identity
 

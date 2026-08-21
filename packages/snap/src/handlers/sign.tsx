@@ -116,10 +116,24 @@ function assertNetworkStated(
  * A missing grant is self-correcting (the next `requestAccess` records it);
  * a lost signature is not.
  *
+ * Called only *after* the post-dialog key derivation has confirmed that the
+ * address the dialog displayed still belongs to the active secret recovery
+ * phrase. Recording before that confirmation could attach a grant to a
+ * phrase's state the user never saw a dialog for: the derivation check stops
+ * the wrong-key signature, but a grant written earlier would already be
+ * durable. The fingerprint travels with the write so `connectOrigin` can make
+ * the same check against the store, inside the state lock; a mismatch simply
+ * drops the ancillary grant.
+ *
  * @param origin - The requesting dapp origin.
+ * @param entropyFingerprint - The fingerprint the displayed address was
+ * resolved under, from `resolveSigningAccount`.
  */
-async function recordGrantBestEffort(origin: string): Promise<void> {
-  await connectOrigin(origin).catch(() => undefined);
+async function recordGrantBestEffort(
+  origin: string,
+  entropyFingerprint: string,
+): Promise<void> {
+  await connectOrigin(origin, entropyFingerprint).catch(() => undefined);
 }
 
 /**
@@ -221,8 +235,11 @@ export async function signTransaction(
   // lookups, or the dialog the user may leave open for the whole 60s
   // `maxRequestTime` window. See `resolveSigningAccount` in ../keys.
   await assertAccountSelectionAllowed(origin, request.address);
-  const { index: accountIndex, address: signerAddress } =
-    await resolveSigningAccount(request.address);
+  const {
+    index: accountIndex,
+    address: signerAddress,
+    entropyFingerprint,
+  } = await resolveSigningAccount(request.address);
 
   // Resolve the transaction that carries the operations: for a fee bump that
   // is the inner transaction, so a fee-bumped Soroban tx is still recognised
@@ -420,10 +437,6 @@ export async function signTransaction(
   // An approved dialog breaks the consecutive-rejection chain.
   clearDialogRejections(origin);
 
-  // An approved signature is also consent to be connected. Best effort: see
-  // `recordGrantBestEffort`.
-  await recordGrantBestEffort(origin);
-
   // Derived here, not before the dialog: the account secret exists only for
   // the signature itself. The re-derivation is checked against the address the
   // dialog displayed, so an approval can only ever be spent by the key the
@@ -439,6 +452,11 @@ export async function signTransaction(
     wipeKeypair(keypair);
   }
   const signedTxXdr = tx.toXDR();
+
+  // An approved signature is also consent to be connected. Recorded only now,
+  // after the derivation above confirmed the displayed address still belongs
+  // to the active phrase. Best effort: see `recordGrantBestEffort`.
+  await recordGrantBestEffort(origin, entropyFingerprint);
   const warningsField = warnings.length > 0 ? { warnings } : {};
 
   if (request.submit) {
@@ -602,7 +620,11 @@ export async function signAuthEntry(
       'The authorization entry names a different account than this wallet.',
     );
   }
-  const { index: accountIndex, address: signerAddress } = signer;
+  const {
+    index: accountIndex,
+    address: signerAddress,
+    entropyFingerprint,
+  } = signer;
 
   // Bound the signature lifetime against the current ledger: reject
   // an already-expired entry and cap how far in the future it may reach, so
@@ -728,8 +750,6 @@ export async function signAuthEntry(
   // An approved dialog breaks the consecutive-rejection chain.
   clearDialogRejections(origin);
 
-  await recordGrantBestEffort(origin);
-
   // Derived only now, checked against the address the dialog displayed.
   // `authorizeEntry` signs internally, so the wipe waits for it to settle.
   const keypair = await deriveSigningKeypair(accountIndex, signerAddress);
@@ -744,6 +764,11 @@ export async function signAuthEntry(
   } finally {
     wipeKeypair(keypair);
   }
+
+  // Recorded only after the derivation confirmed the displayed address still
+  // belongs to the active phrase. Best effort: see `recordGrantBestEffort`.
+  await recordGrantBestEffort(origin, entropyFingerprint);
+
   return {
     signedAuthEntry: signed.toXDR('base64'),
     signerAddress,
@@ -787,8 +812,11 @@ export async function signMessage(
 
   await assertAccountSelectionAllowed(origin, request.address);
   // Address only; the signing key is derived after approval, below.
-  const { index: accountIndex, address: signerAddress } =
-    await resolveSigningAccount(request.address);
+  const {
+    index: accountIndex,
+    address: signerAddress,
+    entropyFingerprint,
+  } = await resolveSigningAccount(request.address);
 
   recordDialogOpened(origin);
   const approved = await snap.request({
@@ -813,8 +841,6 @@ export async function signMessage(
   // An approved dialog breaks the consecutive-rejection chain.
   clearDialogRejections(origin);
 
-  await recordGrantBestEffort(origin);
-
   const payload = hash(
     Buffer.concat([
       Buffer.from(SIGNED_MESSAGE_PREFIX, 'utf8'),
@@ -829,6 +855,10 @@ export async function signMessage(
   } finally {
     wipeKeypair(keypair);
   }
+
+  // Recorded only after the derivation confirmed the displayed address still
+  // belongs to the active phrase. Best effort: see `recordGrantBestEffort`.
+  await recordGrantBestEffort(origin, entropyFingerprint);
 
   return { signedMessage: signature.toString('base64'), signerAddress };
 }
