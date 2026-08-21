@@ -19,7 +19,11 @@ import {
   homePage,
 } from './handlers/home';
 import { installWelcome, updateNotice } from './handlers/install';
-import { findAccountIndexByAddress, getAddressForIndex } from './keys';
+import {
+  ensureEntropyBinding,
+  findAccountIndexByAddress,
+  getAddressForIndex,
+} from './keys';
 import { route } from './rpc/router';
 import {
   disconnectOrigin,
@@ -181,6 +185,14 @@ async function findAccountFlow(query: string): Promise<boolean> {
   }
 
   const { index } = resolved;
+  // Establishes which secret recovery phrase the addresses below describe,
+  // before the state read: the fetch inside is what settles a pending
+  // reconciliation, so `from` cannot be an index recorded under a phrase the
+  // reconciliation is about to reset. The fingerprint anchors the commit at
+  // the end, so an approval collected for this phrase's addresses cannot
+  // reveal a different phrase's accounts if the phrase changes while the
+  // dialog is open.
+  const entropyFingerprint = await ensureEntropyBinding();
   const from = nextAccountIndex(await getState());
   if (index < from) {
     await notify(`Account ${index} is already in your account list.`);
@@ -205,7 +217,7 @@ async function findAccountFlow(query: string): Promise<boolean> {
   if (!approved) {
     return false;
   }
-  const added = await revealAccountsThrough(index, from);
+  const added = await revealAccountsThrough(index, from, entropyFingerprint);
   return added.length > 0;
 }
 
@@ -217,6 +229,11 @@ async function findAccountFlow(query: string): Promise<boolean> {
  * @returns True when an account was added.
  */
 async function addAccountFlow(): Promise<boolean> {
+  // Same ordering and anchoring as `findAccountFlow`: settle the phrase
+  // binding before reading the account registry, and carry the fingerprint
+  // into the commit so a phrase change while the dialog is open cannot turn
+  // this approval into a reveal for the new phrase's wallet.
+  const entropyFingerprint = await ensureEntropyBinding();
   const index = nextAccountIndex(await getState());
   if (index >= MAX_ACCOUNT_INDEX) {
     await notify(
@@ -236,7 +253,7 @@ async function addAccountFlow(): Promise<boolean> {
   if (!approved) {
     return false;
   }
-  await revealAccount(index);
+  await revealAccount(index, entropyFingerprint);
   return true;
 }
 

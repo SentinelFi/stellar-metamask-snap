@@ -54,13 +54,56 @@ const isOptionalString = (value: unknown): value is string | undefined =>
   value === undefined || typeof value === 'string';
 
 /**
- * Whether a value names one of the snap's networks.
+ * The passphrase and endpoints the snap can report for each network, pinned
+ * exactly.
  *
- * @param value - The value to test.
- * @returns True for known network names.
+ * The snap resolves these from a hardcoded constant table, so a network
+ * result carrying any other value did not come from the pinned snap release:
+ * it came from whatever answered the provider request. Pinning them here
+ * costs nothing for a legitimate response and closes the channel where a
+ * spoofed provider labels one network with another's passphrase, or hands a
+ * dapp an endpoint URL it then fetches account state from. Kept in step with
+ * the snap's `state/networks.ts` by the release process, like the version
+ * pin itself.
  */
-const isNetworkName = (value: unknown): boolean =>
-  value === 'PUBLIC' || value === 'TESTNET' || value === 'FUTURENET';
+const KNOWN_NETWORKS: Record<
+  string,
+  { networkPassphrase: string; networkUrl: string; sorobanRpcUrl: string }
+> = {
+  PUBLIC: {
+    networkPassphrase: 'Public Global Stellar Network ; September 2015',
+    networkUrl: 'https://horizon.stellar.org',
+    sorobanRpcUrl: 'https://soroban-rpc.mainnet.stellar.gateway.fm',
+  },
+  TESTNET: {
+    networkPassphrase: 'Test SDF Network ; September 2015',
+    networkUrl: 'https://horizon-testnet.stellar.org',
+    sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
+  },
+  FUTURENET: {
+    networkPassphrase: 'Test SDF Future Network ; October 2022',
+    networkUrl: 'https://horizon-futurenet.stellar.org',
+    sorobanRpcUrl: 'https://rpc-futurenet.stellar.org',
+  },
+};
+
+/**
+ * The pinned constants for a reported network name, or undefined when the
+ * name is not one of the snap's networks. Own-property lookup, so an
+ * inherited key such as `constructor` cannot resolve to a value.
+ *
+ * @param value - The reported network name.
+ * @returns The pinned constants, or undefined.
+ */
+const knownNetwork = (
+  value: unknown,
+):
+  | { networkPassphrase: string; networkUrl: string; sorobanRpcUrl: string }
+  | undefined =>
+  typeof value === 'string' &&
+  Object.prototype.hasOwnProperty.call(KNOWN_NETWORKS, value)
+    ? KNOWN_NETWORKS[value]
+    : undefined;
 
 /**
  * Validates a `{ address }` result.
@@ -72,29 +115,43 @@ export const isAddressResult = (value: unknown): value is GetAddressResult =>
   isRecord(value) && isString(value.address);
 
 /**
- * Validates a `getNetwork` result.
+ * Validates a `getNetwork` result: a known network name carrying exactly
+ * that network's passphrase.
  *
  * @param value - The raw response.
  * @returns True when the shape matches.
  */
-export const isNetworkResult = (value: unknown): value is NetworkResult =>
-  isRecord(value) &&
-  isNetworkName(value.network) &&
-  isString(value.networkPassphrase);
+export const isNetworkResult = (value: unknown): value is NetworkResult => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const known = knownNetwork(value.network);
+  return (
+    known !== undefined && value.networkPassphrase === known.networkPassphrase
+  );
+};
 
 /**
- * Validates a `getNetworkDetails`/`setNetwork` result.
+ * Validates a `getNetworkDetails`/`setNetwork` result: the passphrase and
+ * both endpoint URLs must be the pinned values for the reported network.
  *
  * @param value - The raw response.
  * @returns True when the shape matches.
  */
 export const isNetworkDetailsResult = (
   value: unknown,
-): value is NetworkDetailsResult =>
-  isRecord(value) &&
-  isString(value.networkUrl) &&
-  isString(value.sorobanRpcUrl) &&
-  isNetworkResult(value);
+): value is NetworkDetailsResult => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const known = knownNetwork(value.network);
+  return (
+    known !== undefined &&
+    value.networkPassphrase === known.networkPassphrase &&
+    value.networkUrl === known.networkUrl &&
+    value.sorobanRpcUrl === known.sorobanRpcUrl
+  );
+};
 
 /**
  * Validates a `signTransaction` result.
@@ -225,10 +282,11 @@ export const isBalancesResult = (value: unknown): value is BalancesResult =>
   (value.sequence === null || isString(value.sequence)) &&
   Array.isArray(value.balances) &&
   value.balances.every(isBalanceLine) &&
-  // Absent or exactly `true`. Admitting `false` would give the flag two
-  // spellings for "token rows are present" and invite `!tokensUnavailable`
-  // checks that read the wrong one.
-  (value.tokensUnavailable === undefined || value.tokensUnavailable === true);
+  // Absent or exactly `true`. Admitting `false` would give each flag two
+  // spellings for "nothing was omitted" and invite negated checks that read
+  // the wrong one.
+  (value.tokensUnavailable === undefined || value.tokensUnavailable === true) &&
+  (value.balancesTruncated === undefined || value.balancesTruncated === true);
 
 /**
  * Validates an `addToken` result.

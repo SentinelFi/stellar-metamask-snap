@@ -118,19 +118,30 @@ export function explorerTxUrl(
     : null;
 }
 
+/** A well-formed `G...` ed25519 account address. */
+const ACCOUNT_ADDRESS_PATTERN = /^G[A-Z2-7]{55}$/u;
+
 /**
  * A stellar.expert link for an account.
  *
+ * The address is validated for the same reason {@link explorerTxUrl}
+ * validates its hash: the value crosses a trust boundary (it arrives from
+ * the wallet provider, which page scripts can impersonate), and while the
+ * link's origin is fixed, a value that is not an account address could steer
+ * the path or query of a link labelled as "this account". No link is offered
+ * for anything else; the caller renders the raw value as text.
+ *
  * @param network - The active network.
  * @param address - The `G...` account.
- * @returns The URL, or null when the network has no explorer.
+ * @returns The URL, or null when the network has no explorer or the value is
+ * not a well-formed account address.
  */
 export function explorerAccountUrl(
   network: NetworkName,
   address: string,
 ): string | null {
   const segment = EXPLORER_SEGMENT[network];
-  return segment
+  return segment && ACCOUNT_ADDRESS_PATTERN.test(address)
     ? `https://stellar.expert/explorer/${segment}/account/${address}`
     : null;
 }

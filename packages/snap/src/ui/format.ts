@@ -181,12 +181,22 @@ export function formatUnknownTokenAsset(contractId: string): string {
  */
 export function stroopsToXlm(stroops: string | number): string {
   const value = BigInt(stroops);
-  const whole = value / 10000000n;
-  const fraction = (value % 10000000n)
+  // Format the magnitude and reattach the sign, exactly as
+  // `formatTokenAmount` does: BigInt division and modulo truncate toward
+  // zero, so formatting a negative value directly yields nonsense like
+  // `-1.-5`, and for magnitudes under one whole unit the sign vanishes
+  // entirely. Fees are non-negative everywhere this is called today, but a
+  // formatter that garbles half its input range is a trap for the next call
+  // site.
+  const negative = value < 0n;
+  const magnitude = negative ? -value : value;
+  const whole = magnitude / 10000000n;
+  const fraction = (magnitude % 10000000n)
     .toString()
     .padStart(7, '0')
     .replace(/0+$/u, '');
-  return fraction ? `${whole}.${fraction}` : `${whole}`;
+  const rendered = fraction ? `${whole}.${fraction}` : `${whole}`;
+  return negative ? `-${rendered}` : rendered;
 }
 
 /**

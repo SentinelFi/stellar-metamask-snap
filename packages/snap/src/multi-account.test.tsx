@@ -12,6 +12,7 @@ import {
 } from '@stellar/stellar-sdk';
 
 import { onUserInput } from '.';
+import { resetAddressCache } from './keys';
 import { MAX_ACCOUNT_INDEX } from './state';
 
 /** Official SEP-0005 test vector 1 (no passphrase). */
@@ -487,6 +488,12 @@ describe('onUserInput add-account flow', () => {
     dialogs = [];
     dialogResponse = true;
     updates = 0;
+    // The address cache and the entropy-binding latch are module state that
+    // outlives a test. Each test here swaps in a fresh store, and a latch
+    // still warm from the previous test would stop the binding reconciliation
+    // from writing the fingerprint into it, so the reveal flows' commit-time
+    // fingerprint comparison would refuse stores that were simply fresh.
+    resetAddressCache();
     (globalThis as { snap?: unknown }).snap = {
       request: async (args: {
         method: string;

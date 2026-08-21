@@ -58,6 +58,15 @@ export type AccountSummary = {
   /** Current sequence number as a string; `null` when unfunded. */
   sequence: string | null;
   balances: HorizonBalance[];
+  /**
+   * Present (and always `true`) when Horizon reported more balances than the
+   * display cap and the list was cut. Without it, "asset absent from the
+   * list" and "asset not held" read identically, and a legitimate account
+   * can hold more trustlines than the cap: partial coverage must never be
+   * mistaken for complete holdings, the same rule the token-read and safety
+   * layers already follow.
+   */
+  balancesTruncated?: true;
 };
 
 /**
@@ -99,8 +108,12 @@ const AccountChecksStruct = type({
 /** A 64-character hex transaction hash. */
 const TX_HASH_REGEX = /^[0-9a-f]{64}$/iu;
 
-/** Display cap on balance rows (a hostile response cannot flood the UI). */
-const MAX_DISPLAY_BALANCES = 100;
+/**
+ * Display cap on balance rows (a hostile response cannot flood the UI).
+ * Exported so the home page can say how many rows the cap kept when it
+ * discloses a truncation.
+ */
+export const MAX_DISPLAY_BALANCES = 100;
 
 /** Default abort timeout for Horizon/friendbot requests (ms). */
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
@@ -186,6 +199,11 @@ export async function getAccountSummary(
             type: 'classic' as const,
           },
     ),
+    // The cap is a defense against a flooding response, but cutting the list
+    // silently would present the first rows as complete holdings.
+    ...(body.balances.length > MAX_DISPLAY_BALANCES
+      ? { balancesTruncated: true as const }
+      : {}),
   };
 }
 

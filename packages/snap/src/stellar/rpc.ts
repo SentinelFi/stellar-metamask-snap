@@ -6,7 +6,6 @@ import {
   integer,
   is,
   min,
-  number,
   optional,
   pattern,
   string,
@@ -41,7 +40,10 @@ const SimulationStruct = type({
   restorePreamble: optional(
     type({ transactionData: string(), minResourceFee: string() }),
   ),
-  latestLedger: optional(number()),
+  // Bounded like every other ledger-height field: a height is a positive
+  // integer, and this value is what a future consumer would reach for first,
+  // so it must carry the same guarantee as its validated siblings.
+  latestLedger: optional(min(integer(), 1)),
 });
 
 const SendTransactionStruct = type({

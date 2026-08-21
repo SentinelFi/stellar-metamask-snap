@@ -32,25 +32,69 @@ describe('isAddressResult', () => {
 });
 
 describe('isNetworkResult / isNetworkDetailsResult', () => {
-  const network = { network: 'TESTNET', networkPassphrase: 'Test SDF' };
+  const network = {
+    network: 'TESTNET',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+  };
+  const details = {
+    ...network,
+    networkUrl: 'https://horizon-testnet.stellar.org',
+    sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
+  };
 
   it('accepts known networks and rejects unknown ones', () => {
     expect(isNetworkResult(network)).toBe(true);
     expect(isNetworkResult({ ...network, network: 'DEVNET' })).toBe(false);
     expect(isNetworkResult({ network: 'TESTNET' })).toBe(false);
+    // Inherited object keys must not resolve to a known network.
+    expect(isNetworkResult({ ...network, network: 'constructor' })).toBe(false);
+  });
+
+  it('pins the passphrase to the reported network', () => {
+    // A spoofed provider labelling one network with another network's
+    // passphrase is exactly the mix a validator that accepted any string
+    // would wave through; the snap can only ever report the pinned pairs.
+    expect(
+      isNetworkResult({
+        network: 'TESTNET',
+        networkPassphrase: 'Public Global Stellar Network ; September 2015',
+      }),
+    ).toBe(false);
+    expect(isNetworkResult({ ...network, networkPassphrase: 'Test SDF' })).toBe(
+      false,
+    );
   });
 
   it('requires the URL fields on network details', () => {
-    expect(
-      isNetworkDetailsResult({
-        ...network,
-        networkUrl: 'https://h.example',
-        sorobanRpcUrl: 'https://s.example',
-      }),
-    ).toBe(true);
+    expect(isNetworkDetailsResult(details)).toBe(true);
     expect(isNetworkDetailsResult(network)).toBe(false);
     expect(
-      isNetworkDetailsResult({ ...network, networkUrl: 'https://h.example' }),
+      isNetworkDetailsResult({
+        ...details,
+        sorobanRpcUrl: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it('pins the endpoint URLs to the reported network', () => {
+    // The snap resolves endpoints from a hardcoded table, so any other URL
+    // did not come from the pinned release. Accepting one would let a
+    // spoofed provider steer a dapp's account reads to an arbitrary host.
+    expect(
+      isNetworkDetailsResult({ ...details, networkUrl: 'https://h.example' }),
+    ).toBe(false);
+    expect(
+      isNetworkDetailsResult({
+        ...details,
+        sorobanRpcUrl: 'https://s.example',
+      }),
+    ).toBe(false);
+    expect(
+      isNetworkDetailsResult({
+        ...details,
+        network: 'PUBLIC',
+        networkPassphrase: 'Public Global Stellar Network ; September 2015',
+      }),
     ).toBe(false);
   });
 });

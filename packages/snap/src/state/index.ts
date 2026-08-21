@@ -477,11 +477,33 @@ export function nextAccountIndex(state: SnapState): number {
  * re-checks under the lock that the set has not moved meanwhile — a stale
  * approval must never add a different account than the one displayed.
  *
+ * A revealed account is durable consent for a specific wallet, exactly like
+ * a connection grant, so the commit also proves that the store still belongs
+ * to the secret recovery phrase the displayed address was derived from. A
+ * phrase change while the dialog is open reconciles the store to the new
+ * phrase's fingerprint; without this comparison, an approval shown for one
+ * wallet's address could add a different wallet's account at the same index.
+ * `undefined` skips the comparison and exists for tests exercising the lock
+ * behaviour; every dialog-driven caller passes the real value.
+ *
  * @param index - The index the user approved (must still be the next one).
+ * @param expectedFingerprint - The entropy fingerprint the displayed address
+ * was derived under, or `undefined` to skip the check.
  */
-export async function revealAccount(index: number): Promise<void> {
+export async function revealAccount(
+  index: number,
+  expectedFingerprint: string | undefined,
+): Promise<void> {
   await withStateLock(async () => {
     const state = await getState();
+    if (
+      expectedFingerprint !== undefined &&
+      state.entropyFingerprint !== expectedFingerprint
+    ) {
+      throw invalidRequest(
+        'The active secret recovery phrase changed while the dialog was open. Try again.',
+      );
+    }
     if (state.accounts.includes(index)) {
       return;
     }
@@ -512,14 +534,26 @@ export async function revealAccount(index: number): Promise<void> {
  * @param expectedFrom - The next revealable index the caller showed in its
  * confirmation dialog. Re-checked here so a stale approval cannot commit a
  * different run of accounts than the one the user saw.
+ * @param expectedFingerprint - The entropy fingerprint the displayed address
+ * was derived under, compared against the store inside the lock exactly as
+ * {@link revealAccount} does; `undefined` skips the check (tests only).
  * @returns The indices actually added, in ascending order.
  */
 export async function revealAccountsThrough(
   target: number,
   expectedFrom: number,
+  expectedFingerprint: string | undefined,
 ): Promise<number[]> {
   return withStateLock(async () => {
     const state = await getState();
+    if (
+      expectedFingerprint !== undefined &&
+      state.entropyFingerprint !== expectedFingerprint
+    ) {
+      throw invalidRequest(
+        'The active secret recovery phrase changed while the dialog was open. Try again.',
+      );
+    }
     if (!Number.isInteger(target) || target < 0) {
       throw invalidRequest('Invalid account index.');
     }

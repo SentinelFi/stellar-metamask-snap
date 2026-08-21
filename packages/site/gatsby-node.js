@@ -65,9 +65,10 @@ const EXACT_VERSION = /^\d+\.\d+\.\d+$/u;
 
 /**
  * Reads the build's `.env.<environment>` file, the same file Gatsby loads
- * when it assembles the client environment.
+ * when it assembles the client environment, together with the process
+ * environment that can shadow it.
  *
- * @returns {{ configEnv: string, envFile: string, parsed: Record<string, string>, snapOrigin: string, snapVersion: string, allowLocal: boolean, devBench: boolean }}
+ * @returns {{ configEnv: string, envFile: string, parsed: Record<string, string>, snapOrigin: string, snapVersion: string, identityConflicts: string[], allowLocal: boolean, devBench: boolean }}
  * The resolved release configuration.
  */
 function readReleaseConfig() {
@@ -83,18 +84,56 @@ function readReleaseConfig() {
   const allowLocal =
     (parsed.ALLOW_LOCAL_SNAP ?? process.env.ALLOW_LOCAL_SNAP) === 'true';
   // Read from both places Gatsby embeds client variables from: the env file
-  // (every key) and the process environment (`GATSBY_`-prefixed keys). A
+  // (every key) and the process environment (`GATSBY_`-prefixed keys). When
+  // both carry a value, the process wins in the emitted JavaScript — Gatsby
+  // applies process variables over the file's when it assembles the client
+  // env — so the process value is the one every check here must judge. A
   // stray variable on a build host is exactly the case this has to catch.
   const devBench =
-    (parsed.GATSBY_DEV_BENCH ?? process.env.GATSBY_DEV_BENCH) === 'true';
+    (process.env.GATSBY_DEV_BENCH ?? parsed.GATSBY_DEV_BENCH) === 'true';
+
+  // The snap identity gets the same dual-source read, plus a stricter rule:
+  // the two sources must AGREE. Judging only the effective value would let a
+  // host variable that happens to name a plausible identity pass the shape
+  // checks below while the env file — the reviewed, committed source of
+  // truth — says something else. Each disagreement is recorded so the
+  // release build can refuse it by name instead of verifying one source and
+  // shipping the other.
+  const fileSnapOrigin = parsed.GATSBY_SNAP_ORIGIN;
+  const fileSnapVersion = parsed.GATSBY_SNAP_VERSION;
+  const processSnapOrigin = process.env.GATSBY_SNAP_ORIGIN;
+  const processSnapVersion = process.env.GATSBY_SNAP_VERSION;
   /* eslint-enable n/no-process-env, n/no-sync */
+  const identityConflicts = [];
+  if (
+    processSnapOrigin !== undefined &&
+    fileSnapOrigin !== undefined &&
+    processSnapOrigin !== fileSnapOrigin
+  ) {
+    identityConflicts.push(
+      `GATSBY_SNAP_ORIGIN is "${fileSnapOrigin}" in ${envFile} but ` +
+        `"${processSnapOrigin}" in the process environment`,
+    );
+  }
+  if (
+    processSnapVersion !== undefined &&
+    fileSnapVersion !== undefined &&
+    processSnapVersion !== fileSnapVersion
+  ) {
+    identityConflicts.push(
+      `GATSBY_SNAP_VERSION is "${fileSnapVersion}" in ${envFile} but ` +
+        `"${processSnapVersion}" in the process environment`,
+    );
+  }
 
   return {
     configEnv,
     envFile,
     parsed,
-    snapOrigin: parsed.GATSBY_SNAP_ORIGIN ?? '',
-    snapVersion: parsed.GATSBY_SNAP_VERSION ?? '',
+    // The effective values: what the client bundle will actually carry.
+    snapOrigin: processSnapOrigin ?? fileSnapOrigin ?? '',
+    snapVersion: processSnapVersion ?? fileSnapVersion ?? '',
+    identityConflicts,
     allowLocal,
     devBench,
   };
@@ -105,11 +144,13 @@ function readReleaseConfig() {
  * release, never the localhost development fallback and never some other npm
  * package.
  *
- * This reads the same `.env.<environment>` file the client bundle is built
- * from, rather than `process.env`: an OS-level variable would pass a naive
- * check here yet never be embedded in the emitted JavaScript. The variables
- * carry Gatsby's documented `GATSBY_` prefix, and `onPostBuild` below
- * re-verifies that they actually reached the build output.
+ * The identity is judged from both sources Gatsby embeds client variables
+ * from — the `.env.<environment>` file and the process environment — with
+ * the process value taken as the effective one, because that is the
+ * precedence the emitted JavaScript gets. The two sources must also agree:
+ * a variable on the build host that shadows the committed env file is
+ * refused by name, not silently verified around. `onPostBuild` below
+ * re-verifies that the effective values actually reached the build output.
  *
  * `onPreBuild` only runs for `gatsby build`, so `gatsby develop` keeps the
  * localhost fallback untouched.
@@ -118,8 +159,15 @@ function readReleaseConfig() {
  * @param {object} args.reporter - Gatsby reporter.
  */
 module.exports.onPreBuild = ({ reporter }) => {
-  const { configEnv, envFile, snapOrigin, snapVersion, allowLocal, devBench } =
-    readReleaseConfig();
+  const {
+    configEnv,
+    envFile,
+    snapOrigin,
+    snapVersion,
+    identityConflicts,
+    allowLocal,
+    devBench,
+  } = readReleaseConfig();
 
   if (allowLocal) {
     // The bypass exists for development builds and is refused outright for a
@@ -140,6 +188,21 @@ module.exports.onPreBuild = ({ reporter }) => {
       );
     }
     return;
+  }
+
+  // A build host variable shadowing the committed env file rebinds the page
+  // to whatever snap the variable names, while every file-based check keeps
+  // passing. Refused outright for a release build; the development path
+  // above stays usable for local workflows, whose artifacts are already
+  // marked unverified and undeployable.
+  if (identityConflicts.length > 0) {
+    reporter.panic(
+      `The snap identity is being overridden by the build host's ` +
+        `environment: ${identityConflicts.join('; ')}. The emitted ` +
+        `JavaScript would carry the environment's value, not the file's. ` +
+        `Unset the stray variable (or correct ${envFile}) so the two ` +
+        `sources agree.`,
+    );
   }
 
   // The connector bench (raw SEP-43 method buttons with the JSON response,

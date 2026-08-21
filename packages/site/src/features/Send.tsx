@@ -133,6 +133,17 @@ export const Send = () => {
       );
       return;
     }
+    if (!exists && target !== account) {
+      // Creating an account is a ledger operation on the base G… account: a
+      // muxed sub-id has no meaning until the account exists, and the SDK
+      // refuses to build createAccount with an M… destination. Refuse with
+      // the remedy rather than guessing at intent (silently creating the
+      // base account would drop the sub-id the sender typed).
+      setProblem(
+        'The destination account does not exist yet, and a new account cannot be created at a muxed (M…) address. Create it with its base G… address first, then send to the M… address.',
+      );
+      return;
+    }
     if (!exists && Number.parseFloat(amount) < MIN_STARTING_BALANCE) {
       setProblem(
         `The destination account does not exist yet, so this payment creates it and must send at least ${MIN_STARTING_BALANCE} XLM.`,
@@ -140,22 +151,36 @@ export const Send = () => {
       return;
     }
 
-    const builder = newBuilder(
-      address,
-      balances.sequence,
-      network.networkPassphrase,
-    ).addOperation(
-      exists
-        ? Operation.payment({ destination: target, asset, amount })
-        : Operation.createAccount({
-            destination: target,
-            startingBalance: amount,
-          }),
-    );
-    if (memo) {
-      builder.addMemo(Memo.text(memo));
+    // The `handle()` wrapper this action runs under drops the returned
+    // promise, so a throw while assembling the envelope would make the
+    // button silently do nothing. Everything after this point that can throw
+    // synchronously is converted into a visible problem instead.
+    let envelope: string;
+    try {
+      const builder = newBuilder(
+        address,
+        balances.sequence,
+        network.networkPassphrase,
+      ).addOperation(
+        exists
+          ? Operation.payment({ destination: target, asset, amount })
+          : Operation.createAccount({
+              destination: target,
+              startingBalance: amount,
+            }),
+      );
+      if (memo) {
+        builder.addMemo(Memo.text(memo));
+      }
+      envelope = builder.setTimeout(TX_TIMEOUT_SECONDS).build().toXDR();
+    } catch (error) {
+      setProblem(
+        error instanceof Error
+          ? error.message
+          : 'Could not build the transaction.',
+      );
+      return;
     }
-    const envelope = builder.setTimeout(TX_TIMEOUT_SECONDS).build().toXDR();
 
     const result = await run(async (client) =>
       client.signTransaction(envelope, {

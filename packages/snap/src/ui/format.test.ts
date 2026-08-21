@@ -135,6 +135,17 @@ describe('stroopsToXlm', () => {
     // 1,000,000,000 XLM in stroops — beyond Number.MAX_SAFE_INTEGER.
     expect(stroopsToXlm('10000000000000000')).toBe('1000000000');
   });
+
+  it('keeps the sign on negative values instead of garbling them', () => {
+    // BigInt division truncates toward zero, so a naive formatter renders
+    // `-25000000` as `-2.-5` and loses the sign entirely below one XLM. No
+    // fee should ever be negative, but the fee-bump outer fee is a signed
+    // field on the wire, so the formatter must not be the thing that hides
+    // that.
+    expect(stroopsToXlm('-25000000')).toBe('-2.5');
+    expect(stroopsToXlm('-1')).toBe('-0.0000001');
+    expect(stroopsToXlm('-10000000')).toBe('-1');
+  });
 });
 
 describe('containsHiddenCharacters', () => {

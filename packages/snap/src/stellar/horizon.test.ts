@@ -131,6 +131,23 @@ describe('getAccountSummary', () => {
     );
     const summary = await getAccountSummary(HORIZON, ADDRESS);
     expect(summary.balances).toHaveLength(100);
+    // The cut is disclosed, not silent: "asset absent from the list" and
+    // "asset not held" must stay distinguishable for a legitimate account
+    // holding more trustlines than the cap.
+    expect(summary.balancesTruncated).toBe(true);
+  });
+
+  it('does not flag an uncut balance list as truncated', async () => {
+    // The positive control: the flag has one spelling ("present and true"),
+    // so an ordinary account must not carry it at all.
+    mockFetch(
+      mockResponse({
+        sequence: '1',
+        balances: [{ asset_type: 'native', balance: '1.0000000' }],
+      }),
+    );
+    const summary = await getAccountSummary(HORIZON, ADDRESS);
+    expect(summary.balancesTruncated).toBeUndefined();
   });
 
   it('refuses malformed account responses', async () => {

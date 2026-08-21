@@ -260,6 +260,26 @@ describe('signing handlers: fail-closed gates', () => {
       expect(dialogs).toHaveLength(0);
     });
 
+    it('refuses a fee-bump envelope carrying a negative outer fee', async () => {
+      // The outer fee is a signed 64-bit field on the wire, so a
+      // hand-crafted envelope can carry a negative value. The network can
+      // never accept it, and the review dialog would render the figure
+      // garbled, so it must be refused before any dialog opens.
+      const bump = TransactionBuilder.buildFeeBumpTransaction(
+        ADDRESS_0,
+        '200',
+        classicTx(),
+        Networks.TESTNET,
+      );
+      const envelope = bump.toEnvelope();
+      envelope.feeBump().tx().fee(xdr.Int64.fromString('-10000000'));
+
+      await expect(
+        signTransaction(ORIGIN, { xdr: envelope.toXDR('base64') }),
+      ).rejects.toThrow('negative fee');
+      expect(dialogs).toHaveLength(0);
+    });
+
     it('refuses a caller-named submission endpoint with a specific message', async () => {
       // SEP-43 defines `submitUrl`, but this wallet submits only to its own
       // allowlisted endpoints: a submission endpoint is trusted with the

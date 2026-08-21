@@ -227,6 +227,17 @@ export async function signTransaction(
     throw invalidRequest('Could not parse the transaction XDR.');
   }
 
+  // A fee-bump envelope's outer fee is a signed 64-bit field on the wire, so
+  // a hand-crafted envelope can carry a negative fee. (A classic
+  // transaction's fee is unsigned and cannot.) The network rejects such an
+  // envelope, so it can never execute, and the review dialog would render
+  // the value garbled; refuse it before any further work.
+  if (!(tx instanceof Transaction) && BigInt(tx.fee) < 0n) {
+    throw invalidRequest(
+      'This fee-bump transaction carries a negative fee and can never be accepted by the network. Signing is refused.',
+    );
+  }
+
   // SEP-43 `address` option: resolve to an owned, revealed account (or the
   // active account when absent); a non-owned address is rejected.
   //

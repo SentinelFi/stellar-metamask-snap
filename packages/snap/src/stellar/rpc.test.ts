@@ -177,4 +177,20 @@ describe('simulateTransaction', () => {
       'Malformed Stellar RPC response (simulateTransaction).',
     );
   });
+
+  it('rejects a latestLedger that is not a positive integer', async () => {
+    // A ledger height is what bounds signature lifetimes elsewhere, so this
+    // field must carry the same guarantee as every other validated height:
+    // a hostile endpoint cannot hand a consumer zero, a negative, or a
+    // fractional "height".
+    mockFetch(mockResponse(rpcResult({ latestLedger: 0 })));
+    await expect(simulateTransaction(RPC, 'AAAA')).rejects.toThrow(
+      'Malformed Stellar RPC response (simulateTransaction).',
+    );
+
+    mockFetch(mockResponse(rpcResult({ latestLedger: 99.5 })));
+    await expect(simulateTransaction(RPC, 'AAAA')).rejects.toThrow(
+      'Malformed Stellar RPC response (simulateTransaction).',
+    );
+  });
 });

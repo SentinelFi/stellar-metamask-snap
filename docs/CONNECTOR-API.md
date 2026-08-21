@@ -94,7 +94,7 @@ Switches the wallet's active account. Requires a grant, and the index must alrea
 
 ### `getNetworkDetails(): Promise<NetworkDetailsResult>`
 
-Adds `networkUrl` (Horizon) and `sorobanRpcUrl` to the above. These are the endpoints the wallet itself uses; a dapp reading the ledger directly should read from the same ones, or it may show a user state from a network their wallet is not on.
+Adds `networkUrl` (Horizon) and `sorobanRpcUrl` to the above. These are the endpoints the wallet itself uses; a dapp reading the ledger directly should read from the same ones, or it may show a user state from a network their wallet is not on. The connector validates every network result against the pinned per-network constants (passphrase and both URLs), so a response carrying any other value, whatever answered the provider request, is rejected rather than handed to dapp code.
 
 ### `setNetwork(network: NetworkName): Promise<NetworkDetailsResult>`
 
@@ -159,6 +159,7 @@ type BalancesResult = {
   sequence: string | null;
   balances: BalanceLine[];
   tokensUnavailable?: true;
+  balancesTruncated?: true;
 };
 
 type BalanceLine = {
@@ -171,7 +172,9 @@ type BalanceLine = {
 
 **Branch on `type`, never on parsing `asset`.** A classic asset renders as `CODE:ISSUER` and a tracked Soroban token as `SYMBOL:CONTRACT_ID`, so the two strings are the same shape, and a token's symbol is chosen by whoever wrote its contract. A contract the user was persuaded to track can call itself `USDC`, and a caller splitting on `:` will display exactly that.
 
-`tokensUnavailable` means the wallet skipped its tracked-token reads because its token-read budget was exhausted. Classic balances are complete either way. Read it as "token rows are missing", never as "this account holds none of them": a total that ignores the difference is wrong, and so is a UI that concludes a token is absent.
+`tokensUnavailable` means the wallet skipped its tracked-token reads because its token-read budget was exhausted. Read it as "token rows are missing", never as "this account holds none of them": a total that ignores the difference is wrong, and so is a UI that concludes a token is absent.
+
+`balancesTruncated` means the account holds more classic balances than the wallet's display cap and the list was cut. An asset missing from a truncated list is not necessarily absent from the account.
 
 ### `addToken(contractId: string): Promise<AddTokenResult>`
 

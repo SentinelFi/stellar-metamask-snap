@@ -23,7 +23,7 @@ import { clearResetNotice, getState } from '../state';
 import type { NetworkName } from '../state/networks';
 import { NETWORKS } from '../state/networks';
 import type { AccountSummary, HorizonBalance } from '../stellar/horizon';
-import { getAccountSummary } from '../stellar/horizon';
+import { MAX_DISPLAY_BALANCES, getAccountSummary } from '../stellar/horizon';
 import { readTokenBalance } from '../stellar/token';
 import {
   displayOrigin,
@@ -173,6 +173,11 @@ const HomePage: SnapComponent<HomePageProps> = ({
             </Row>
           ))
         : null}
+      {summary?.balancesTruncated ? (
+        <Text>
+          {`Only the first ${MAX_DISPLAY_BALANCES} balances are shown; this account holds more. An asset missing from this list is not necessarily absent from the account.`}
+        </Text>
+      ) : null}
     </Section>
     <Section>
       <Text>
