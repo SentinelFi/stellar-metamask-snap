@@ -1,6 +1,6 @@
 import type { EntropyBinding } from '../keys';
 import {
-  assertBindingCurrent,
+  assertPhraseUnchanged,
   ensureEntropyBinding,
   getActiveAddress,
   getOwnedAccounts,
@@ -136,11 +136,12 @@ export async function fund(
     }
     address = match.address;
   }
-  // The friendbot call is a side effect on the resolved account, driven by a
-  // grant for the wallet that account belongs to. Checked at the last moment
-  // before it is made, so a phrase change observed since the grant check
-  // cannot let the previous wallet's grant fund the new wallet's account.
-  assertBindingCurrent(binding);
+  // The friendbot call is an outward side effect on the resolved account,
+  // driven by a grant for the wallet that account belongs to. The phrase is
+  // re-observed at the last moment before it is made, rather than trusting
+  // the in-context check: this request may be the only one running, in which
+  // case a switch since the grant check has been seen by nobody.
+  await assertPhraseUnchanged(binding);
   await requestFriendbot(network.friendbotUrl, address);
   return { funded: true, address };
 }
@@ -268,12 +269,13 @@ async function readBalances(
  * binding that admitted the request still describes the wallet.
  *
  * The lookup is a network round trip (or several), which is exactly the
- * window in which a concurrent request can observe a changed phrase and
- * reset the grants the caller was admitted on. The balances themselves were
+ * window in which the primary phrase can change. The balances themselves were
  * looked up for an address of the binding's wallet, so a stale binding does
  * not make them the *new* wallet's; but disclosing them under a grant the
- * wallet has since reset is still answering a request the store no longer
- * authorises, and the caller's retry will be refused at the gate.
+ * wallet has since moved away from is still answering a request the store no
+ * longer authorises, and the caller's retry will be refused at the gate. The
+ * phrase is therefore observed afresh rather than compared against whatever
+ * another request last saw, since this request may be the only one running.
  *
  * @param binding - The binding the request was admitted under.
  * @param lookup - The (possibly shared) in-flight lookup.
@@ -284,7 +286,7 @@ async function disclose(
   lookup: Promise<AccountBalances>,
 ): Promise<AccountBalances> {
   const balances = await lookup;
-  assertBindingCurrent(binding);
+  await assertPhraseUnchanged(binding);
   return balances;
 }
 
@@ -472,8 +474,11 @@ export async function addToken(
   // An approved dialog breaks the consecutive-rejection chain.
   clearDialogRejections(origin);
 
-  // Committed under the state lock, where the fingerprint proves the store
-  // still belongs to the phrase whose grant admitted this request.
+  // The token registry survives a phrase change by design, so a write made
+  // under a stale approval would persist into the new wallet: re-observe the
+  // active phrase before committing, then commit under the state lock, where
+  // the fingerprint proves the store still belongs to it.
+  await assertPhraseUnchanged(binding);
   await addTokenToState(
     network.name,
     {

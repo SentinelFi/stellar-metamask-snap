@@ -11,6 +11,21 @@ import {
   wipeKeypair,
 } from '.';
 
+/** The entropy source the mocked platform reports as primary. */
+const SOURCE_ID = 'default';
+
+/**
+ * The entropy sources the mocked platform reports, in the shape
+ * `snap_listEntropySources` answers with.
+ *
+ * @returns The source list.
+ */
+function entropySources() {
+  return [
+    { id: SOURCE_ID, name: 'Test phrase', type: 'mnemonic', primary: true },
+  ];
+}
+
 /**
  * The SLIP-10 path node for the account index a `snap_getBip32PublicKey`
  * request names (`m/44'/148'/<index>'`), typed the way key-tree wants it.
@@ -39,7 +54,10 @@ async function resolveSigningKeypair(
   requestedAddress?: string,
 ): Promise<{ keypair: Keypair; index: number }> {
   const { index, address } = await resolveSigningAccount(requestedAddress);
-  return { keypair: await deriveSigningKeypair(index, address), index };
+  return {
+    keypair: await deriveSigningKeypair(index, address, SOURCE_ID),
+    index,
+  };
 }
 
 /** Official SEP-0005 test vector 1 (no passphrase). */
@@ -97,6 +115,8 @@ describe('key derivation', () => {
             }
             stored = args.params.newState;
             return null;
+          case 'snap_listEntropySources':
+            return entropySources();
           case 'snap_getBip32Entropy':
             entropyRequests += 1;
             return entropy.toJSON();

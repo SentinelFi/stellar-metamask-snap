@@ -12,6 +12,7 @@ import { Buffer } from 'buffer';
 import { assertConnected } from './account';
 import type { EntropyBinding } from '../keys';
 import {
+  assertPhraseUnchanged,
   deriveSigningKeypair,
   resolveSigningAccount,
   wipeKeypair,
@@ -266,7 +267,7 @@ export async function signTransaction(
   const {
     index: accountIndex,
     address: signerAddress,
-    entropyFingerprint,
+    phrase,
   } = await resolveSigningAccount(request.address, selection);
 
   // Resolve the transaction that carries the operations: for a fee bump that
@@ -483,7 +484,20 @@ export async function signTransaction(
   // Wiped immediately: this is the keypair's last use, and everything below
   // works from the signed envelope. The submission path in particular is a
   // network round trip that the secret has no reason to outlive.
-  const keypair = await deriveSigningKeypair(accountIndex, signerAddress);
+  // Re-observe the active phrase before the key is imported. The dialog the
+  // user approved described one wallet; a switch of MetaMask's primary
+  // secret recovery phrase while it was open is invisible to the in-context
+  // check unless some other request happened to look, so this asks the
+  // platform again. The derivation below would refuse a mismatched key
+  // anyway, but only after importing private material, and the grant this
+  // signature records would otherwise be written under a phrase the user is
+  // no longer using.
+  await assertPhraseUnchanged(phrase);
+  const keypair = await deriveSigningKeypair(
+    accountIndex,
+    signerAddress,
+    phrase.source,
+  );
   try {
     tx.sign(keypair);
   } finally {
@@ -494,7 +508,7 @@ export async function signTransaction(
   // An approved signature is also consent to be connected. Recorded only now,
   // after the derivation above confirmed the displayed address still belongs
   // to the active phrase. Best effort: see `recordGrantBestEffort`.
-  await recordGrantBestEffort(origin, entropyFingerprint);
+  await recordGrantBestEffort(origin, phrase.fingerprint);
   const warningsField = warnings.length > 0 ? { warnings } : {};
 
   if (request.submit) {
@@ -672,11 +686,7 @@ export async function signAuthEntry(
       'The authorization entry names a different account than this wallet.',
     );
   }
-  const {
-    index: accountIndex,
-    address: signerAddress,
-    entropyFingerprint,
-  } = signer;
+  const { index: accountIndex, address: signerAddress, phrase } = signer;
 
   // Bound the signature lifetime against the current ledger: reject
   // an already-expired entry and cap how far in the future it may reach, so
@@ -801,7 +811,20 @@ export async function signAuthEntry(
 
   // Derived only now, checked against the address the dialog displayed.
   // `authorizeEntry` signs internally, so the wipe waits for it to settle.
-  const keypair = await deriveSigningKeypair(accountIndex, signerAddress);
+  // Re-observe the active phrase before the key is imported. The dialog the
+  // user approved described one wallet; a switch of MetaMask's primary
+  // secret recovery phrase while it was open is invisible to the in-context
+  // check unless some other request happened to look, so this asks the
+  // platform again. The derivation below would refuse a mismatched key
+  // anyway, but only after importing private material, and the grant this
+  // signature records would otherwise be written under a phrase the user is
+  // no longer using.
+  await assertPhraseUnchanged(phrase);
+  const keypair = await deriveSigningKeypair(
+    accountIndex,
+    signerAddress,
+    phrase.source,
+  );
   let signed;
   try {
     signed = await authorizeEntry(
@@ -816,7 +839,7 @@ export async function signAuthEntry(
 
   // Recorded only after the derivation confirmed the displayed address still
   // belongs to the active phrase. Best effort: see `recordGrantBestEffort`.
-  await recordGrantBestEffort(origin, entropyFingerprint);
+  await recordGrantBestEffort(origin, phrase.fingerprint);
 
   return {
     signedAuthEntry: signed.toXDR('base64'),
@@ -867,7 +890,7 @@ export async function signMessage(
   const {
     index: accountIndex,
     address: signerAddress,
-    entropyFingerprint,
+    phrase,
   } = await resolveSigningAccount(request.address, selection);
 
   recordDialogOpened(origin);
@@ -900,7 +923,20 @@ export async function signMessage(
     ]),
   );
   // Derived only now, checked against the address the dialog displayed.
-  const keypair = await deriveSigningKeypair(accountIndex, signerAddress);
+  // Re-observe the active phrase before the key is imported. The dialog the
+  // user approved described one wallet; a switch of MetaMask's primary
+  // secret recovery phrase while it was open is invisible to the in-context
+  // check unless some other request happened to look, so this asks the
+  // platform again. The derivation below would refuse a mismatched key
+  // anyway, but only after importing private material, and the grant this
+  // signature records would otherwise be written under a phrase the user is
+  // no longer using.
+  await assertPhraseUnchanged(phrase);
+  const keypair = await deriveSigningKeypair(
+    accountIndex,
+    signerAddress,
+    phrase.source,
+  );
   let signature;
   try {
     signature = keypair.sign(payload);
@@ -910,7 +946,7 @@ export async function signMessage(
 
   // Recorded only after the derivation confirmed the displayed address still
   // belongs to the active phrase. Best effort: see `recordGrantBestEffort`.
-  await recordGrantBestEffort(origin, entropyFingerprint);
+  await recordGrantBestEffort(origin, phrase.fingerprint);
 
   return { signedMessage: signature.toString('base64'), signerAddress };
 }

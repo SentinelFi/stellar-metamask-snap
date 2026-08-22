@@ -16,7 +16,7 @@ import { getState, MAX_ACCOUNT_INDEX, reconcileEntropyBinding } from '../state';
  * checked to carry that fingerprint, so a grant or an account index read from
  * it belongs to the phrase the fingerprint names. Address resolution bound to
  * it refuses any node or memo entry of another phrase, and
- * {@link assertBindingCurrent} lets a handler refuse, after awaited work,
+ * {@link assertPhraseUnchanged} lets a handler refuse, after awaited work,
  * before it returns wallet-derived data or applies a side effect.
  *
  * What it deliberately does not carry is the parent node. Holding the
@@ -27,9 +27,19 @@ import { getState, MAX_ACCOUNT_INDEX, reconcileEntropyBinding } from '../state';
 export type EntropyBinding = {
   /** The fingerprint of the phrase the wallet was deriving from. */
   fingerprint: string;
+  /**
+   * The entropy source the fingerprint was read from, as the platform names
+   * it. Every key request this binding authorises names it explicitly, so a
+   * response is attributable to one source rather than to "whichever phrase
+   * was primary at the instant the platform served it".
+   */
+  source: string;
   /** A state snapshot whose persisted fingerprint equals `fingerprint`. */
   state: SnapState;
 };
+
+/** What a request must present to have its binding reaffirmed. */
+export type BoundPhrase = { fingerprint: string; source: string };
 
 /**
  * Public addresses by account index, memoized for this execution context.
@@ -229,6 +239,48 @@ const SUBTREE_PATH = ['m', "44'", "148'"];
 const ED25519_PUBLIC_KEY_HEX = /^0x00[0-9a-f]{64}$/iu;
 
 /**
+ * The entropy source the wallet currently treats as primary, as the platform
+ * identifies it.
+ *
+ * Every key this snap asks for names a source explicitly. Without that, a
+ * key request means "whatever is primary when you serve this", and a
+ * response carries nothing that says which phrase answered it: a batch of
+ * concurrent requests spanning a change away from a phrase and back again
+ * could mix keys from two wallets while an observation before and after the
+ * batch saw the same phrase both times. Naming the source makes each
+ * response attributable, and the observation then has a different job: to
+ * confirm the named source is still the wallet's primary one.
+ *
+ * @returns The primary source's identifier.
+ * @throws An external-service error when no primary source is reported.
+ */
+async function primaryEntropySource(): Promise<string> {
+  const sources: unknown = await snap.request({
+    method: 'snap_listEntropySources',
+  });
+  const primary = Array.isArray(sources)
+    ? sources.find(
+        (entry): entry is { id: string; primary: true } =>
+          typeof entry === 'object' &&
+          entry !== null &&
+          (entry as { primary?: unknown }).primary === true &&
+          typeof (entry as { id?: unknown }).id === 'string' &&
+          (entry as { id: string }).id.length > 0,
+      )
+    : undefined;
+  if (primary === undefined) {
+    // Fail closed: without a source to name, no key response can be
+    // attributed to a phrase, which is the property everything below rests
+    // on. Refusing is better than silently reverting to unattributed keys.
+    throw externalServiceError(
+      'The wallet did not report which secret recovery phrase is active, so ' +
+        'this request cannot be tied to one. Try again shortly.',
+    );
+  }
+  return primary.id;
+}
+
+/**
  * The entropy fingerprint of a phrase: a SHA-256 of the subtree's public
  * key bytes. Public data, never key material, and stable for a given phrase.
  *
@@ -260,17 +312,20 @@ function fingerprintOf(publicKeyBytes: Uint8Array): string {
  * node fetch stands in for up to 256 round trips.
  *
  * @param path - The BIP-32 path, `SUBTREE_PATH` or one account below it.
+ * @param source - The entropy source to read from, so the answer is
+ * attributable to one phrase (see {@link primaryEntropySource}).
  * @returns The 33-byte public key (zero prefix, then the ed25519 key).
  */
-async function fetchPublicKeyBytes(path: string[]): Promise<Buffer> {
+async function fetchPublicKeyBytes(
+  path: string[],
+  source: string,
+): Promise<Buffer> {
   const publicKey = await snap.request({
     method: 'snap_getBip32PublicKey',
     params: {
-      // No `source`: this resolves the *primary* entropy source, exactly as
-      // the entropy request in `getAccountParentNode` does, so the two agree
-      // on which phrase is being described.
       path,
       curve: 'ed25519',
+      source,
     },
   });
   // The platform types this as a string; the shape check is defence against
@@ -291,12 +346,15 @@ async function fetchPublicKeyBytes(path: string[]): Promise<Buffer> {
  * Observes which secret recovery phrase is primary right now and binds this
  * execution context to it, importing no private material to do so.
  *
- * @returns The fingerprint observed.
+ * @returns The primary source and the fingerprint of its subtree.
  */
-async function observeEntropyFingerprint(): Promise<string> {
-  const fingerprint = fingerprintOf(await fetchPublicKeyBytes(SUBTREE_PATH));
+async function observePrimaryPhrase(): Promise<BoundPhrase> {
+  const source = await primaryEntropySource();
+  const fingerprint = fingerprintOf(
+    await fetchPublicKeyBytes(SUBTREE_PATH, source),
+  );
   await bindFingerprint(fingerprint);
-  return fingerprint;
+  return { fingerprint, source };
 }
 
 /**
@@ -307,13 +365,17 @@ async function observeEntropyFingerprint(): Promise<string> {
  * escaped state validation must not reach the platform.
  *
  * @param index - The SEP-0005 account index (`x` in `m/44'/148'/x'`).
+ * @param source - The entropy source the address must come from.
  * @returns The `G...` address.
  */
-async function fetchAddress(index: number): Promise<string> {
+async function fetchAddress(index: number, source: string): Promise<string> {
   if (!Number.isInteger(index) || index < 0 || index >= MAX_ACCOUNT_INDEX) {
     throw invalidRequest('Invalid account index.');
   }
-  const publicKey = await fetchPublicKeyBytes([...SUBTREE_PATH, `${index}'`]);
+  const publicKey = await fetchPublicKeyBytes(
+    [...SUBTREE_PATH, `${index}'`],
+    source,
+  );
   // Drop the zero prefix byte: a Stellar address encodes the bare 32-byte
   // ed25519 key.
   return StrKey.encodeEd25519PublicKey(Buffer.from(publicKey.subarray(1)));
@@ -332,19 +394,17 @@ async function fetchAddress(index: number): Promise<string> {
  * other address and every fingerprint comes from
  * {@link fetchPublicKeyBytes}.
  *
+ * @param source - The entropy source to derive from, named explicitly for
+ * the reason {@link primaryEntropySource} gives.
  * @returns The SEP-0005 parent node.
  */
-async function getAccountParentNode(): Promise<SLIP10Node> {
+async function getAccountParentNode(source: string): Promise<SLIP10Node> {
   const entropy = await snap.request({
     method: 'snap_getBip32Entropy',
     params: {
-      // No `source`: this resolves the *primary* entropy source. MetaMask
-      // supports several secret recovery phrases, so which one is primary is
-      // an input to every address this snap shows. `bindFingerprint` below
-      // is what stops that input changing silently underneath the caches and
-      // the stored account registry.
       path: SUBTREE_PATH,
       curve: 'ed25519',
+      source,
     },
   });
   const node = await SLIP10Node.fromJSON(entropy);
@@ -521,7 +581,7 @@ async function bindFingerprint(fingerprint: string): Promise<void> {
  * when the phrase changed underneath the request.
  */
 export async function ensureEntropyBinding(): Promise<EntropyBinding> {
-  const fingerprint = await observeEntropyFingerprint();
+  const { fingerprint, source } = await observePrimaryPhrase();
   // Another request may have observed a newer phrase while this one waited
   // for its reconciliation; what was observed here no longer describes the
   // wallet, so nothing read under it may be honoured.
@@ -541,7 +601,7 @@ export async function ensureEntropyBinding(): Promise<EntropyBinding> {
   }
   const { activeAccount } = state;
   if (cachedAddress(activeAccount, fingerprint) === undefined) {
-    await resolveAddresses([activeAccount], fingerprint);
+    await resolveAddresses([activeAccount], { fingerprint, source });
   }
   // Re-checked for the memo-hit path, which awaited nothing since the state
   // read and could otherwise return a binding whose fingerprint a concurrent
@@ -550,30 +610,59 @@ export async function ensureEntropyBinding(): Promise<EntropyBinding> {
   if (contextFingerprint !== fingerprint) {
     throw phraseChangedError();
   }
-  return { fingerprint, state };
+  return { fingerprint, source, state };
 }
 
 /**
- * Refuses a request whose binding no longer describes the phrase the wallet
- * is deriving from.
+ * Asks the platform again which secret recovery phrase is primary, and
+ * requires it to be the one that authorised this request.
  *
- * Handlers call this after awaited work (a Horizon lookup, a contract read)
- * and immediately before they return wallet-derived data or apply a
- * side effect. The binding's own checks cover everything that derives; this
- * covers the stretch between the last derivation and the answer, where a
- * concurrent request may have observed a new phrase and reset the store
- * under which this request's grant was honoured.
+ * A comparison against the last phrase *some* request in this execution
+ * context observed would be cheaper, but it sees only a change another
+ * request has already noticed. A user can switch MetaMask's primary phrase
+ * while a confirmation dialog is open, and if no other request happens to run
+ * in that interval, nothing has observed it: the persisted fingerprint still
+ * names the old phrase, so a stale approval would compare the old fingerprint
+ * against an equally old store and commit. The network preference and the
+ * tracked token registry deliberately survive a phrase change, so such a
+ * write would persist into the new wallet under consent collected for the
+ * previous one.
  *
- * In-context only: it compares against the fingerprint most recently
- * observed by *any* request in this execution context, which is precisely
- * the signal an overlapping request leaves behind. A change no request has
- * observed yet is invisible here, and is caught by the next fetch.
+ * Callers use it immediately after an approval and before any durable write,
+ * outward side effect, or private-key import, and again before returning
+ * wallet-derived data: an address or a balance answered after an unobserved
+ * switch describes a wallet the user has stopped using, and the origin cannot
+ * tell. The fingerprint check inside the state lock stays as the second line.
+ * The observation itself is what runs the reconciliation, so by the time this
+ * refuses, the store already describes the phrase that is now active.
  *
- * @param binding - The binding the request was authorised under.
- * @throws An external-service error when the phrase has changed since.
+ * Deliberately *not* {@link ensureEntropyBinding}. That one additionally
+ * demands a store whose binding could be confirmed, which is right for
+ * admitting a request but wrong here: a store that cannot be written must not
+ * be able to consume an approval the user has already given and return
+ * nothing. This asks the one question that matters after an approval, and it
+ * asks the platform rather than the store.
+ *
+ * The source is compared as well as the fingerprint. A phrase re-imported
+ * under a new source would fingerprint identically, and it is the source that
+ * every key request names, so both have to be the ones the request began with.
+ *
+ * @param expected - The phrase the request was authorised under.
+ * @throws An external-service error when the active phrase is not that one.
  */
-export function assertBindingCurrent(binding: EntropyBinding): void {
-  if (contextFingerprint !== binding.fingerprint) {
+export async function assertPhraseUnchanged(
+  expected: BoundPhrase,
+): Promise<void> {
+  const observed = await observePrimaryPhrase();
+  if (
+    observed.fingerprint !== expected.fingerprint ||
+    observed.source !== expected.source
+  ) {
+    throw phraseChangedError();
+  }
+  // A concurrent request may have observed a different phrase between the
+  // observation above and this line.
+  if (contextFingerprint !== expected.fingerprint) {
     throw phraseChangedError();
   }
 }
@@ -675,10 +764,14 @@ async function deriveAddress(node: SLIP10Node, index: number): Promise<string> {
  * official SEP-0005 test vectors is enforced by the test suite.
  *
  * @param index - The SEP-0005 account index (`x` in `m/44'/148'/x'`).
+ * @param source - The entropy source to derive from.
  * @returns The Stellar keypair for the account.
  */
-export async function deriveKeypair(index = 0): Promise<Keypair> {
-  return deriveFromNode(await getAccountParentNode(), index);
+export async function deriveKeypair(
+  index: number,
+  source: string,
+): Promise<Keypair> {
+  return deriveFromNode(await getAccountParentNode(source), index);
 }
 
 /**
@@ -729,29 +822,28 @@ export function wipeKeypair(keypair: Keypair): void {
  * `undefined` flowing out through `getAccounts` and the home page as though
  * it were an address.
  *
- * Every resolution is bound to a fingerprint, and the binding is enforced on
- * both sides of the fetch. A memo entry is used only while the memo still
- * belongs to that phrase ({@link cachedAddress}). A key fetched to fill a
- * miss answers for whichever phrase is primary at the moment of the fetch,
- * and a public key carries nothing that says which phrase that was, so the
- * phrase is observed again *after* the fetches and the batch is refused
- * unless that observation still matches the binding (and no concurrent
- * request has moved the context on). Between them, a request authorised
- * under one phrase can never cache or return another phrase's addresses.
- * What this cannot see is a phrase changing away and back between the two
- * observations, which would take two user-driven switches inside one
- * platform round trip; the signing path does not rely on this memo (it
- * re-derives and compares), so that window can never produce a signature.
+ * Every resolution is bound to a phrase, and the binding is enforced on both
+ * sides of the fetch. A memo entry is used only while the memo still belongs
+ * to that phrase ({@link cachedAddress}). Each key is fetched from the
+ * binding's *named* source, so every response is attributable to that one
+ * phrase however the wallet's primary changes meanwhile: a batch cannot mix
+ * two wallets' addresses, which a before-and-after comparison alone could not
+ * rule out (a change away from the phrase and back again passes both
+ * observations while keys from the other phrase land in between). The
+ * observation afterwards answers the remaining question, which is a different
+ * one: whether that source is still the wallet's primary phrase, since a
+ * grant is consent for the wallet the user is actually using.
  *
  * @param indices - The account indices to resolve.
- * @param fingerprint - The fingerprint the resolution is bound to.
+ * @param phrase - The phrase the resolution is bound to.
  * @returns The `{ index, address }` pair for each requested index, in the
  * order given.
  */
 async function resolveAddresses(
   indices: number[],
-  fingerprint: string,
+  phrase: BoundPhrase,
 ): Promise<{ index: number; address: string }[]> {
+  const { fingerprint, source } = phrase;
   const missing = [
     ...new Set(
       indices.filter(
@@ -761,10 +853,16 @@ async function resolveAddresses(
   ];
   if (missing.length > 0) {
     const fetched = await Promise.all(
-      missing.map(async (index) => [index, await fetchAddress(index)] as const),
+      missing.map(
+        async (index) => [index, await fetchAddress(index, source)] as const,
+      ),
     );
-    const observed = await observeEntropyFingerprint();
-    if (observed !== fingerprint || contextFingerprint !== fingerprint) {
+    const observed = await observePrimaryPhrase();
+    if (
+      observed.fingerprint !== fingerprint ||
+      observed.source !== source ||
+      contextFingerprint !== fingerprint
+    ) {
       throw phraseChangedError();
     }
     // Synchronous from the confirmation above to the writes: no await can
@@ -790,12 +888,13 @@ async function resolveAddresses(
  * then reuses the same promise, so the account sweep crosses the sandbox
  * boundary with the parent key material at most once.
  *
+ * @param source - The entropy source the node must come from.
  * @returns A getter resolving the parent node.
  */
-function lazyAccountParentNode(): () => Promise<SLIP10Node> {
+function lazyAccountParentNode(source: string): () => Promise<SLIP10Node> {
   let cached: Promise<SLIP10Node> | null = null;
   return async () => {
-    cached ??= getAccountParentNode();
+    cached ??= getAccountParentNode(source);
     return cached;
   };
 }
@@ -817,16 +916,20 @@ function lazyAccountParentNode(): () => Promise<SLIP10Node> {
  * at the first match, and results fill the shared address cache, so a
  * repeated search costs nothing beyond the first.
  *
+ * @param binding - The request's entropy binding. The sweep derives from its
+ * source and reads the memo under its fingerprint, so a lookup started for
+ * one phrase can neither read nor write another phrase's addresses.
  * @param address - The `G...` address to locate.
  * @returns The account index, or null when the address is not derivable
  * from this wallet's secret recovery phrase.
  */
 export async function findAccountIndexByAddress(
+  binding: EntropyBinding,
   address: string,
 ): Promise<number | null> {
-  const getNode = lazyAccountParentNode();
+  const getNode = lazyAccountParentNode(binding.source);
   for (let index = 0; index < MAX_ACCOUNT_INDEX; index += 1) {
-    let candidate = addressCache.get(index);
+    let candidate = cachedAddress(index, binding.fingerprint);
     if (candidate === undefined) {
       const node = await getNode();
       candidate = await deriveAddress(node, index);
@@ -851,7 +954,7 @@ export async function getAddressForIndex(
   binding: EntropyBinding,
   index: number,
 ): Promise<string> {
-  const [resolved] = await resolveAddresses([index], binding.fingerprint);
+  const [resolved] = await resolveAddresses([index], binding);
   if (resolved === undefined) {
     // `resolveAddresses` answers one pair per requested index; asserted
     // rather than cast away.
@@ -886,7 +989,7 @@ export async function getActiveAddress(
 export async function getOwnedAccounts(
   binding: EntropyBinding,
 ): Promise<{ index: number; address: string }[]> {
-  return resolveAddresses(binding.state.accounts, binding.fingerprint);
+  return resolveAddresses(binding.state.accounts, binding);
 }
 
 /**
@@ -940,49 +1043,50 @@ export async function getOwnedAccounts(
  * @param requestedAddress - The `address` option, when the dapp sent one.
  * @param binding - The binding the selection was authorised under, when the
  * caller holds one. Cold signing (no address, no grant) has none.
- * @returns The signing account's index and address, and the entropy
- * fingerprint the resolution observed.
+ * @returns The signing account's index and address, and the phrase the
+ * resolution observed.
  * @throws An invalid-request error when the address is not held, or an
  * external-service error when the phrase is not the binding's.
  */
 export async function resolveSigningAccount(
   requestedAddress?: string,
   binding?: EntropyBinding,
-): Promise<{ index: number; address: string; entropyFingerprint: string }> {
+): Promise<{ index: number; address: string; phrase: BoundPhrase }> {
   // Observe the phrase before reading state, not after. Observing is what
   // detects a changed secret recovery phrase and settles the persisted-state
   // reconciliation that resets accounts recorded under the old one; a state
   // snapshot taken first could hand this function an account index from the
   // previous phrase, and the dialog would then present (and the wallet sign
   // for) a selection the reset was about to discard.
-  const entropyFingerprint = await observeEntropyFingerprint();
-  if (binding !== undefined && entropyFingerprint !== binding.fingerprint) {
+  const phrase = await observePrimaryPhrase();
+  if (
+    binding !== undefined &&
+    (phrase.fingerprint !== binding.fingerprint ||
+      phrase.source !== binding.source)
+  ) {
     throw phraseChangedError();
   }
   const state = binding?.state ?? (await getState());
   if (requestedAddress === undefined) {
-    const [active] = await resolveAddresses(
-      [state.activeAccount],
-      entropyFingerprint,
-    );
+    const [active] = await resolveAddresses([state.activeAccount], phrase);
     if (active === undefined) {
       // `resolveAddresses` answers one pair per requested index; asserted
       // rather than cast away.
       throw new Error('Failed to resolve the active account.');
     }
-    return { ...active, entropyFingerprint };
+    return { ...active, phrase };
   }
 
   // Resolve through the address index, so an address the wallet does not hold
   // is rejected without deriving a signing key at all. Repeating an unowned
   // address is then a map lookup rather than a full sweep of every revealed
   // account.
-  const owned = await resolveAddresses(state.accounts, entropyFingerprint);
+  const owned = await resolveAddresses(state.accounts, phrase);
   const match = owned.find((entry) => entry.address === requestedAddress);
   if (match === undefined) {
     throw invalidRequest('Unknown address: this wallet does not hold it.');
   }
-  return { ...match, entropyFingerprint };
+  return { ...match, phrase };
 }
 
 /**
@@ -1006,6 +1110,9 @@ export async function resolveSigningAccount(
  * @param index - The account index resolution returned.
  * @param expectedAddress - The address resolution returned, and the dialog
  * showed.
+ * @param source - The entropy source the displayed address came from, so the
+ * signature is produced by that phrase's key and not by whichever phrase is
+ * primary at the moment of derivation.
  * @returns The signing keypair. Callers must {@link wipeKeypair} it after
  * their final signature.
  * @throws An invalid-request error when the derived key is not that address.
@@ -1013,8 +1120,9 @@ export async function resolveSigningAccount(
 export async function deriveSigningKeypair(
   index: number,
   expectedAddress: string,
+  source: string,
 ): Promise<Keypair> {
-  const keypair = await deriveKeypair(index);
+  const keypair = await deriveKeypair(index, source);
   if (keypair.publicKey() !== expectedAddress) {
     wipeKeypair(keypair);
     addressCache.clear();

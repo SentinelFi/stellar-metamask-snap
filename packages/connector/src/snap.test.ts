@@ -547,10 +547,26 @@ describe('StellarSnap version check on invocation', () => {
     expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(0);
   });
 
-  it('reads wallet_getSnaps once for the public network reads', async () => {
-    // The memo exists for the calls that disclose nothing about the wallet:
-    // the network reads are answerable to any origin, so a verified pin may
-    // be remembered for them.
+  it('re-checks the version before a network read, and fails closed', async () => {
+    // A method name cannot make an invocation safe. After a MetaMask-mediated
+    // update under the same npm ID, the replacement snap holds the same
+    // granted permissions and controls its own dispatcher, so it is not bound
+    // by the method the caller asked for. No prior comparison can vouch for
+    // the bundle a later call reaches, so every invocation re-reads.
+    const { provider, requests, setInstalled } = providerWithMutableVersion();
+    const snap = new StellarSnap({ provider });
+
+    await snap.invoke('getNetwork');
+    setInstalled('0.2.0');
+    await expect(snap.invoke('getNetwork')).rejects.toMatchObject({
+      code: -3,
+      message: expect.stringContaining('0.2.0'),
+    });
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
+  });
+
+  it('reads wallet_getSnaps once per invocation, with nothing memoized', async () => {
     const { provider, requests } = providerReporting('0.1.0', SNAP_ID, {
       getNetwork: { network: 'TESTNET' },
     });
@@ -559,8 +575,31 @@ describe('StellarSnap version check on invocation', () => {
     await snap.invoke('getNetwork');
     await snap.invoke('getNetwork');
     await snap.invoke('getNetwork');
-    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
+    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(3);
     expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(3);
+  });
+
+  it('does not let a verified isInstalled() stand in for a call check', async () => {
+    // Discovery answers a question; it does not authorise a later invocation.
+    const { provider, requests, setInstalled } = providerWithMutableVersion();
+    const snap = new StellarSnap({ provider });
+
+    expect(await snap.isInstalled()).toBe(true);
+    setInstalled('0.2.0');
+    await expect(snap.getAddress()).rejects.toMatchObject({ code: -3 });
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(0);
+  });
+
+  it('refuses to invoke when the snap is not installed', async () => {
+    // Deferring to MetaMask's own refusal is fine for a caller probing before
+    // installation, but it cannot support an exact-version guarantee during an
+    // install or update race. `isInstalled()` remains the discovery path.
+    const { provider, requests } = providerReporting(null);
+    const snap = new StellarSnap({ provider });
+
+    await expect(snap.getAddress()).rejects.toMatchObject({ code: -3 });
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(0);
+    expect(await snap.isInstalled()).toBe(false);
   });
 
   it('compares the privacy reads against the pin on every call', async () => {
@@ -585,36 +624,6 @@ describe('StellarSnap version check on invocation', () => {
     expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
   });
 
-  it('keeps answering the public network reads from the memo', async () => {
-    // The narrower guarantee, stated as a test so it cannot widen silently:
-    // only the network reads trust a pin verified earlier in the session.
-    const { provider, requests, setInstalled } = providerWithMutableVersion();
-    const snap = new StellarSnap({ provider });
-
-    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
-    setInstalled('0.2.0');
-    await snap.invoke('getNetwork');
-    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
-    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(2);
-  });
-
-  it('shares one wallet_getSnaps read between concurrent first calls', async () => {
-    // A page typically fires several reads together on load; they must not
-    // each pay for (and race) their own verification.
-    const { provider, requests } = providerReporting('0.1.0', SNAP_ID, {
-      getNetwork: { network: 'TESTNET' },
-    });
-    const snap = new StellarSnap({ provider });
-
-    await Promise.all([
-      snap.invoke('getNetwork'),
-      snap.invoke('getNetwork'),
-      snap.invoke('getNetwork'),
-    ]);
-    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
-    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(3);
-  });
-
   it('re-checks after a mismatch rather than remembering it', async () => {
     // The user may update the snap between calls; a refused call must not
     // poison the client for the rest of the session.
@@ -625,8 +634,6 @@ describe('StellarSnap version check on invocation', () => {
     await expect(snap.getAddress()).rejects.toMatchObject({ code: -3 });
     setInstalled('0.1.0');
     expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
-    // The successful re-check is remembered for the public reads.
-    await snap.invoke('getNetwork');
     expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
   });
 
@@ -641,15 +648,12 @@ describe('StellarSnap version check on invocation', () => {
     expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
 
     setInstalled('0.2.0');
-    // The public read still answers from the memo...
-    await snap.invoke('getNetwork');
-    // ...and the sensitive call is what re-compares and fails closed.
     await expect(snap.signMessage('hello')).rejects.toMatchObject({
       code: -3,
       message: expect.stringContaining('0.2.0'),
     });
     expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
-    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(2);
+    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
   });
 
   it('fails a raw signing invocation closed after a mid-session update', async () => {
@@ -685,40 +689,6 @@ describe('StellarSnap version check on invocation', () => {
 
     setInstalled('0.2.0');
     await expect(snap.fund()).rejects.toMatchObject({
-      code: -3,
-      message: expect.stringContaining('0.2.0'),
-    });
-    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(2);
-    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
-  });
-
-  it('does not satisfy a sensitive call with a lookup begun before it', async () => {
-    // A public read can leave a wallet_getSnaps lookup in flight when a
-    // sensitive call arrives. That lookup observed the installed version
-    // before the sensitive call was made, so a snap updated in between
-    // would pass a check that predates it. The sensitive call must await a
-    // lookup begun after itself.
-    const { provider, requests, releases, setInstalled } =
-      providerWithDeferredSnapReads();
-    const snap = new StellarSnap({ provider });
-
-    const read = snap.invoke('getNetwork');
-    await waitUntil(() => releases.length === 1);
-
-    // The snap updates while the read's lookup is still pending; the
-    // sensitive call must start its own lookup rather than share it.
-    setInstalled('0.2.0');
-    const sensitive = snap.signMessage('hello');
-    await waitUntil(() => releases.length === 2);
-
-    // The stale lookup settles first, reporting the version it observed
-    // before the update. Only the read that started it may trust that
-    // answer.
-    releases[0]?.();
-    releases[1]?.();
-
-    expect(await read).toStrictEqual({ address: ADDRESS });
-    await expect(sensitive).rejects.toMatchObject({
       code: -3,
       message: expect.stringContaining('0.2.0'),
     });
@@ -776,29 +746,6 @@ describe('StellarSnap version check on invocation', () => {
     expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
     expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(0);
     expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
-  });
-
-  it('lets MetaMask answer when the snap is not installed at all', async () => {
-    // Absence is not a version mismatch: MetaMask refuses the invocation
-    // itself, exactly as it did before the check existed, so a dapp's
-    // pre-install handling is unchanged.
-    const { provider, requests } = providerReporting(null);
-    const snap = new StellarSnap({ provider });
-
-    expect(await snap.getAddress()).toStrictEqual({ address: ADDRESS });
-    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
-    expect(ofMethod(requests, 'wallet_invokeSnap')).toHaveLength(1);
-  });
-
-  it('treats a verified isInstalled() as the check for the public reads', async () => {
-    const { provider, requests } = providerReporting('0.1.0', SNAP_ID, {
-      getNetwork: { network: 'TESTNET' },
-    });
-    const snap = new StellarSnap({ provider });
-
-    expect(await snap.isInstalled()).toBe(true);
-    await snap.invoke('getNetwork');
-    expect(ofMethod(requests, 'wallet_getSnaps')).toHaveLength(1);
   });
 
   it('covers the Freighter facade and the Wallets Kit module', async () => {

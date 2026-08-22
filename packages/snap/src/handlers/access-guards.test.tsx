@@ -100,6 +100,11 @@ const PHRASE_2_ADDRESS_0 =
 const CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 const ORIGIN = 'https://dapp.example';
 
+/** The entropy source holding {@link SEP5_MNEMONIC}. */
+const SOURCE_A = 'phrase-a';
+/** The entropy source holding {@link SEP5_MNEMONIC_2}. */
+const SOURCE_B = 'phrase-b';
+
 let stored: unknown;
 let dialogs: unknown[];
 let dialogResponse: boolean;
@@ -113,10 +118,19 @@ let writesFail: boolean;
 let entropyFetches: number;
 /** How many of those were observations of the subtree's own public key. */
 let subtreeFetches: number;
-/** The `m/44'/148'` subtree the mocked key requests answer from. */
-let activeEntropy: SLIP10Node;
-/** The subtree for {@link SEP5_MNEMONIC}, to switch back to. */
-let phraseOneEntropy: SLIP10Node;
+/**
+ * The `m/44'/148'` subtree of each entropy source the mocked platform holds.
+ *
+ * Two sources, because that is what a MetaMask holding two secret recovery
+ * phrases has. Switching the primary phrase changes *which source is
+ * primary*; it does not change what a given source derives. Modelling it that
+ * way is what lets these tests tell a key that came from the source a request
+ * named apart from one that came from "whichever phrase happened to be
+ * primary when the platform answered".
+ */
+const sourceNodes = new Map<string, SLIP10Node>();
+/** The source the mocked platform currently reports as primary. */
+let primarySource: string;
 
 /**
  * Builds a version-2 state object.
@@ -241,7 +255,10 @@ async function resolveSigningKeypair(
   requestedAddress?: string,
 ): Promise<{ keypair: Keypair; index: number }> {
   const { index, address } = await resolveSigningAccount(requestedAddress);
-  return { keypair: await deriveSigningKeypair(index, address), index };
+  return {
+    keypair: await deriveSigningKeypair(index, address, primarySource),
+    index,
+  };
 }
 
 /** A persisted state object as it was handed to `snap_manageState`. */
@@ -283,16 +300,64 @@ function captureStateWrites(): StateWrite[] {
  * the case where MetaMask's primary secret recovery phrase changes while the
  * snap's execution context (and everything it has latched) stays warm.
  */
-async function swapEntropy(): Promise<void> {
-  activeEntropy = await SLIP10Node.fromDerivationPath({
-    derivationPath: [`bip39:${SEP5_MNEMONIC_2}`, `slip10:44'`, `slip10:148'`],
-    curve: 'ed25519',
-  });
+function swapEntropy(): void {
+  primarySource = SOURCE_B;
 }
 
 /** Switches the primary phrase back to {@link SEP5_MNEMONIC}. */
 function restoreEntropy(): void {
-  activeEntropy = phraseOneEntropy;
+  primarySource = SOURCE_A;
+}
+
+/**
+ * The subtree a key request resolves against: the source it named, or the
+ * primary one when it named none.
+ *
+ * @param source - The `source` parameter of the request, when present.
+ * @returns The subtree node.
+ */
+function nodeForSource(source: string | undefined): SLIP10Node {
+  const node = sourceNodes.get(source ?? primarySource);
+  if (!node) {
+    throw new Error(`Entropy source with ID "${String(source)}" not found.`);
+  }
+  return node;
+}
+
+/**
+ * Arms a single account-key response to be served from another source,
+ * modelling the platform answering one request from a batch while a different
+ * phrase was momentarily primary.
+ *
+ * It applies only to a request that names *no* source, which is the whole
+ * point: an unsourced request means "whatever is primary when you serve
+ * this", so its answer can come from a phrase the caller never asked for. A
+ * request that names its source is served from that source, because that is
+ * what naming it buys.
+ */
+let mixedResponseSource: string | null = null;
+
+/**
+ * Arms {@link mixedResponseSource} for the next unsourced account key.
+ *
+ * @param source - The source that request should be answered from.
+ */
+function answerNextUnsourcedKeyFrom(source: string): void {
+  mixedResponseSource = source;
+}
+
+/**
+ * The list the mocked `snap_listEntropySources` answers with.
+ *
+ * @returns Both sources, with the primary one flagged.
+ */
+function entropySources() {
+  return [SOURCE_A, SOURCE_B].map((id) => ({
+    id,
+    name: id,
+    type: 'mnemonic',
+    primary: id === primarySource,
+  }));
 }
 
 /**
@@ -550,8 +615,20 @@ describe('connection gate and account resolution', () => {
     writesFail = false;
     entropyFetches = 0;
     subtreeFetches = 0;
-    phraseOneEntropy = entropy;
-    activeEntropy = entropy;
+    mixedResponseSource = null;
+    sourceNodes.set(SOURCE_A, entropy);
+    sourceNodes.set(
+      SOURCE_B,
+      await SLIP10Node.fromDerivationPath({
+        derivationPath: [
+          `bip39:${SEP5_MNEMONIC_2}`,
+          `slip10:44'`,
+          `slip10:148'`,
+        ],
+        curve: 'ed25519',
+      }),
+    );
+    primarySource = SOURCE_A;
     // The address cache, the entropy binding, the balance cache, the request
     // limits and the dialog throttle are all module state that outlives a
     // test otherwise.
@@ -568,6 +645,7 @@ describe('connection gate and account resolution', () => {
           newState?: unknown;
           content?: unknown;
           path?: string[];
+          source?: string;
         };
       }) => {
         await Promise.resolve();
@@ -581,19 +659,32 @@ describe('connection gate and account resolution', () => {
             }
             stored = args.params.newState;
             return null;
+          case 'snap_listEntropySources':
+            return entropySources();
           case 'snap_getBip32Entropy':
             entropyFetches += 1;
-            return activeEntropy.toJSON();
+            return nodeForSource(args.params.source).toJSON();
           case 'snap_getBip32PublicKey': {
-            // The subtree's own key, or the hardened account one level below.
+            // The subtree's own key, or the hardened account one level below,
+            // from the source the request named (or the primary one when it
+            // named none, which is what an unsourced request would get).
             entropyFetches += 1;
             const path = args.params.path ?? [];
             if (path.length === 3) {
               subtreeFetches += 1;
-              return activeEntropy.publicKey;
+              return nodeForSource(args.params.source).publicKey;
             }
-            return (await activeEntropy.derive([accountPathNode(path)]))
-              .publicKey;
+            // An unsourced account key can be answered from whichever phrase
+            // is primary at the instant the platform serves it; a sourced one
+            // cannot.
+            let accountSource = args.params.source;
+            if (accountSource === undefined && mixedResponseSource !== null) {
+              accountSource = mixedResponseSource;
+              mixedResponseSource = null;
+            }
+            return (
+              await nodeForSource(accountSource).derive([accountPathNode(path)])
+            ).publicKey;
           }
           case 'snap_dialog':
             dialogs.push(args.params.content);
@@ -889,7 +980,7 @@ describe('connection gate and account resolution', () => {
       // Establish and verify the binding for the first phrase.
       expect(await getAddress(ORIGIN)).toStrictEqual({ address: ADDRESS_0 });
 
-      await swapEntropy();
+      swapEntropy();
 
       // The very next grant-gated call observes the change: the grant from
       // the old wallet is reset, not answered with the new wallet's address.
@@ -906,7 +997,7 @@ describe('connection gate and account resolution', () => {
         fingerprint: expect.any(String),
       });
 
-      await swapEntropy();
+      swapEntropy();
 
       await expect(
         setNetwork(ORIGIN, { network: 'FUTURENET' }),
@@ -924,7 +1015,7 @@ describe('connection gate and account resolution', () => {
       expect(first.index).toBe(1);
       expect(first.keypair.publicKey()).toBe(ADDRESS_1);
 
-      await swapEntropy();
+      swapEntropy();
 
       // The old registry named index 1 as active; the reset discards that
       // selection, so cold signing must present the new wallet's account 0
@@ -967,7 +1058,7 @@ describe('connection gate and account resolution', () => {
 
       // A fresh request observes the new phrase: the cache is cleared and
       // the store reconciled (accounts reset, active account back to 0).
-      await swapEntropy();
+      swapEntropy();
       const second = await ensureEntropyBinding();
       expect(second.state).toMatchObject({ accounts: [0], activeAccount: 0 });
       expect(await getAddressForIndex(second, 1)).not.toBe(ADDRESS_1);
@@ -999,14 +1090,16 @@ describe('connection gate and account resolution', () => {
 
       // The phrase changes while the dialog is open, and a fresh request
       // reconciles the store to the new phrase.
-      await swapEntropy();
+      swapEntropy();
       await ensureEntropyBinding();
 
       // The user approves the dialog that showed the old wallet's address.
       // That consent describes the previous wallet, so it must neither
       // record a grant in the new phrase's state nor hand out the address.
       gate.release();
-      await expect(held).rejects.toThrow('no longer applies');
+      // Refused at the fresh observation the approval now takes, before the
+      // grant write is even attempted.
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
 
       expect(
         (stored as { origins: Record<string, unknown> }).origins,
@@ -1050,7 +1143,7 @@ describe('connection gate and account resolution', () => {
      * while the held request stays suspended.
      */
     async function reconcileToPhraseTwo(): Promise<void> {
-      await swapEntropy();
+      swapEntropy();
       const binding = await ensureEntropyBinding();
       expect(binding.state).toMatchObject({ accounts: [0], origins: {} });
     }
@@ -1240,7 +1333,7 @@ describe('connection gate and account resolution', () => {
       // Each binding observes the subtree's public key once on entry; the
       // counts below wait for that observation to have been answered, which
       // is what queues the reconciliation behind the held one.
-      await swapEntropy();
+      swapEntropy();
       const second = ensureEntropyBinding();
       second.catch(() => undefined);
       await waitUntil(() => subtreeFetches >= 4);
@@ -1261,6 +1354,195 @@ describe('connection gate and account resolution', () => {
       const binding = await third;
       expect(binding.state.origins).toStrictEqual({});
       expect(await getAddress(ORIGIN)).toStrictEqual({ address: '' });
+    });
+  });
+
+  describe('a phrase switch that no other request observes', () => {
+    /*
+     * The interval this covers is the one an in-context check cannot see. A
+     * user opens a confirmation, switches MetaMask's primary secret recovery
+     * phrase while it is open, and approves. If no overlapping request runs in
+     * that window, nothing has observed the change: the persisted fingerprint
+     * still names the phrase the request began under, so a commit that only
+     * compares the approval's fingerprint against the store compares the old
+     * value with itself and succeeds.
+     *
+     * That matters most for the state a reconciliation deliberately keeps. The
+     * network preference and the tracked-token registry survive a phrase
+     * change by design, so a write made under the stale approval would persist
+     * into the new wallet under consent collected for the previous one, and no
+     * later reset would undo it.
+     *
+     * Every case below therefore switches the phrase with `swapEntropy()` and
+     * runs no other request before releasing the dialog.
+     */
+
+    /** The state a phrase-B store holds once the switch is reconciled. */
+    const PHRASE_B_STORE = {
+      accounts: [0],
+      activeAccount: 0,
+      origins: {},
+      resetNotice: 'phrase-changed',
+    };
+
+    it('setNetwork does not carry the network choice into the new wallet', async () => {
+      stored = stateV2({ origins: CONNECTED, network: 'TESTNET' });
+      const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+      const held = setNetwork(ORIGIN, { network: 'PUBLIC' });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      // Nothing else runs: the switch is unobserved when the user approves.
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      // The network preference survives reconciliation, so this is exactly
+      // the write that would have persisted into phrase B.
+      expect(stored).toMatchObject({ network: 'TESTNET', ...PHRASE_B_STORE });
+    });
+
+    it('addToken does not carry the token into the new wallet', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+      const held = addToken(ORIGIN, { contractId: CONTRACT });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      // The token registry survives reconciliation too.
+      expect(JSON.stringify(stored)).not.toContain(CONTRACT);
+      expect(stored).toMatchObject(PHRASE_B_STORE);
+    });
+
+    it('setActiveAccount does not activate an index in the new wallet', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+      const held = setActiveAccount(ORIGIN, { index: 1 });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(stored).toMatchObject(PHRASE_B_STORE);
+    });
+
+    it('requestAccess does not grant the new wallet to the origin', async () => {
+      stored = stateV2();
+      const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+      const held = requestAccess(ORIGIN);
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(
+        (stored as { origins: Record<string, unknown> }).origins,
+      ).toStrictEqual({});
+    });
+
+    it('fund does not reach friendbot for the new wallet', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      // `fund` shows no dialog, so it is held at the account key it resolves
+      // after the grant check: the window before its outward side effect.
+      // The named account is the non-active one, so resolving it is a real
+      // fetch rather than a hit on what the binding already cached.
+      const gate = gateNextRequest(isAccountKeyFetch, 1);
+      const held = fund(ORIGIN, { address: ADDRESS_1 });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(fetchCalls.some((url) => url.includes('friendbot'))).toBe(false);
+    });
+
+    it('getBalances refuses to disclose after an unobserved switch', async () => {
+      // The disclosure counterpart. Held inside the Horizon lookup, which is
+      // the window a read path actually has, and the switch is seen by
+      // nobody: comparing against the last phrase some request observed would
+      // still read phrase A and hand the balances over. The answer describes
+      // a wallet the user has stopped using, and the origin cannot tell.
+      stored = stateV2({ origins: CONNECTED });
+      const gate = gateNextFetch((url) => url.includes('/accounts/'));
+      const held = getBalances(ORIGIN, {});
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+    });
+
+    it('the positive control: the same flows commit when the phrase holds', async () => {
+      // Without this, every assertion above would pass on a handler that
+      // simply refused everything.
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      expect(await setNetwork(ORIGIN, { network: 'PUBLIC' })).toMatchObject({
+        network: 'PUBLIC',
+      });
+      expect(stored).toMatchObject({ network: 'PUBLIC' });
+      expect(await setActiveAccount(ORIGIN, { index: 1 })).toStrictEqual({
+        index: 1,
+        address: ADDRESS_1,
+      });
+      expect(stored).toMatchObject({ activeAccount: 1 });
+    });
+  });
+
+  describe('a phrase switch away and back during one key batch', () => {
+    it('resolves every address from the source the request named', async () => {
+      /*
+       * The mixing this rules out. A batch fetches one key per revealed
+       * account concurrently. If the wallet's primary phrase changed to
+       * another and back while those were in flight, one of them could be
+       * answered from the other phrase, and a comparison of the primary
+       * phrase before and after the batch would see the same phrase both
+       * times: both checks pass, and the other wallet's address is cached and
+       * returned as this wallet's.
+       *
+       * The harness arms exactly that: the next account key served *without*
+       * a named source is answered from phrase B, while the primary phrase
+       * ends where it started. Naming the source is what makes the response
+       * attributable, so the batch below must come back entirely phrase A's.
+       */
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const binding = await ensureEntropyBinding();
+
+      answerNextUnsourcedKeyFrom(SOURCE_B);
+      expect(await getOwnedAccounts(binding)).toStrictEqual([
+        { index: 0, address: ADDRESS_0 },
+        { index: 1, address: ADDRESS_1 },
+      ]);
+      // Nothing of phrase B reached the memo either, so a later read cannot
+      // serve one.
+      expect(await getAddressForIndex(binding, 1)).toBe(ADDRESS_1);
+    });
+
+    it('refuses the batch when the switch has not been undone', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const binding = await ensureEntropyBinding();
+
+      const gate = gateNextRequest(isAccountKeyFetch);
+      const accounts = getOwnedAccounts(binding);
+      accounts.catch(() => undefined);
+      await waitUntil(gate.hit);
+      // Still on phrase B when the batch finishes: the keys are A's, but the
+      // wallet the user is holding is no longer the one that was granted.
+      swapEntropy();
+      gate.release();
+
+      await expect(accounts).rejects.toThrow('secret recovery phrase changed');
     });
   });
 
@@ -1428,6 +1710,26 @@ describe('connection gate and account resolution', () => {
         data: { code: -4 },
       });
       await expect(assertConnected(ORIGIN)).rejects.toThrow(
+        'Origin is not connected',
+      );
+    });
+
+    it('records no grant for an origin that cannot be a state key', async () => {
+      // `connectOrigin` refuses a name that would touch the prototype chain,
+      // and the handler must not report success when nothing was recorded:
+      // the origin would otherwise believe it is connected while every later
+      // grant read says it is not. MetaMask supplies real URL origins, so
+      // this is the defence-in-depth arm of that write, exercised here
+      // because nothing else reaches it.
+      expect(
+        await requestAccess('__proto__').catch((error: Error) => error),
+      ).toMatchObject({
+        message: expect.stringContaining('could not be recorded'),
+      });
+      expect(
+        (stored as { origins: Record<string, unknown> }).origins,
+      ).toStrictEqual({});
+      await expect(assertConnected('__proto__')).rejects.toThrow(
         'Origin is not connected',
       );
     });

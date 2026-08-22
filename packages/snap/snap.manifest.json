@@ -7,7 +7,7 @@
     "url": "https://github.com/SentinelFi/stellar-metamask-snap.git"
   },
   "source": {
-    "shasum": "JGqs7LUHVl6TRpqCtBXW8w36CR0OGADRGawB7IYjfkw=",
+    "shasum": "bna8G+zcATeIsWSN4+NjYDwmFjgX5S2FjU8m9KDAMFg=",
     "location": {
       "npm": {
         "filePath": "dist/bundle.js",

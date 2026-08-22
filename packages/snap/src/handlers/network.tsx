@@ -1,4 +1,5 @@
 import { assertConnected } from './account';
+import { assertPhraseUnchanged } from '../keys';
 import { userRejected } from '../rpc/errors';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import { SetNetworkParams, validate } from '../rpc/validation';
@@ -81,6 +82,12 @@ export async function setNetwork(
     // here, not on handler success: the no-dialog path (target already
     // active) must not reset the count.
     clearDialogRejections(origin);
+    // The network preference survives a phrase change by design, so nothing
+    // downstream would reject a write made under a stale approval: re-observe
+    // the active phrase before committing. The state-lock comparison cannot
+    // do it alone, because an unobserved switch leaves the persisted
+    // fingerprint naming the phrase this request began under.
+    await assertPhraseUnchanged(binding);
     // Re-read and write under the state lock: the pre-dialog snapshot may
     // be stale by the time the user approves, and the fingerprint proves the
     // store still belongs to the phrase whose grant admitted this request.

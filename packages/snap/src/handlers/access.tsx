@@ -1,4 +1,8 @@
-import { ensureEntropyBinding, getActiveAddress } from '../keys';
+import {
+  assertPhraseUnchanged,
+  ensureEntropyBinding,
+  getActiveAddress,
+} from '../keys';
 import { externalServiceError, userRejected } from '../rpc/errors';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import {
@@ -40,6 +44,11 @@ export async function requestAccess(
   const address = await getActiveAddress(binding);
 
   if (grantHasCurrentDisclosure(binding.state.origins, origin)) {
+    // Nothing is written on this path, but the address is still
+    // wallet-derived data, so it is confirmed fresh before it is handed over:
+    // an address answered after a switch nobody has observed describes a
+    // wallet the user has stopped using, and the origin cannot tell.
+    await assertPhraseUnchanged(binding);
     return { address };
   }
 
@@ -66,15 +75,22 @@ export async function requestAccess(
   // reset the count.
   clearDialogRejections(origin);
 
+  // The approval on screen described this phrase. Re-observe it before the
+  // grant is written: a switch while the dialog was open leaves the persisted
+  // fingerprint naming the old phrase, so the state-lock comparison below
+  // would compare it against itself and admit the stale approval.
+  await assertPhraseUnchanged(binding);
+
   const granted = await connectOrigin(origin, binding.fingerprint);
   if (!granted) {
-    // The primary secret recovery phrase changed while the dialog was open:
-    // the consent on screen described the previous wallet's address, so
-    // neither a grant nor that address may be handed to the origin.
+    // The second line, and it refuses for either reason `connectOrigin` has:
+    // a phrase that changed in the moment between the check above and the
+    // write, or an origin whose name cannot be used as a state key. Neither
+    // the grant nor the address may be handed over when no grant was
+    // recorded, so the message does not claim a cause it cannot distinguish.
     throw externalServiceError(
-      'The active secret recovery phrase changed while the connection ' +
-        'request was in progress, so the approval no longer applies. Try ' +
-        'again.',
+      'The connection could not be recorded for this site, so the approval ' +
+        'did not take effect. Try again.',
     );
   }
   return { address };
@@ -109,5 +125,7 @@ export async function getAddress(origin: string): Promise<{ address: string }> {
   if (!originHasGrant(binding.state.origins, origin)) {
     return { address: '' };
   }
-  return { address: await getActiveAddress(binding) };
+  const address = await getActiveAddress(binding);
+  await assertPhraseUnchanged(binding);
+  return { address };
 }

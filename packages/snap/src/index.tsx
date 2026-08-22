@@ -19,7 +19,9 @@ import {
   homePage,
 } from './handlers/home';
 import { installWelcome, updateNotice } from './handlers/install';
+import type { EntropyBinding } from './keys';
 import {
+  assertPhraseUnchanged,
   ensureEntropyBinding,
   findAccountIndexByAddress,
   getAddressForIndex,
@@ -134,10 +136,13 @@ async function notify(message: string): Promise<void> {
  * know the address they already use, not the index it happens to sit at.
  * The search derives locally and makes no network request.
  *
+ * @param binding - The request's entropy binding, so the sweep derives from
+ * the phrase that is active now rather than from whatever the memo holds.
  * @param query - The raw user input.
  * @returns The located index, or a message explaining why there is none.
  */
 async function resolveAccountQuery(
+  binding: EntropyBinding,
   query: string,
 ): Promise<{ index: number } | { error: string }> {
   const trimmed = query.trim();
@@ -164,7 +169,7 @@ async function resolveAccountQuery(
     };
   }
 
-  const index = await findAccountIndexByAddress(trimmed);
+  const index = await findAccountIndexByAddress(binding, trimmed);
   if (index === null) {
     return {
       error: `That address is not derived from this wallet's secret recovery phrase (searched accounts 0 to ${
@@ -183,21 +188,20 @@ async function resolveAccountQuery(
  * @returns True when accounts were added.
  */
 async function findAccountFlow(query: string): Promise<boolean> {
-  const resolved = await resolveAccountQuery(query);
+  // The binding comes first: the lookup below reads the address memo and
+  // sweeps derived addresses, and both must describe the phrase that is
+  // active now rather than whatever a previous request left behind.
+  const binding = await ensureEntropyBinding();
+  const resolved = await resolveAccountQuery(binding, query);
   if ('error' in resolved) {
     await notify(resolved.error);
     return false;
   }
 
   const { index } = resolved;
-  // Establishes which secret recovery phrase the addresses below describe,
-  // before the state read: the fetch inside is what settles a pending
-  // reconciliation, so `from` cannot be an index recorded under a phrase the
-  // reconciliation is about to reset. The fingerprint anchors the commit at
-  // the end, so an approval collected for this phrase's addresses cannot
-  // reveal a different phrase's accounts if the phrase changes while the
-  // dialog is open.
-  const binding = await ensureEntropyBinding();
+  // The binding's snapshot was read after its reconciliation settled, so
+  // `from` cannot be an index recorded under a phrase that reset is about to
+  // discard.
   const from = nextAccountIndex(binding.state);
   if (index < from) {
     await notify(`Account ${index} is already in your account list.`);
@@ -222,6 +226,10 @@ async function findAccountFlow(query: string): Promise<boolean> {
   if (!approved) {
     return false;
   }
+  // Re-observe the active phrase: a revealed account is durable consent for
+  // one wallet, and an approval collected before a switch must not add an
+  // account to the wallet that replaced it.
+  await assertPhraseUnchanged(binding);
   const added = await revealAccountsThrough(index, from, binding.fingerprint);
   return added.length > 0;
 }
@@ -258,6 +266,7 @@ async function addAccountFlow(): Promise<boolean> {
   if (!approved) {
     return false;
   }
+  await assertPhraseUnchanged(binding);
   await revealAccount(index, binding.fingerprint);
   return true;
 }

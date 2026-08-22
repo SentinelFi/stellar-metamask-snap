@@ -1,6 +1,6 @@
 import { assertConnected } from './account';
 import {
-  assertBindingCurrent,
+  assertPhraseUnchanged,
   getAddressForIndex,
   getOwnedAccounts,
 } from '../keys';
@@ -46,7 +46,10 @@ export async function getAccounts(
     );
   }
   const accounts = await getOwnedAccounts(binding);
-  assertBindingCurrent(binding);
+  // The whole revealed set is about to be disclosed, which is the linkage
+  // this method is connection-gated for; confirm the wallet it describes is
+  // still the one the grant was given for.
+  await assertPhraseUnchanged(binding);
   return { accounts, activeIndex: binding.state.activeAccount };
 }
 
@@ -99,11 +102,20 @@ export async function setActiveAccount(
     // here, not on handler success: the no-dialog path (index already
     // active) must not reset the count.
     clearDialogRejections(origin);
+    // Re-observe the active phrase before committing: an index names a
+    // different address under a different phrase, and a switch while the
+    // dialog was open is invisible to the in-context check unless another
+    // request happened to look.
+    await assertPhraseUnchanged(binding);
     // Re-read and commit under the state lock; membership is re-checked
     // there against the post-dialog state, and the fingerprint against the
     // phrase the displayed address was derived under.
     await setActiveAccountState(index, binding.fingerprint);
   }
 
+  // Confirmed once more before the address is returned: on the path where the
+  // index was already active nothing was written, so this is the only check
+  // between resolving the address and handing it over.
+  await assertPhraseUnchanged(binding);
   return { index, address };
 }

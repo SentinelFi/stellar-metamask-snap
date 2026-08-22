@@ -15,6 +15,21 @@ import { onUserInput } from '.';
 import { resetAddressCache } from './keys';
 import { MAX_ACCOUNT_INDEX } from './state';
 
+/** The entropy source the mocked platform reports as primary. */
+const SOURCE_ID = 'default';
+
+/**
+ * The entropy sources the mocked platform reports, in the shape
+ * `snap_listEntropySources` answers with.
+ *
+ * @returns The source list.
+ */
+function entropySources() {
+  return [
+    { id: SOURCE_ID, name: 'Test phrase', type: 'mnemonic', primary: true },
+  ];
+}
+
 /**
  * The SLIP-10 path node for the account index a `snap_getBip32PublicKey`
  * request names (`m/44'/148'/<index>'`), typed the way key-tree wants it.
@@ -525,6 +540,8 @@ describe('onUserInput add-account flow', () => {
             }
             stored = args.params.newState;
             return null;
+          case 'snap_listEntropySources':
+            return entropySources();
           case 'snap_getBip32Entropy':
             return entropy.toJSON();
           case 'snap_getBip32PublicKey': {

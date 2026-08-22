@@ -70,6 +70,21 @@ let stored: unknown;
 let dialogs: unknown[];
 let dialogResponse: boolean;
 
+/** The entropy source the mocked platform reports as primary. */
+const SOURCE_ID = 'default';
+
+/**
+ * The entropy sources the mocked platform reports, in the shape
+ * `snap_listEntropySources` answers with.
+ *
+ * @returns The source list.
+ */
+function entropySources() {
+  return [
+    { id: SOURCE_ID, name: 'Test phrase', type: 'mnemonic', primary: true },
+  ];
+}
+
 /**
  * Answers `snap_getBip32PublicKey` the way the platform does: the hex public
  * key (zero prefix byte included) of the subtree itself, or of the hardened
@@ -144,6 +159,8 @@ describe('signing handlers: fail-closed gates', () => {
             }
             stored = args.params.newState;
             return null;
+          case 'snap_listEntropySources':
+            return entropySources();
           case 'snap_getBip32Entropy':
             return entropy.toJSON();
           case 'snap_getBip32PublicKey':
@@ -912,7 +929,7 @@ describe('signing handlers: fail-closed gates', () => {
         Networks.TESTNET,
       ) as ReturnType<typeof classicTx>;
       const { deriveKeypair } = await import('../keys');
-      signed.sign(await deriveKeypair(0));
+      signed.sign(await deriveKeypair(0, SOURCE_ID));
       const expected = signed.hash().toString('hex');
 
       stubHorizon({ hash: expected });
