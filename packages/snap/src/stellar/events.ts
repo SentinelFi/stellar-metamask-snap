@@ -110,31 +110,65 @@ function topicAddress(value: xdr.ScVal): string | null {
 }
 
 /**
- * Reads the amount an event carries. Post-CAP-67 transfers may carry a map
- * (`amount` plus a muxed recipient id) where earlier ones carried a bare
- * i128, so both shapes are accepted.
+ * Reads a token amount from the one encoding the token interface defines for
+ * it: a non-negative `i128`.
  *
- * @param data - The event's data ScVal.
- * @returns The amount, or null when no integer amount is present.
+ * The variant is checked rather than the decoded value alone. `scValToNative`
+ * flattens every integer width to a `number` or a `bigint`, so accepting
+ * whatever it returns would accept a `u32` count, a `u256`, or anything else
+ * an endpoint chose to put in the field, and the summary would then present
+ * it as an amount.
+ *
+ * The sign matters most. These events are endpoint-controlled, and the
+ * caller turns the amount into a direction by subtracting it when the signing
+ * account is the sender: a negative amount flips that subtraction into an
+ * addition, so an outgoing transfer would render as an incoming one. A
+ * confirmation dialog may show less than the whole truth when data is
+ * missing, and it says so, but it must not state the opposite of it.
+ *
+ * No separate upper bound is applied: the largest `i128` is the largest a
+ * token amount can be, so the variant check above already provides one, and a
+ * second comparison would be a condition nothing could satisfy.
+ *
+ * @param value - The candidate amount.
+ * @returns The amount, or null when it is not a non-negative `i128`.
  */
-function readAmount(data: xdr.ScVal): bigint | null {
+function readTokenAmount(value: xdr.ScVal): bigint | null {
+  if (value.switch().name !== 'scvI128') {
+    return null;
+  }
   let native: unknown;
   try {
-    native = scValToNative(data);
+    native = scValToNative(value);
   } catch {
     return null;
   }
-  const candidate =
-    native !== null && typeof native === 'object' && !Array.isArray(native)
-      ? (native as Record<string, unknown>).amount
-      : native;
-  if (typeof candidate === 'bigint') {
-    return candidate;
+  if (typeof native !== 'bigint' || native < 0n) {
+    return null;
   }
-  if (typeof candidate === 'number' && Number.isInteger(candidate)) {
-    return BigInt(candidate);
+  return native;
+}
+
+/**
+ * Reads the amount an event carries. Post-CAP-67 transfers may carry a map
+ * (`amount` plus a muxed recipient id) where earlier ones carried a bare
+ * i128, so both shapes are accepted; the amount itself is held to the same
+ * rule either way (see {@link readTokenAmount}).
+ *
+ * @param data - The event's data ScVal.
+ * @returns The amount, or null when no valid amount is present.
+ */
+function readAmount(data: xdr.ScVal): bigint | null {
+  if (data.switch().name === 'scvMap') {
+    const entry = (data.map() ?? []).find((candidate) => {
+      const key = candidate.key();
+      return (
+        key.switch().name === 'scvSymbol' && key.sym().toString() === 'amount'
+      );
+    });
+    return entry ? readTokenAmount(entry.val()) : null;
   }
-  return null;
+  return readTokenAmount(data);
 }
 
 /** The two accounts an event debits and credits. */

@@ -118,6 +118,17 @@ let writesFail: boolean;
 let entropyFetches: number;
 /** How many of those were observations of the subtree's own public key. */
 let subtreeFetches: number;
+/** How many were requests for one account's public key. */
+let accountKeyFetches: number;
+/** How many imported the private subtree (`snap_getBip32Entropy`). */
+let privateKeyFetches: number;
+/**
+ * When set, the platform changes its primary source to {@link SOURCE_B} while
+ * serving the next subtree-key request, modelling a user switching phrases in
+ * the interval between an observation reading the primary source and its
+ * source-bound key request coming back.
+ */
+let flipDuringNextSubtreeKey: boolean;
 /**
  * The `m/44'/148'` subtree of each entropy source the mocked platform holds.
  *
@@ -179,6 +190,12 @@ function jsonResponse(body: unknown, init: { status?: number } = {}) {
     arrayBuffer: async () => Buffer.from(text, 'utf8'),
   };
 }
+
+/**
+ * The ledger height both sources report. They agree, so an entry carrying no
+ * expiration of its own gets the default lifetime rather than a refusal.
+ */
+const LATEST_LEDGER = 50_000_000;
 
 /** A funded Horizon account response for {@link ADDRESS_0}. */
 const HORIZON_ACCOUNT = {
@@ -336,6 +353,28 @@ function nodeForSource(source: string | undefined): SLIP10Node {
  * what naming it buys.
  */
 let mixedResponseSource: string | null = null;
+
+/**
+ * Arms the platform to change its primary source while it serves the next
+ * subtree-key request.
+ */
+function flipSourceDuringNextSubtreeKey(): void {
+  flipDuringNextSubtreeKey = true;
+}
+
+/**
+ * Matches a subtree-key request, the one an entropy observation makes between
+ * its two reads of the primary source.
+ *
+ * @param args - The intercepted request.
+ * @returns True for a `snap_getBip32PublicKey` call naming the subtree.
+ */
+function isSubtreeKeyFetch(args: RequestArgs): boolean {
+  return (
+    args.method === 'snap_getBip32PublicKey' &&
+    (args.params as { path?: string[] }).path?.length === 3
+  );
+}
 
 /**
  * Arms {@link mixedResponseSource} for the next unsourced account key.
@@ -557,7 +596,16 @@ function restoreStateWrites(): void {
  * @param probe - Returns true once the awaited condition holds.
  */
 async function waitUntil(probe: () => boolean): Promise<void> {
+  // Bounded on purpose. A condition that never arrives, a gate armed on a
+  // request the code under test turns out not to make, would otherwise spin
+  // this loop forever, and a loop that keeps yielding starves the runner's
+  // own per-test timeout, so the whole suite hangs with nothing named.
+  // Failing here names the gate instead.
+  const deadline = Date.now() + 5000;
   while (!probe()) {
+    if (Date.now() > deadline) {
+      throw new Error('waitUntil: the awaited condition never arrived');
+    }
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
@@ -615,6 +663,9 @@ describe('connection gate and account resolution', () => {
     writesFail = false;
     entropyFetches = 0;
     subtreeFetches = 0;
+    accountKeyFetches = 0;
+    privateKeyFetches = 0;
+    flipDuringNextSubtreeKey = false;
     mixedResponseSource = null;
     sourceNodes.set(SOURCE_A, entropy);
     sourceNodes.set(
@@ -663,6 +714,7 @@ describe('connection gate and account resolution', () => {
             return entropySources();
           case 'snap_getBip32Entropy':
             entropyFetches += 1;
+            privateKeyFetches += 1;
             return nodeForSource(args.params.source).toJSON();
           case 'snap_getBip32PublicKey': {
             // The subtree's own key, or the hardened account one level below,
@@ -672,8 +724,17 @@ describe('connection gate and account resolution', () => {
             const path = args.params.path ?? [];
             if (path.length === 3) {
               subtreeFetches += 1;
-              return nodeForSource(args.params.source).publicKey;
+              // The answer comes from the source the request named, and the
+              // switch lands after it: the key is correctly A's, and the
+              // wallet is B by the time anyone can look again.
+              const subtreeKey = nodeForSource(args.params.source).publicKey;
+              if (flipDuringNextSubtreeKey) {
+                flipDuringNextSubtreeKey = false;
+                primarySource = SOURCE_B;
+              }
+              return subtreeKey;
             }
+            accountKeyFetches += 1;
             // An unsourced account key can be answered from whichever phrase
             // is primary at the instant the platform serves it; a sourced one
             // cannot.
@@ -709,7 +770,22 @@ describe('connection gate and account resolution', () => {
       if (url.includes('/accounts/')) {
         return jsonResponse(HORIZON_ACCOUNT);
       }
+      // Horizon's root, the second of the two ledger-height sources. Signing
+      // an authorization entry requires both to answer and takes the lower
+      // height, so a harness that served only one would make every such
+      // request fail closed before it ever reached a dialog.
+      if (url.endsWith('/')) {
+        // eslint-disable-next-line @typescript-eslint/naming-convention
+        return jsonResponse({ core_latest_ledger: LATEST_LEDGER });
+      }
       if (init?.method === 'POST') {
+        if (String(init.body).includes('"getLatestLedger"')) {
+          return jsonResponse({
+            jsonrpc: '2.0',
+            id: 1,
+            result: { sequence: LATEST_LEDGER },
+          });
+        }
         // Answer by the contract function actually being simulated, decoded
         // from the envelope. Answering by call order instead would silently
         // mis-route as soon as a caller stops making the reads in the order
@@ -1497,6 +1573,165 @@ describe('connection gate and account resolution', () => {
         address: ADDRESS_1,
       });
       expect(stored).toMatchObject({ activeAccount: 1 });
+    });
+  });
+
+  describe('a phrase switch inside an entropy observation', () => {
+    /*
+     * Naming the source on a key request makes the answer attributable: the
+     * key that comes back is the named phrase's, whatever is primary when the
+     * platform serves it. It does not make the answer *authoritative*. The
+     * user can change which phrase is primary in the interval between an
+     * observation reading the primary source and its key request returning,
+     * and a key correctly returned from the former phrase says nothing about
+     * which wallet is now in use.
+     *
+     * The harness models exactly that: `flipSourceDuringNextSubtreeKey()`
+     * makes the platform answer the request from the source it named and
+     * change its primary to the other phrase in the same breath. An
+     * observation that only names a source accepts it; one that reads the
+     * primary source again afterwards does not.
+     */
+
+    it('refuses to admit a request whose phrase changed under it', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      flipSourceDuringNextSubtreeKey();
+      await expect(getBalances(ORIGIN, {})).rejects.toThrow(
+        'secret recovery phrase changed',
+      );
+    });
+
+    it('does not commit a network change for the phrase that replaced it', async () => {
+      stored = stateV2({ origins: CONNECTED, network: 'TESTNET' });
+      const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+      const held = setNetwork(ORIGIN, { network: 'PUBLIC' });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      // Armed while the dialog is open, so the switch happens inside the
+      // observation the approval triggers rather than before it.
+      flipSourceDuringNextSubtreeKey();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      // The network preference is one of the two things a reconciliation
+      // keeps, so a write here would have followed the user to the new
+      // wallet with no later reset to undo it.
+      expect(stored).toMatchObject({ network: 'TESTNET' });
+    });
+
+    it('does not track a token for the phrase that replaced it', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+      const held = addToken(ORIGIN, { contractId: CONTRACT });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      flipSourceDuringNextSubtreeKey();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(JSON.stringify(stored)).not.toContain(CONTRACT);
+    });
+
+    const signers: [string, () => Promise<unknown>][] = [
+      [
+        'signTransaction',
+        async () =>
+          signTransaction(ORIGIN, {
+            xdr: classicPaymentXdr(),
+            address: ADDRESS_1,
+          }),
+      ],
+      [
+        'signMessage',
+        async () =>
+          signMessage(ORIGIN, { message: 'hello', address: ADDRESS_1 }),
+      ],
+      [
+        'signAuthEntry',
+        async () =>
+          signAuthEntry(ORIGIN, { authEntry: addressAuthEntryXdr(ADDRESS_1) }),
+      ],
+    ];
+
+    it.each(signers)(
+      '%s imports no private key once the phrase has changed',
+      async (_name, call) => {
+        stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+        const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+        const held = call();
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        flipSourceDuringNextSubtreeKey();
+        gate.release();
+
+        await expect(held).rejects.toThrow('secret recovery phrase changed');
+        // The refusal has to come before the private subtree is imported:
+        // deriving first and comparing afterwards would put key material in
+        // the sandbox for a wallet the user is no longer using.
+        expect(privateKeyFetches).toBe(0);
+      },
+    );
+
+    it('refuses an address batch and caches nothing from it', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const binding = await ensureEntropyBinding();
+      const before = accountKeyFetches;
+
+      // The batch's own closing observation is the next subtree key.
+      flipSourceDuringNextSubtreeKey();
+      await expect(getOwnedAccounts(binding)).rejects.toThrow(
+        'secret recovery phrase changed',
+      );
+      expect(accountKeyFetches).toBeGreaterThan(before);
+
+      // Nothing from the refused batch reached the memo: resolving the same
+      // account again has to fetch its key again.
+      restoreEntropy();
+      const afterRefusal = accountKeyFetches;
+      expect(
+        await getOwnedAccounts(await ensureEntropyBinding()),
+      ).toStrictEqual([
+        { index: 0, address: ADDRESS_0 },
+        { index: 1, address: ADDRESS_1 },
+      ]);
+      expect(accountKeyFetches).toBeGreaterThan(afterRefusal);
+    });
+
+    it('a late observation of the former phrase cannot roll the store back', async () => {
+      // Reconciliation is queued in call order, not in the order the switches
+      // happened. An observation that started before a switch and returns
+      // after one has already been reconciled would otherwise bind the store
+      // back to the phrase it names, erasing the grants, revealed accounts,
+      // and active-account selection of the phrase actually in use.
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      await ensureEntropyBinding();
+
+      const gate = gateNextRequest(isSubtreeKeyFetch);
+      const late = ensureEntropyBinding();
+      late.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      // While it is held, the user switches and a fresh request reconciles
+      // the store to the phrase now in use.
+      swapEntropy();
+      const fresh = await ensureEntropyBinding();
+      expect(fresh.state.origins).toStrictEqual({});
+
+      gate.release();
+      await expect(late).rejects.toThrow('secret recovery phrase changed');
+
+      // The reconciled store is still the new phrase's.
+      expect(stored).toMatchObject({
+        origins: {},
+        accounts: [0],
+        resetNotice: 'phrase-changed',
+      });
+      expect((await ensureEntropyBinding()).fingerprint).toBe(
+        fresh.fingerprint,
+      );
     });
   });
 

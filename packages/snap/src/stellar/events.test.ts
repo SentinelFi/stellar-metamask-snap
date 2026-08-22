@@ -81,6 +81,7 @@ function buildEvent({
  * @param options.to - The credited address.
  * @param options.amount - The raw amount.
  * @param options.asset - The trailing asset topic, when the emitter is a SAC.
+ * @param options.data - The event body, defaulting to the amount as an `i128`.
  * @returns The base64 XDR.
  */
 function transfer({
@@ -89,12 +90,14 @@ function transfer({
   to = OTHER,
   amount = 10000000n,
   asset = 'native' as string | null,
+  data = nativeToScVal(amount, { type: 'i128' }),
 }: {
   contract?: string;
   from?: string;
   to?: string;
   amount?: bigint;
   asset?: string | null;
+  data?: xdr.ScVal;
 } = {}): string {
   return buildEvent({
     contract,
@@ -104,7 +107,7 @@ function transfer({
       new Address(to).toScVal(),
       ...(asset === null ? [] : [xdr.ScVal.scvString(asset)]),
     ],
-    data: nativeToScVal(amount, { type: 'i128' }),
+    data,
   });
 }
 
@@ -449,5 +452,88 @@ describe('summarizeBalanceChanges', () => {
       changes: [],
       partial: false,
     });
+  });
+});
+
+describe('amounts that are not the encoding a token amount has', () => {
+  /*
+   * The direction of a row is computed by subtracting the amount when the
+   * signing account is the sender. The amount comes from the endpoint, so if
+   * a negative value were accepted the subtraction would become an addition
+   * and an outgoing transfer would be rendered as an incoming one. A summary
+   * is allowed to be incomplete, and says so; it is not allowed to be
+   * backwards.
+   */
+
+  it('refuses a negative amount rather than inverting the direction', () => {
+    const summary = summarizeBalanceChanges(
+      [
+        transfer({
+          from: ACCOUNT,
+          to: OTHER,
+          data: nativeToScVal(-10000000n, { type: 'i128' }),
+        }),
+      ],
+      ACCOUNT,
+      PASSPHRASE,
+    );
+    expect(summary.changes).toStrictEqual([]);
+    expect(summary.partial).toBe(true);
+  });
+
+  it('refuses an integer that is not an i128', () => {
+    // `scValToNative` flattens every integer width, so without a variant
+    // check a u64 counter or a u256 would be presented as a token amount.
+    for (const type of ['u64', 'i64', 'u128'] as const) {
+      const summary = summarizeBalanceChanges(
+        [transfer({ data: nativeToScVal(10000000n, { type }) })],
+        ACCOUNT,
+        PASSPHRASE,
+      );
+      expect(summary.changes).toStrictEqual([]);
+      expect(summary.partial).toBe(true);
+    }
+  });
+
+  it('holds the post-CAP-67 map form to the same rule', () => {
+    const mapWith = (amount: xdr.ScVal) =>
+      xdr.ScVal.scvMap([
+        new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol('amount'), val: amount }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('to_muxed_id'),
+          val: nativeToScVal(7, { type: 'u32' }),
+        }),
+      ]);
+    const negative = summarizeBalanceChanges(
+      [
+        transfer({
+          data: mapWith(nativeToScVal(-10000000n, { type: 'i128' })),
+        }),
+      ],
+      ACCOUNT,
+      PASSPHRASE,
+    );
+    expect(negative.changes).toStrictEqual([]);
+    expect(negative.partial).toBe(true);
+
+    const wrongType = summarizeBalanceChanges(
+      [transfer({ data: mapWith(nativeToScVal(10000000n, { type: 'u64' })) })],
+      ACCOUNT,
+      PASSPHRASE,
+    );
+    expect(wrongType.changes).toStrictEqual([]);
+    expect(wrongType.partial).toBe(true);
+  });
+
+  it('still reads a well-formed amount in both shapes', () => {
+    // The positive control: the refusals above must come from the encoding,
+    // not from the helper having stopped producing readable events.
+    const bare = summarizeBalanceChanges(
+      [transfer({ from: OTHER, to: ACCOUNT })],
+      ACCOUNT,
+      PASSPHRASE,
+    );
+    expect(bare.changes.map((change) => change.amount)).toStrictEqual(['+1']);
+    expect(bare.partial).toBe(false);
   });
 });

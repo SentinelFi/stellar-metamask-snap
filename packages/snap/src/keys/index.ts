@@ -346,13 +346,42 @@ async function fetchPublicKeyBytes(
  * Observes which secret recovery phrase is primary right now and binds this
  * execution context to it, importing no private material to do so.
  *
+ * The primary source is read twice, and the two reads answer different
+ * questions. The first says which source to address, so the key that comes
+ * back is *attributable* to one phrase rather than to whichever happened to
+ * be primary when the platform served the request. The second says whether
+ * that source is still the wallet's primary one, which is what makes the
+ * observation *authoritative*: a key correctly returned from a named source
+ * proves nothing about which phrase the user is now holding, and the
+ * selection can move while the key request is in flight.
+ *
+ * The confirmation runs before {@link bindFingerprint}, not after, and that
+ * ordering is load-bearing in both directions. Forwards, it stops an approval
+ * or a disclosure from being accepted for a phrase the user has left.
+ * Backwards, it stops an observation that started before a switch from
+ * reconciling the store to the phrase it names: reconciliation is queued in
+ * call order, not in the order the switches happened, so a late-returning
+ * read of the former phrase would otherwise reset a store that a newer
+ * observation had already moved on, erasing the grants, revealed accounts,
+ * and active-account selection of the phrase actually in use.
+ *
+ * A change between the two reads fails the request closed rather than
+ * retrying. The next observation sees a settled primary and reconciles to
+ * it, so a real switch costs one refused request rather than a loop, and no
+ * state is bound from a phrase whose tenure has already ended.
+ *
  * @returns The primary source and the fingerprint of its subtree.
+ * @throws An external-service error when the primary source changed while
+ * its key was being fetched.
  */
 async function observePrimaryPhrase(): Promise<BoundPhrase> {
   const source = await primaryEntropySource();
   const fingerprint = fingerprintOf(
     await fetchPublicKeyBytes(SUBTREE_PATH, source),
   );
+  if ((await primaryEntropySource()) !== source) {
+    throw phraseChangedError();
+  }
   await bindFingerprint(fingerprint);
   return { fingerprint, source };
 }

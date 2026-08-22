@@ -95,6 +95,50 @@ jobs:
         with:
           persist-credentials: false
 
+      # Everything below this point runs code from the dependency graph with
+      # write access to the checkout, including its `.git` directory. Local
+      # `HEAD`, local refs, and even the object database can be rewritten from
+      # inside the job; `GITHUB_SHA` cannot, because the runner is told it by
+      # the event that started the run. So the release baseline is fixed to
+      # `GITHUB_SHA` here, before any of that code has run, and recorded as
+      # content hashes in a step output that no later step can rewrite.
+      #
+      # Recording hashes rather than paths is what makes the later comparison
+      # independent of the repository: `git hash-object` recomputes a blob ID
+      # from bytes, so verifying a packed file against one of these IDs asks
+      # nothing of the object database, the refs, or `HEAD` at the time of the
+      # check. A commit created inside the job cannot launder a modified file
+      # past it.
+      - name: Record the immutable release baseline
+        id: baseline
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "Checkout HEAD $(git rev-parse HEAD) is not the triggering commit $GITHUB_SHA"
+            exit 1
+          fi
+          if [ -n "$(git replace --list)" ]; then
+            echo "Replacement refs are configured; object reads cannot be trusted"
+            exit 1
+          fi
+          {
+            echo "blobs<<BASELINE_EOF"
+            for FILE in \
+              packages/snap/package.json \
+              packages/snap/README.md \
+              packages/snap/LICENSE \
+              packages/snap/snap.manifest.json \
+              packages/snap/images/icon.svg \
+              packages/connector/package.json \
+              packages/connector/README.md \
+              packages/connector/LICENSE
+            do
+              echo "$FILE $(git --no-replace-objects rev-parse "$GITHUB_SHA:$FILE")"
+            done
+            echo "BASELINE_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release baseline pinned to $GITHUB_SHA"
+
       # The publish job installs the same Node without a checkout, so the
       # pinned version is handed over as an output rather than read twice.
       - name: Read the pinned Node.js version
@@ -176,6 +220,21 @@ jobs:
       - name: Snap tests (with coverage thresholds)
         run: yarn workspace stellar-soroban-snap test:coverage
 
+      # The snap's `dist/` is gitignored build output, so no committed
+      # baseline can pin it. Its seal is this digest, taken after the last
+      # step that rebuilds the bundle (`test:coverage` above runs the build)
+      # and before the SBOM action and anything else executes third-party
+      # code with write access. It is re-checked immediately before packing,
+      # so a tool that alters the bundle after this point fails the release
+      # rather than being packed and published.
+      - name: Record the snap build-output digest
+        id: snap-build
+        run: |
+          set -euo pipefail
+          DIST_SHA256="$( ( cd packages/snap && find dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) | sha256sum | cut -d' ' -f1 )"
+          echo "dist-sha256=$DIST_SHA256" >> "$GITHUB_OUTPUT"
+          echo "snap dist digest: $DIST_SHA256"
+
       - name: Connector tests (with coverage thresholds)
         run: yarn workspace stellar-soroban-snap-connector test:coverage
 
@@ -209,11 +268,16 @@ jobs:
             echo "Tag $GITHUB_REF_NAME is not an annotated tag"
             exit 1
           fi
-          git fetch --no-tags --depth=1 origin main
+          # Fetched from the repository's URL rather than from the `origin`
+          # remote: a remote name is read out of local Git configuration,
+          # which earlier steps could have rewritten to point somewhere that
+          # answers this question the way an attacker prefers.
+          REPO_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git fetch --no-tags --depth=1 "$REPO_URL" main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
             # The shallow fetch above only sees the tip; deepen until the
             # relationship is decidable rather than assuming either answer.
-            git fetch --no-tags --unshallow origin main || git fetch --no-tags origin main
+            git fetch --no-tags --unshallow "$REPO_URL" main || git fetch --no-tags "$REPO_URL" main
             if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
               echo "Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main"
               exit 1
@@ -229,99 +293,187 @@ jobs:
           output-file: sbom.cdx.json
           artifact-name: sbom.cdx.json
 
-      # This is the last thing that runs before packing, and it must stay
-      # last. `test:coverage` above rebuilt the bundle, and `mm-snap build`
-      # rewrites the manifest on every build; every step between the first
-      # manifest check and here executed third-party code with write access
-      # to the checkout. So the seal is re-established against the files that
-      # will actually be packed: the manifest must still be the committed one,
-      # nothing tracked under either package may have changed, and `mm-snap
-      # manifest` must confirm that the committed manifest's shasum matches
-      # the bundle on disk. That last command validates and fails; it does not
-      # rewrite, which is why it can be trusted here and why `prepublishOnly`
-      # (the same command) was a meaningful check when publishing ran from the
-      # package directory. npm runs no lifecycle scripts when publishing a
-      # tarball, so this step is where that check now lives.
-      - name: Re-verify the manifest seal against the files to be packed
+      # The seal, and the order inside it is the point. `mm-snap manifest`
+      # runs *first*, because it is the last dependency-controlled command
+      # this job executes and the assertions after it are what establish that
+      # nothing it did left a mark. (It validates and fails rather than
+      # rewriting, which is why it is safe to run at all; the checks below no
+      # longer take that on trust.) Everything after this step must be free of
+      # dependency-controlled code, which is why the pack runs with lifecycle
+      # scripts disabled.
+      #
+      # `test:coverage` rebuilt the bundle, `mm-snap build` rewrites the
+      # manifest on every build, and every step since the first manifest check
+      # executed third-party code with write access. So the seal re-establishes
+      # three things about the files that will actually be packed: the
+      # checkout is still the commit this run was triggered for, nothing
+      # tracked or untracked under either package has changed, and every file
+      # a tarball will carry still hashes to the blob recorded from
+      # `GITHUB_SHA` before any of that code ran.
+      - name: Re-verify the release seal against the files to be packed
+        env:
+          BASELINE_BLOBS: ${{ steps.baseline.outputs.blobs }}
         run: |
+          set -euo pipefail
+          yarn workspace stellar-soroban-snap exec mm-snap manifest
+
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "Checkout HEAD moved to $(git rev-parse HEAD); the release commit is $GITHUB_SHA"
+            exit 1
+          fi
+          if [ -n "$(git replace --list)" ]; then
+            echo "Replacement refs appeared during the build"
+            exit 1
+          fi
           git diff --exit-code -- packages/snap packages/connector
           if [ -n "$(git status --porcelain -- packages/snap packages/connector)" ]; then
             echo "Tracked or untracked changes under the packages after the gates ran:"
             git status --porcelain -- packages/snap packages/connector
             exit 1
           fi
-          yarn workspace stellar-soroban-snap exec mm-snap manifest
+          while IFS=' ' read -r FILE OID; do
+            [ -n "$FILE" ] || continue
+            ACTUAL="$(git hash-object "$FILE")"
+            if [ "$ACTUAL" != "$OID" ]; then
+              echo "$FILE is not the file committed at $GITHUB_SHA"
+              exit 1
+            fi
+          done <<< "$BASELINE_BLOBS"
+          echo "Seal holds: the working tree still matches $GITHUB_SHA."�
 
-      # Pack both tarballs, compare the snap tarball's sealed files against
-      # the committed ones (the manifest and icon against HEAD, the bundle
-      # against the file `mm-snap manifest` just validated), compare the
-      # connector tarball's contents against the build output whose digest
-      # was recorded before the post-build tooling ran, and record each
-      # tarball's digest as a job output for the publish job to check.
+      # Pack both tarballs and verify each one completely against inputs that
+      # were fixed before any dependency-controlled code ran: an exact file
+      # inventory, entry types, the committed bytes of every static file, and
+      # the recorded digest of the build output.
       #
-      # `prepack` runs scripts/check-publish-env.mjs, which refuses to pack
-      # where no provenance attestation is possible. This job cannot attest,
-      # by design: it holds no OIDC token so that nothing it runs can publish.
-      # The escape hatch is therefore set here, deliberately, and the "can
-      # this environment attest" question is answered by npm itself in the
-      # publish job, which refuses `--provenance` without the token.
+      # "Completely" is the word that matters. Checking a few important files
+      # leaves the rest of the archive unverified, and an archive is published
+      # whole: `package.json` decides what npm consumers execute and install,
+      # and a file nobody compared is a file anybody could have added. So the
+      # inventory is an allowlist, not a spot check, and every entry in it is
+      # accounted for by something immutable.
+      #
+      # The snap manifest's shasum is deliberately not recomputed here. It is
+      # not a hash of the bundle file; it is MetaMask's own checksum over a
+      # canonical form, and reimplementing it in shell would be a second,
+      # weaker implementation of the thing being checked. The chain used
+      # instead is: the packed manifest is byte-identical to the committed
+      # one, `mm-snap manifest` has just confirmed that manifest against the
+      # bundle on disk, and the packed bundle is byte-identical to that
+      # bundle.
+      #
+      # Lifecycle scripts are disabled for the pack. `prepack` runs
+      # scripts/check-publish-env.mjs, which refuses to pack where no
+      # provenance attestation is possible; this job cannot attest, by design,
+      # since it holds no OIDC token. Skipping the script is better than
+      # setting its escape hatch: nothing dependency-controlled then runs
+      # after the seal, and the question it asks is answered where it belongs,
+      # by npm itself in the publish job, which refuses `--provenance`
+      # without the token.
       - name: Pack and record tarball digests
         id: pack
         env:
-          ALLOW_UNSIGNED_PACK: '1'
+          BASELINE_BLOBS: ${{ steps.baseline.outputs.blobs }}
+          SNAP_DIST_SHA256: ${{ steps.snap-build.outputs.dist-sha256 }}
           CONNECTOR_DIST_SHA256: ${{ steps.connector-build.outputs.dist-sha256 }}
         run: |
+          set -euo pipefail
+
           tarball_name() {
             node -p "const p = require('./packages/$1/package.json'); p.name.replace(/^@/u, '').replace('/', '-') + '-' + p.version + '.tgz'"
           }
           SNAP_TGZ="$(tarball_name snap)"
           CONNECTOR_TGZ="$(tarball_name connector)"
 
-          npm pack --workspace packages/snap --pack-destination .
-          npm pack --workspace packages/connector --pack-destination .
+          npm pack --ignore-scripts --workspace packages/snap --pack-destination .
+          npm pack --ignore-scripts --workspace packages/connector --pack-destination .
           test -f "$SNAP_TGZ" && test -f "$CONNECTOR_TGZ"
 
-          git show HEAD:packages/snap/snap.manifest.json > "$RUNNER_TEMP/manifest.committed.json"
-          git show HEAD:packages/snap/images/icon.svg > "$RUNNER_TEMP/icon.committed.svg"
-          tar -xOzf "$SNAP_TGZ" package/snap.manifest.json | cmp - "$RUNNER_TEMP/manifest.committed.json"
-          tar -xOzf "$SNAP_TGZ" package/images/icon.svg | cmp - "$RUNNER_TEMP/icon.committed.svg"
-          tar -xOzf "$SNAP_TGZ" package/dist/bundle.js | cmp - packages/snap/dist/bundle.js
-          echo "Snap tarball contents match the committed manifest, the committed icon, and the validated bundle."
+          # Verifies one archive against the immutable baseline. `$1` is the
+          # tarball, `$2` the package directory name, `$3` a file listing the
+          # exact paths the archive may contain, `$4` the recorded digest of
+          # that package's build output.
+          verify_archive() {
+            local TGZ="$1" PKG="$2" EXPECTED="$3" DIST_SHA="$4"
+            local EXTRACT="$RUNNER_TEMP/$PKG-package"
+            local BAD REL ACTUAL DIST_NOW FILE OID
 
-          # Connector seal. First re-establish that `dist/` on disk is still
-          # the tree the build step produced (the digest predates every
-          # later step that executes third-party code), then byte-compare
-          # what was actually packed against that tree: the file sets must
-          # be identical, every dist entry must match, nothing beyond dist
-          # and the three files npm always includes may appear, and the
-          # packed package.json must be the committed one.
-          test -n "$CONNECTOR_DIST_SHA256"
-          DIST_SHA256_NOW="$( ( cd packages/connector && find dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) | sha256sum | cut -d' ' -f1 )"
-          if [ "$DIST_SHA256_NOW" != "$CONNECTOR_DIST_SHA256" ]; then
-            echo "packages/connector/dist changed after its verified build (recorded $CONNECTOR_DIST_SHA256, found $DIST_SHA256_NOW)"
-            exit 1
-          fi
-          EXTRACT="$RUNNER_TEMP/connector-package"
-          mkdir "$EXTRACT"
-          tar -xzf "$CONNECTOR_TGZ" -C "$EXTRACT"
-          ( cd packages/connector && find dist -type f | LC_ALL=C sort ) > "$RUNNER_TEMP/dist.built"
-          ( cd "$EXTRACT/package" && find dist -type f | LC_ALL=C sort ) > "$RUNNER_TEMP/dist.packed"
-          # An empty file list would make every comparison below pass
-          # vacuously; a connector with no build output is not sealable.
-          test -s "$RUNNER_TEMP/dist.built"
-          diff -u "$RUNNER_TEMP/dist.built" "$RUNNER_TEMP/dist.packed"
-          while IFS= read -r FILE; do
-            cmp "packages/connector/$FILE" "$EXTRACT/package/$FILE"
-          done < "$RUNNER_TEMP/dist.built"
-          UNEXPECTED="$( ( cd "$EXTRACT/package" && find . -type f | sed 's|^\./||' ) | grep -v '^dist/' | grep -vxF -e package.json -e README.md -e LICENSE || true )"
-          if [ -n "$UNEXPECTED" ]; then
-            echo "Unexpected files in the connector tarball:"
-            echo "$UNEXPECTED"
-            exit 1
-          fi
-          git show HEAD:packages/connector/package.json > "$RUNNER_TEMP/connector-package.committed.json"
-          cmp "$RUNNER_TEMP/connector-package.committed.json" "$EXTRACT/package/package.json"
-          echo "Connector tarball contents match the verified build output and the committed manifest."
+            # Only regular files and directories. A symlink, hard link, or
+            # device node is never something this build produced, and each is
+            # a way to make an extracted tree differ from its listing.
+            BAD="$(tar -tvzf "$TGZ" | awk '{ t = substr($1, 1, 1); if (t != "-" && t != "d") print }')"
+            if [ -n "$BAD" ]; then
+              echo "Unexpected entry types in $TGZ:"
+              echo "$BAD"
+              exit 1
+            fi
+
+            # Exact inventory: nothing missing, nothing extra.
+            tar -tzf "$TGZ" | grep -v '/$' | sed 's|^package/||' \
+              | LC_ALL=C sort > "$RUNNER_TEMP/$PKG.packed"
+            diff -u "$EXPECTED" "$RUNNER_TEMP/$PKG.packed"
+
+            rm -rf "$EXTRACT"
+            mkdir -p "$EXTRACT"
+            tar -xzf "$TGZ" -C "$EXTRACT"
+
+            # Static files: byte-identical to the release commit, compared by
+            # recomputed content hash so the check asks nothing of the local
+            # repository.
+            while IFS=' ' read -r FILE OID; do
+              [ -n "$FILE" ] || continue
+              case "$FILE" in
+                "packages/$PKG/"*) REL="${FILE#packages/$PKG/}" ;;
+                *) continue ;;
+              esac
+              ACTUAL="$(git hash-object "$EXTRACT/package/$REL")"
+              if [ "$ACTUAL" != "$OID" ]; then
+                echo "$TGZ carries a $REL that is not the file committed at $GITHUB_SHA"
+                exit 1
+              fi
+            done <<< "$BASELINE_BLOBS"
+
+            # Build output: still the tree whose digest was recorded before
+            # the later steps ran, and packed from it byte for byte.
+            test -n "$DIST_SHA"
+            DIST_NOW="$( ( cd "packages/$PKG" && find dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) | sha256sum | cut -d' ' -f1 )"
+            if [ "$DIST_NOW" != "$DIST_SHA" ]; then
+              echo "packages/$PKG/dist changed after its verified build (recorded $DIST_SHA, found $DIST_NOW)"
+              exit 1
+            fi
+            ( cd "packages/$PKG" && find dist -type f | LC_ALL=C sort ) > "$RUNNER_TEMP/$PKG.dist.built"
+            # An empty file list would make every comparison below pass
+            # vacuously; a package with no build output is not sealable.
+            test -s "$RUNNER_TEMP/$PKG.dist.built"
+            while IFS= read -r FILE; do
+              cmp "packages/$PKG/$FILE" "$EXTRACT/package/$FILE"
+            done < "$RUNNER_TEMP/$PKG.dist.built"
+
+            echo "$TGZ matches the committed files and the verified build output."
+          }
+
+          # The snap publishes exactly one bundle: `files` lists `dist/`, and
+          # the build emits `dist/bundle.js` and nothing else. Spelling the
+          # inventory out means an extra emitted file fails the release rather
+          # than riding along unexamined.
+          cat > "$RUNNER_TEMP/snap.expected" <<'SNAP_FILES'
+          LICENSE
+          README.md
+          dist/bundle.js
+          images/icon.svg
+          package.json
+          snap.manifest.json
+          SNAP_FILES
+          LC_ALL=C sort -o "$RUNNER_TEMP/snap.expected" "$RUNNER_TEMP/snap.expected"
+          verify_archive "$SNAP_TGZ" snap "$RUNNER_TEMP/snap.expected" "$SNAP_DIST_SHA256"
+
+          # The connector's `dist/` is a compiled tree of many files, so its
+          # inventory is the built tree itself, which the digest above pins.
+          {
+            printf '%s\n' LICENSE README.md package.json
+            ( cd packages/connector && find dist -type f )
+          } | LC_ALL=C sort > "$RUNNER_TEMP/connector.expected"
+          verify_archive "$CONNECTOR_TGZ" connector "$RUNNER_TEMP/connector.expected" "$CONNECTOR_DIST_SHA256"
 
           SNAP_SHA256="$(sha256sum "$SNAP_TGZ" | cut -d' ' -f1)"
           CONNECTOR_SHA256="$(sha256sum "$CONNECTOR_TGZ" | cut -d' ' -f1)"
