@@ -1,6 +1,6 @@
 const { createHash } = require('crypto');
 const { readFileSync, existsSync, readdirSync, writeFileSync } = require('fs');
-const { dirname, join } = require('path');
+const { dirname, join, relative: relativePath } = require('path');
 
 // Use the exact webpack instance bundled with Gatsby — a second webpack copy
 // in the tree produces plugins that cannot tap Gatsby's compiler.
@@ -439,28 +439,28 @@ module.exports.onPostBuild = ({ reporter }) => {
 
   /* eslint-disable n/no-sync */
   const publicDir = join(__dirname, 'public');
-  const scripts = collectScripts(publicDir).map((path) =>
-    readFileSync(path, 'utf8'),
-  );
-  const html = collectFiles(publicDir, (name) => name.endsWith('.html')).map(
-    (path) => readFileSync(path, 'utf8'),
-  );
+  // Paths are carried alongside the contents so a failure names the file it
+  // is about. They are reported relative to `public/`, and the walk order is
+  // the filesystem's, so an index into the list would identify nothing.
+  const relative = (path) => relativePath(publicDir, path);
+  const scripts = collectScripts(publicDir).map((path) => ({
+    path: relative(path),
+    code: readFileSync(path, 'utf8'),
+  }));
+  const documents = collectFiles(publicDir, (name) =>
+    name.endsWith('.html'),
+  ).map((path) => ({ path: relative(path), html: readFileSync(path, 'utf8') }));
   /* eslint-enable n/no-sync */
 
-  // The identity is read from the values the client module evaluated (the
-  // meta tags `gatsby-ssr.tsx` renders from `src/config`), not from string
-  // literals: the connector ships the published snap ID and the release
-  // version as constants of its own, so the literals are present in every
-  // build whether or not Gatsby embedded the environment, and a literal
-  // search would pass on exactly the build that fell back to the localhost
-  // development snap.
-  const { problems, warnings } = verifyEmittedIdentity(
-    { html, scripts },
+  // Two independent properties, neither sufficient alone: every emitted page
+  // states the identity its configuration resolved (the meta tags
+  // `gatsby-ssr.tsx` renders from `src/config`), and no emitted script still
+  // reads the configuration variables at runtime, which is what an
+  // unsubstituted browser bundle would do. See `verifyEmittedIdentity`.
+  const problems = verifyEmittedIdentity(
+    { documents, scripts },
     { snapOrigin, snapVersion },
   );
-  for (const warning of warnings) {
-    reporter.warn(warning);
-  }
   if (problems.length > 0) {
     reporter.panic(
       `The built site does not carry the audited snap identity:\n  ${problems.join(

@@ -10,34 +10,29 @@ const ORIGIN_META = 'stellar-snap-origin';
 const VERSION_META = 'stellar-snap-version';
 
 /**
- * The development fallback the client configuration uses when the build did
- * not embed a snap origin. Its presence as a literal in emitted JavaScript
- * is a warning sign on a release build, not proof of a problem: a minifier
- * is free to fold the fallback away or to keep it, so this is advisory and
- * the meta-tag check below is what decides.
+ * The environment variables the client configuration reads. Their names must
+ * not survive into emitted browser code: see {@link verifyEmittedIdentity}.
  */
-const LOCAL_SNAP_LITERAL = 'local:http://localhost:8080';
+const CONFIG_ENV_NAMES = ['GATSBY_SNAP_ORIGIN', 'GATSBY_SNAP_VERSION'];
 
 /**
- * Whether any emitted script contains `value` as a complete string literal
- * (in either quote style the minifier may choose).
+ * Whether an emitted HTML file is a document a visitor loads, as opposed to a
+ * fragment the build stitches into one.
  *
- * A bare substring test is near-vacuous for values like a version number:
- * "1.2.3" appears in dependency banners, source URLs, and unrelated
- * constants all over a production bundle. Requiring the quoted form means
- * the value is present as the actual string literal the client code will
- * read at runtime, not as an accidental fragment of something else.
+ * Gatsby emits both. Pages (`index.html`, `404.html`, and the per-route
+ * documents) are rendered through the SSR pipeline and therefore carry the
+ * head components; slice fragments under `_gatsby/slices/` are bare
+ * `<script>` blocks with no `<head>` at all, so requiring the identity tags
+ * of those would fail every build for a reason that has nothing to do with
+ * the snap identity. Presence of an `<html>` element is the distinction, and
+ * it is the right one to draw: what the check is really asserting is that
+ * every page a visitor can open states the identity it will use.
  *
- * @param {string[]} emitted - The emitted script contents.
- * @param {string} value - The exact string the bundle must carry.
- * @returns {boolean} True when some script contains the quoted literal.
+ * @param {string} html - The file contents.
+ * @returns {boolean} True for a full document.
  */
-function hasQuotedLiteral(emitted, value) {
-  const doubleQuoted = JSON.stringify(value);
-  const singleQuoted = `'${value}'`;
-  return emitted.some(
-    (code) => code.includes(doubleQuoted) || code.includes(singleQuoted),
-  );
+function isPageDocument(html) {
+  return /<html[\s>]/iu.test(html);
 }
 
 /**
@@ -63,74 +58,108 @@ function metaContent(html, name) {
  * Verifies that the built site will ask every visitor's wallet for exactly
  * the audited snap identity.
  *
- * The check reads the value the client module actually evaluated, not a
- * literal. `gatsby-ssr.tsx` renders the configured origin and version into
- * meta tags from the same `src/config` module the browser bundle imports,
- * and the same `process.env.GATSBY_*` expression is evaluated for both. A
- * literal search cannot do this job: the connector ships the published snap
- * ID and the release version as its own constants, so the quoted literals
- * are present in every build whether or not the substitution happened, and
- * a check satisfied by them would pass on the very build that fell back to
- * the localhost development snap.
+ * Two independent things have to hold, and neither alone is enough.
+ *
+ * Every emitted page must *state* the identity it resolved. `gatsby-ssr.tsx`
+ * renders the configured origin and version into meta tags from the same
+ * `src/config` module the browser bundle imports, so the tags report a value
+ * the configuration actually evaluated rather than a string that happens to
+ * be present somewhere in the output. A literal search cannot do this job:
+ * the connector ships the published snap ID and the release version as its
+ * own constants, so the quoted literals are in every build whether or not
+ * the substitution happened, and a check satisfied by them would pass on the
+ * very build that fell back to the localhost development snap.
+ *
+ * And the browser bundle must have had those values *substituted into it* at
+ * build time. The meta tags are rendered by the server bundle, which runs in
+ * Node where `process.env` is populated regardless, so they would still read
+ * correctly if Gatsby stopped embedding the variables in client code, which
+ * is the documented behaviour this whole guard exists to catch. What that
+ * failure would leave behind is the variable *name*: unsubstituted code
+ * reads `process.env.GATSBY_SNAP_ORIGIN` at runtime, so the identifier
+ * survives into the emitted script, whereas a substituted build has replaced
+ * the whole expression with a literal and mentions the name nowhere. Its
+ * absence is therefore the evidence that the browser resolves the same
+ * identity the page advertises.
+ *
+ * There is deliberately no check on the development fallback literal
+ * (`local:http://localhost:8080`). It is the right-hand side of the `??` in
+ * the configuration module, so a correct build keeps it as dead code unless
+ * the minifier happens to fold the branch away; flagging it would fire on
+ * every good build, and a warning that always fires is one nobody reads.
  *
  * @param {object} artifact - The build output.
- * @param {string[]} artifact.html - Every emitted HTML document.
- * @param {string[]} artifact.scripts - Every emitted script.
+ * @param {{ path: string, html: string }[]} artifact.documents - Every
+ * emitted HTML file, with the path to report it by.
+ * @param {{ path: string, code: string }[]} artifact.scripts - Every emitted
+ * script, with the path to report it by.
  * @param {object} expected - The audited identity.
  * @param {string} expected.snapOrigin - The `npm:` snap ID.
  * @param {string} expected.snapVersion - The exact release version.
- * @returns {{ problems: string[], warnings: string[] }} What is wrong, and
- * what merely looks suspicious.
+ * @returns {string[]} What is wrong, empty when the artifact is sound.
  */
-function verifyEmittedIdentity({ html, scripts }, { snapOrigin, snapVersion }) {
+function verifyEmittedIdentity(
+  { documents, scripts },
+  { snapOrigin, snapVersion },
+) {
   const problems = [];
-  const warnings = [];
 
-  if (html.length === 0) {
+  const pages = documents.filter((document) => isPageDocument(document.html));
+  if (pages.length === 0) {
     problems.push(
-      'No HTML documents were emitted, so nothing could be verified.',
+      'No page documents were emitted, so no page could be checked. ' +
+        `(${documents.length} HTML file(s) were found, none of them a document.)`,
     );
   }
-  html.forEach((document, index) => {
-    const origin = metaContent(document, ORIGIN_META);
-    const version = metaContent(document, VERSION_META);
+  for (const { path, html } of pages) {
+    const origin = metaContent(html, ORIGIN_META);
+    const version = metaContent(html, VERSION_META);
     if (origin !== snapOrigin) {
       problems.push(
-        `Document ${index + 1} evaluates the snap origin as ${
-          origin === null ? 'missing' : JSON.stringify(origin)
+        `${path} resolves the snap origin to ${
+          origin === null ? 'no value at all' : JSON.stringify(origin)
         }, expected ${JSON.stringify(snapOrigin)}.`,
       );
     }
     if (version !== snapVersion) {
       problems.push(
-        `Document ${index + 1} evaluates the snap version as ${
-          version === null ? 'missing' : JSON.stringify(version)
+        `${path} resolves the snap version to ${
+          version === null ? 'no value at all' : JSON.stringify(version)
         }, expected ${JSON.stringify(snapVersion)}.`,
       );
     }
-  });
+  }
 
-  if (!hasQuotedLiteral(scripts, snapOrigin)) {
+  const carriesOrigin = scripts.some(({ code }) =>
+    code.includes(JSON.stringify(snapOrigin)),
+  );
+  if (!carriesOrigin) {
     problems.push(
-      `No emitted script carries the quoted literal ${JSON.stringify(snapOrigin)}.`,
+      `No emitted script carries the snap origin ${JSON.stringify(
+        snapOrigin,
+      )} as a string literal, so the browser bundle cannot be requesting it.`,
     );
   }
-  if (hasQuotedLiteral(scripts, LOCAL_SNAP_LITERAL)) {
-    warnings.push(
-      `An emitted script still carries the development fallback ${JSON.stringify(
-        LOCAL_SNAP_LITERAL,
-      )}. The evaluated identity above is what the page uses; this only means the minifier kept the fallback branch.`,
-    );
+  for (const { path, code } of scripts) {
+    for (const name of CONFIG_ENV_NAMES) {
+      if (code.includes(name)) {
+        problems.push(
+          `${path} still reads ${name} at runtime, so the build did not ` +
+            `substitute it into browser code and the page would fall back ` +
+            `to the development snap.`,
+        );
+      }
+    }
   }
 
-  return { problems, warnings };
+  return problems;
 }
 
 module.exports = {
-  LOCAL_SNAP_LITERAL,
+  CONFIG_ENV_NAMES,
   ORIGIN_META,
   VERSION_META,
-  hasQuotedLiteral,
+  isPageDocument,
   metaContent,
   verifyEmittedIdentity,
 };
