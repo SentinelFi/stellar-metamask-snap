@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { SnapError } from '@metamask/snaps-sdk';
 import type { Struct } from '@metamask/superstruct';
+import { define, refine, string } from '@metamask/superstruct';
 
 import {
   AddTokenParams,
@@ -307,6 +308,33 @@ describe('validation error messages', () => {
     expect(
       failureOf({ xdr: 'AAAA', submit: 'yes' }, SignTransactionParams),
     ).not.toBeNull();
+  });
+});
+
+describe('failures that are not ordinary superstruct rejections', () => {
+  it('still refuses with -3 when a validator throws a non-Error', () => {
+    // The failure description reads `error.message`, so a thrown string would
+    // make that read throw inside the catch, escape `validate`, and be
+    // laundered by the router into a generic internal error (-1). The
+    // caller's request is invalid either way and must read as -3.
+    const throwing = refine(string(), 'throwing', () => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw 'not an Error';
+    });
+    const error = failureOf('anything', throwing);
+    expect(error).toBeInstanceOf(SnapError);
+    expect(error?.data).toMatchObject({ code: -3 });
+    expect(error?.message).toBe('Invalid request parameters.');
+  });
+
+  it('truncates an expectation that is long on its own', () => {
+    // Dropping the "received" clause bounds the caller's own bytes, but the
+    // expectation is struct-supplied and has no length of its own, so it is
+    // cut as well rather than trusted to be short.
+    const verbose = define('T'.repeat(300), () => false);
+    const error = failureOf('x', verbose);
+    expect(error?.message.endsWith('…')).toBe(true);
+    expect(error?.message.length).toBeLessThan(256);
   });
 });
 
