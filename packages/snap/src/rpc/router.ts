@@ -17,6 +17,9 @@ import { isOriginConnected } from '../state';
 
 type Handler = (origin: string, params: unknown) => Promise<Json>;
 
+/** Upper bound on an unknown method name echoed back in the error. */
+const MAX_ECHOED_METHOD_LENGTH = 64;
+
 /**
  * The SEP-43 / Freighter-shaped RPC surface. Method names are unprefixed —
  * the snap ID already namespaces them.
@@ -73,9 +76,15 @@ export async function route(
     ? HANDLERS[request.method]
     : undefined;
   if (!handler) {
-    // MethodNotFoundError extends SnapError/Error; the rule cannot see it.
+    // The name is the caller's own text, echoed bounded, and the SEP-43 code
+    // rides along so a dapp sees the same `data.code` convention every other
+    // refusal carries. MethodNotFoundError extends SnapError/Error; the rule
+    // cannot see it.
     // eslint-disable-next-line @typescript-eslint/only-throw-error
-    throw new MethodNotFoundError(`Method not found: ${request.method}`);
+    throw new MethodNotFoundError(
+      `Method not found: ${request.method.slice(0, MAX_ECHOED_METHOD_LENGTH)}`,
+      { code: SEP43_ERROR_CODES.invalidRequest },
+    );
   }
 
   const dialogMethod = DIALOG_METHODS.has(request.method);

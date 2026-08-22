@@ -4,6 +4,7 @@ import { useMetaMaskContext } from './MetamaskContext';
 import { useRequest } from './useRequest';
 import { defaultSnapOrigin } from '../config';
 import type { GetSnapsResponse } from '../types';
+import { isSnapEntry } from '../utils';
 
 /**
  * A hook to retrieve useful data from MetaMask.
@@ -40,12 +41,15 @@ export const useMetaMask = () => {
    */
   const getSnap = useCallback(async () => {
     // `useRequest` resolves to null on error, so the result must be indexed
-    // defensively rather than assumed to be a snaps map.
+    // defensively rather than assumed to be a snaps map, and the entry under
+    // the configured origin is validated rather than cast: it is the one
+    // provider-reported value the page stores, compares, and renders.
     const snaps = (await request({
       method: 'wallet_getSnaps',
-    })) as GetSnapsResponse | null;
+    })) as Partial<GetSnapsResponse> | null;
+    const entry: unknown = snaps?.[defaultSnapOrigin];
 
-    setInstalledSnap(snaps?.[defaultSnapOrigin] ?? null);
+    setInstalledSnap(isSnapEntry(entry) ? entry : null);
   }, [request, setInstalledSnap]);
 
   useEffect(() => {

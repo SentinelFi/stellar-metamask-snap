@@ -46,6 +46,17 @@ import {
 } from '../rpc/limiter';
 import { resetDialogThrottle } from '../rpc/throttle';
 
+/**
+ * The SLIP-10 path node for the account index a `snap_getBip32PublicKey`
+ * request names (`m/44'/148'/<index>'`), typed the way key-tree wants it.
+ *
+ * @param path - The requested BIP-32 path.
+ * @returns The hardened account node.
+ */
+function accountPathNode(path: string[]): `slip10:${number}'` {
+  return `slip10:${path[3] ?? ''}` as `slip10:${number}'`;
+}
+
 /*
  * Gate tests for the connection boundary and account resolution.
  *
@@ -95,9 +106,14 @@ let dialogResponse: boolean;
 let fetchCalls: string[];
 /** When set, `snap_manageState` writes fail while reads keep working. */
 let writesFail: boolean;
-/** How many times the parent node was fetched, per {@link entropyFetches}. */
+/**
+ * How many times key material was requested from the platform: the private
+ * subtree (`snap_getBip32Entropy`) or a public key (`snap_getBip32PublicKey`).
+ */
 let entropyFetches: number;
-/** The `m/44'/148'` subtree the mocked `snap_getBip32Entropy` answers with. */
+/** How many of those were observations of the subtree's own public key. */
+let subtreeFetches: number;
+/** The `m/44'/148'` subtree the mocked key requests answer from. */
 let activeEntropy: SLIP10Node;
 /** The subtree for {@link SEP5_MNEMONIC}, to switch back to. */
 let phraseOneEntropy: SLIP10Node;
@@ -373,13 +389,18 @@ function isStateRead(args: RequestArgs): boolean {
 }
 
 /**
- * Matches a parent-node fetch, for {@link gateNextRequest}.
+ * Matches the public-key request for one account (a path one level below
+ * the subtree), for {@link gateNextRequest}: the request a handler makes to
+ * resolve an address that is not yet memoized.
  *
  * @param args - The intercepted request.
- * @returns True for a `snap_getBip32Entropy` call.
+ * @returns True for a `snap_getBip32PublicKey` call naming an account.
  */
-function isEntropyFetch(args: RequestArgs): boolean {
-  return args.method === 'snap_getBip32Entropy';
+function isAccountKeyFetch(args: RequestArgs): boolean {
+  return (
+    args.method === 'snap_getBip32PublicKey' &&
+    (args.params as { path?: string[] }).path?.length === 4
+  );
 }
 
 /**
@@ -528,6 +549,7 @@ describe('connection gate and account resolution', () => {
     fetchCalls = [];
     writesFail = false;
     entropyFetches = 0;
+    subtreeFetches = 0;
     phraseOneEntropy = entropy;
     activeEntropy = entropy;
     // The address cache, the entropy binding, the balance cache, the request
@@ -541,7 +563,12 @@ describe('connection gate and account resolution', () => {
     (globalThis as { snap?: unknown }).snap = {
       request: async (args: {
         method: string;
-        params: { operation?: string; newState?: unknown; content?: unknown };
+        params: {
+          operation?: string;
+          newState?: unknown;
+          content?: unknown;
+          path?: string[];
+        };
       }) => {
         await Promise.resolve();
         switch (args.method) {
@@ -557,6 +584,17 @@ describe('connection gate and account resolution', () => {
           case 'snap_getBip32Entropy':
             entropyFetches += 1;
             return activeEntropy.toJSON();
+          case 'snap_getBip32PublicKey': {
+            // The subtree's own key, or the hardened account one level below.
+            entropyFetches += 1;
+            const path = args.params.path ?? [];
+            if (path.length === 3) {
+              subtreeFetches += 1;
+              return activeEntropy.publicKey;
+            }
+            return (await activeEntropy.derive([accountPathNode(path)]))
+              .publicKey;
+          }
           case 'snap_dialog':
             dialogs.push(args.params.content);
             return dialogResponse;
@@ -910,18 +948,18 @@ describe('connection gate and account resolution', () => {
      * into the new phrase's state.
      */
 
-    it('a derivation retained across the change cannot repopulate the cache', async () => {
+    it('an address fetched across the change is neither cached nor returned', async () => {
       stored = stateV2({ accounts: [0, 1], activeAccount: 1 });
 
       // Establish the first phrase's binding. This warms the active index
       // (1) and leaves index 0, which the held request will be made to
-      // derive, cold.
+      // resolve, cold.
       const first = await ensureEntropyBinding();
       expect(await getActiveAddress(first)).toBe(ADDRESS_1);
 
-      // Hold a cold-signing resolution between its parent-node fetch (first
-      // phrase) and its state read, the window in which its node can be
-      // superseded while it still holds it.
+      // Hold a cold-signing resolution between its observation of the phrase
+      // (the first one) and its state read: the window in which the phrase
+      // it observed can be superseded while it still resolves under it.
       const gate = gateNextRequest(isStateRead);
       const held = resolveSigningAccount();
       held.catch(() => undefined);
@@ -935,10 +973,12 @@ describe('connection gate and account resolution', () => {
       expect(await getAddressForIndex(second, 1)).not.toBe(ADDRESS_1);
 
       // The held request now reads the reset store (active account 0) and
-      // derives that index with the node it retained from the previous
-      // phrase. Its completion must be refused: caching the old-phrase
-      // address at the reset active index would make every later display
-      // answer with an address this wallet no longer holds.
+      // fetches that index's key, which the platform answers for the phrase
+      // that is primary *now*. The confirming observation after the fetch
+      // no longer matches the phrase the request resolves under, so the
+      // completion must be refused: caching that address under the old
+      // phrase, or returning it, would be answering one wallet's request
+      // with the other wallet's account.
       gate.release();
       await expect(held).rejects.toThrow('secret recovery phrase changed');
 
@@ -1033,10 +1073,10 @@ describe('connection gate and account resolution', () => {
 
     it('fund refuses before friendbot once the phrase changed', async () => {
       stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
-      // Held at the parent-node fetch that resolving the named account
-      // needs: the first fetch is the grant check's own, the second is the
-      // handler's work after it.
-      const gate = gateNextRequest(isEntropyFetch, 1);
+      // Held at the public-key request that resolving the named account
+      // needs: the first account key is the grant check's own (the active
+      // account), the second is the handler's work after it.
+      const gate = gateNextRequest(isAccountKeyFetch, 1);
       const held = fund(ORIGIN, { address: ADDRESS_1 });
       held.catch(() => undefined);
       await waitUntil(gate.hit);
@@ -1051,7 +1091,7 @@ describe('connection gate and account resolution', () => {
 
     it('getAccounts does not enumerate the new wallet', async () => {
       stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
-      const gate = gateNextRequest(isEntropyFetch, 1);
+      const gate = gateNextRequest(isAccountKeyFetch, 1);
       const held = getAccounts(ORIGIN);
       held.catch(() => undefined);
       await waitUntil(gate.hit);
@@ -1143,9 +1183,9 @@ describe('connection gate and account resolution', () => {
       stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
       restoreEntropy();
       resetAddressCache();
-      // Held at the parent-node fetch account resolution makes after the
+      // Held at the account public-key request resolution makes after the
       // grant check's own.
-      const gate = gateNextRequest(isEntropyFetch, 1);
+      const gate = gateNextRequest(isAccountKeyFetch, 1);
       const held = call(address);
       held.catch(() => undefined);
       await waitUntil(gate.hit);
@@ -1197,14 +1237,17 @@ describe('connection gate and account resolution', () => {
 
       // The phrase changes away and back while it is held; each change
       // queues its own reconciliation behind the held one.
+      // Each binding observes the subtree's public key once on entry; the
+      // counts below wait for that observation to have been answered, which
+      // is what queues the reconciliation behind the held one.
       await swapEntropy();
       const second = ensureEntropyBinding();
       second.catch(() => undefined);
-      await waitUntil(() => entropyFetches >= 3);
+      await waitUntil(() => subtreeFetches >= 4);
       restoreEntropy();
       const third = ensureEntropyBinding();
       third.catch(() => undefined);
-      await waitUntil(() => entropyFetches >= 4);
+      await waitUntil(() => subtreeFetches >= 5);
 
       gate.release();
       // The held request's reconciliation settles first, and for its

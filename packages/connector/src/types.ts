@@ -136,12 +136,13 @@ export type SignMessageResult = {
  * `:` will display exactly that. The only difference in the string is the
  * leading character of the second field.
  */
-export type BalanceKind = 'native' | 'classic' | 'soroban';
+export type BalanceKind = 'native' | 'classic' | 'soroban' | 'pool';
 
 export type BalanceLine = {
   /**
-   * `'XLM'` for the native asset, `CODE:ISSUER` for a classic asset, and
-   * `SYMBOL:CONTRACT_ID` for a tracked Soroban token. This is a display
+   * `'XLM'` for the native asset, `CODE:ISSUER` for a classic asset,
+   * `SYMBOL:CONTRACT_ID` for a tracked Soroban token, and
+   * `Pool shares:POOL_ID` for liquidity-pool shares. This is a display
    * string, not an identity: use {@link BalanceLine.type} to tell the cases
    * apart and {@link BalanceLine.contractId} to identify a token.
    */

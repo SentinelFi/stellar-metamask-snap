@@ -1,4 +1,3 @@
-import type { Memo } from '@stellar/stellar-sdk/base';
 import {
   Asset,
   getLiquidityPoolId,
@@ -235,9 +234,16 @@ export function stroopsToXlm(stroops: string | number): string {
  * Private-use code points (`\p{Co}`) are included for the same reason: they
  * have no standard glyph and render as blank or as a placeholder box, so a
  * string containing them reads differently on every device.
+ *
+ * Lone surrogates (`\p{Cs}`, which the `u` flag lets a class match) are
+ * included because they are the one case where the bytes signed differ from
+ * the string shown without any visible sign: a JSON payload can carry an
+ * unpaired surrogate, the display shows a blank or a box, and UTF-8 encoding
+ * replaces it with U+FFFD. Flagging it means the escaped exact view shows the
+ * code point that is actually present.
  */
 const HIDDEN_CHARACTER_CLASS =
-  '\\p{Cc}\\p{Cf}\\p{Co}\\p{Zl}\\p{Zp}\\u115F\\u1160\\u17B4\\u17B5\\u2800\\u3164\\uFFA0' +
+  '\\p{Cc}\\p{Cf}\\p{Co}\\p{Cs}\\p{Zl}\\p{Zp}\\u115F\\u1160\\u17B4\\u17B5\\u2800\\u3164\\uFFA0' +
   '\\u034F\\u180B-\\u180D\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}';
 
 /*
@@ -371,29 +377,4 @@ export function sanitizeInlineText(value: string): string {
  */
 export function isLossyInline(value: string): boolean {
   return sanitizeInlineText(value) !== value;
-}
-
-/**
- * Renders a memo for display.
- *
- * @param memo - The transaction memo.
- * @returns `[label, value]`, or null when the memo is empty.
- */
-export function formatMemo(memo: Memo): [string, string] | null {
-  switch (memo.type) {
-    case 'text':
-      return ['Memo (text)', sanitizeInlineText(memo.value?.toString() ?? '')];
-    case 'id':
-      return ['Memo (ID)', String(memo.value)];
-    case 'hash':
-      return ['Memo (hash)', Buffer.from(memo.value as Buffer).toString('hex')];
-    case 'return':
-      return [
-        'Memo (return)',
-        Buffer.from(memo.value as Buffer).toString('hex'),
-      ];
-    case 'none':
-    default:
-      return null;
-  }
 }

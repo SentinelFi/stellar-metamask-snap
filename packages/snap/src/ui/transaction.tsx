@@ -46,7 +46,6 @@ import type { BalanceChangeSummary } from '../stellar/events';
 import type { SimulationSummary } from '../stellar/soroban';
 import {
   decodeHostFunction,
-  formatSymbolName,
   getSorobanData,
   summarizeAuthEntries,
   summarizeFootprint,
@@ -144,6 +143,16 @@ function describeClaimPredicate(
  * @returns A reason the transaction cannot be reviewed, or null.
  */
 export function findUndisplayableOperation(tx: Transaction): string | null {
+  // Extra required signers are a signed precondition: a key the renderer
+  // cannot encode would otherwise be shown as a placeholder, which is the one
+  // "review the raw XDR" deferral this dialog no longer makes anywhere else.
+  for (const signer of tx.extraSigners ?? []) {
+    try {
+      SignerKey.encodeSignerKey(signer);
+    } catch {
+      return 'an extra required signer key the snap cannot display';
+    }
+  }
   for (const operation of tx.operations) {
     if (operation.type !== 'createClaimableBalance') {
       continue;
@@ -449,6 +458,40 @@ function baseAccount(address: string): string {
   } catch {
     return address;
   }
+}
+
+/**
+ * Renders the authorization entries embedded in an `invokeHostFunction`
+ * operation: the count, the legend that says which entries this signature
+ * approves, and every entry's credential and invocation tree.
+ *
+ * One renderer for every host-function kind, so no branch can omit it. The
+ * legend matters: an entry marked `[source-account]` is approved by the
+ * transaction signature the dialog collects; an entry naming an address is
+ * approved by that address's own signature on the entry, which is collected
+ * separately (or is already attached) and is not what approving this dialog
+ * produces.
+ *
+ * @param entries - The operation's authorization entries.
+ * @returns The authorization block, or null when there are no entries.
+ */
+function renderAuthorizations(
+  entries: xdr.SorobanAuthorizationEntry[],
+): GenericSnapElement | null {
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <Box>
+      <Text>{`Authorizations (${entries.length})`}</Text>
+      <Text>
+        Entries marked [source-account] are authorized by this transaction
+        signature. Entries naming an address need that address to sign the entry
+        itself.
+      </Text>
+      <Copyable value={summarizeAuthEntries(entries).join('\n\n')} />
+    </Box>
+  );
 }
 
 /**
@@ -1157,6 +1200,15 @@ function renderOperationBody(
           </Section>
         );
       }
+      // Rendered for every host-function kind, not only invocations. A
+      // deployment carries authorization entries too: a constructor that
+      // calls `require_auth` on the deployer produces a source-account entry
+      // whose sub-invocations (a token transfer, an approval) are authorized
+      // by the very signature this dialog collects. The signing gate verifies
+      // that every entry is displayable, and it is displayed here whatever
+      // the host function is, because an entry the user cannot see is an
+      // authorization the user cannot refuse.
+      const authorizations = renderAuthorizations(operation.auth ?? []);
       if (decoded.kind !== 'invoke') {
         return (
           <Section>
@@ -1169,17 +1221,19 @@ function renderOperationBody(
               severity="warning"
             >
               <Text>
-                This deploys contract code or a new contract instance. Review
-                the details and the raw transaction XDR below.
+                This deploys contract code or a new contract instance. A
+                contract constructor can act for your account during deployment;
+                every such authorization is listed below and is approved by this
+                signature.
               </Text>
             </Banner>
             {(decoded.details ?? []).length > 0 ? (
               <Copyable value={(decoded.details ?? []).join('\n')} />
             ) : null}
+            {authorizations}
           </Section>
         );
       }
-      const authCount = operation.auth?.length ?? 0;
       return (
         <Section>
           <Text>
@@ -1187,11 +1241,12 @@ function renderOperationBody(
           </Text>
           <Text>Contract</Text>
           <Copyable value={decoded.contract ?? ''} />
-          {/* Lossless: a plain identifier renders bare; anything else is
-              quoted with hidden characters escaped visibly, exactly as in
-              the authorization-entry renderer. */}
+          {/* Lossless: the decoder renders a plain identifier bare, quotes
+              anything else with hidden characters escaped visibly, and shows
+              a name whose signed bytes are not clean text as hex, exactly as
+              in the authorization-entry renderer. */}
           <Row label="Function">
-            <Text>{formatSymbolName(decoded.functionName ?? '')}</Text>
+            <Text>{decoded.functionName ?? ''}</Text>
           </Row>
           {decoded.args.length > 0 ? (
             <Text>Arguments</Text>
@@ -1203,27 +1258,7 @@ function renderOperationBody(
           {decoded.args.length > 0 ? (
             <Copyable value={decoded.args.join('\n')} />
           ) : null}
-          {authCount > 0 ? (
-            <Text>{`Authorizations (${authCount})`}</Text>
-          ) : null}
-          {authCount > 0 ? (
-            // The legend says which entries this signature itself
-            // authorizes. An entry marked [source-account] is approved by
-            // the transaction signature; an entry naming an address is
-            // approved by that address's own signature on the entry, which
-            // is collected separately (or is already attached) and is not
-            // what approving this dialog produces.
-            <Text>
-              Entries marked [source-account] are authorized by this transaction
-              signature. Entries naming an address need that address to sign the
-              entry itself.
-            </Text>
-          ) : null}
-          {authCount > 0 ? (
-            <Copyable
-              value={summarizeAuthEntries(operation.auth ?? []).join('\n\n')}
-            />
-          ) : null}
+          {authorizations}
         </Section>
       );
     }
@@ -1506,7 +1541,9 @@ function renderPreconditions(tx: Transaction): GenericSnapElement[] {
       try {
         return SignerKey.encodeSignerKey(signer);
       } catch {
-        return '(unrenderable signer key — review the raw XDR)';
+        // Unreachable: `findUndisplayableOperation` refuses such a key before
+        // any dialog is built. Kept as defense so the row can never be empty.
+        return '(signer key the snap cannot display)';
       }
     });
     rows.push(
@@ -1528,22 +1565,38 @@ function renderPreconditions(tx: Transaction): GenericSnapElement[] {
  *
  * @param tx - The parsed transaction.
  * @param signingAddress - The wallet key that will sign.
+ * @param options - Rendering options.
+ * @param options.feeBumpInner - Whether `tx` is the inner transaction of a
+ * fee bump, which the wallet does not sign.
  * @returns The summary section.
  */
 function renderSummary(
   tx: Transaction,
   signingAddress: string,
+  options: { feeBumpInner?: boolean } = {},
 ): GenericSnapElement {
   // A sequence-0 envelope can never execute, so its (absent) expiry is moot:
   // the banner would be noise on a login challenge, whose own branch already
   // explains that it cannot be submitted at all. The same goes for the
   // source-account banner: a SEP-10 challenge is sourced from the server's
   // account by design, and that branch states that nothing is executed.
+  //
+  // The source-account banner is also withheld for the inner transaction of
+  // a fee bump. The wallet signs only the outer envelope there, which
+  // authorizes fee payment and nothing on the inner source account, so the
+  // banner's claim ("your signature would authorize actions on another
+  // account") would be false. A fee bump for someone else's transaction is
+  // the normal use of fee bumps, and a banner that fires on every one of
+  // them trains the user to dismiss it where it is true: on an ordinary
+  // transaction sourced from another account. The fee-bump dialog carries
+  // its own banner for the case that matters there, a foreign fee source.
   const executable = tx.sequence !== '0';
   const unbounded = executable && !hasUpperTimeBound(tx);
   return (
     <Section>
-      {executable ? sourceMismatchBanner(tx, signingAddress) : null}
+      {executable && !options.feeBumpInner
+        ? sourceMismatchBanner(tx, signingAddress)
+        : null}
       {unbounded ? (
         <Banner title="This signature never expires" severity="warning">
           <Text>
@@ -1961,7 +2014,7 @@ export function buildSignTransactionDialog({
         <Text>
           <Bold>Inner transaction</Bold>
         </Text>
-        {renderSummary(inner, signingAddress)}
+        {renderSummary(inner, signingAddress, { feeBumpInner: true })}
         {renderOperations(inner)}
         {renderFootprint(tx)}
         {renderSimulation(simulation ?? null, simulationEndpoint)}

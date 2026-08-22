@@ -39,6 +39,7 @@ module.exports.onCreateWebpackConfig = ({ actions }) => {
   });
 };
 
+const { verifyEmittedIdentity } = require('./release-check');
 const snapPackage = require('../snap/package.json');
 
 /**
@@ -398,37 +399,16 @@ function collectScripts(dir) {
 }
 
 /**
- * Whether any emitted script contains `value` as a complete string literal
- * (in either quote style the minifier may choose).
- *
- * A bare substring test is near-vacuous for values like a version number:
- * "1.2.3" appears in dependency banners, source URLs, and unrelated
- * constants all over a production bundle. Requiring the quoted form means
- * the value is present as the actual string literal the client code will
- * read at runtime, not as an accidental fragment of something else.
- *
- * @param {string[]} emitted - The emitted script contents.
- * @param {string} value - The exact string the bundle must carry.
- * @returns {boolean} True when some script contains the quoted literal.
- */
-function hasQuotedLiteral(emitted, value) {
-  const doubleQuoted = JSON.stringify(value);
-  const singleQuoted = `'${value}'`;
-  return emitted.some(
-    (code) => code.includes(doubleQuoted) || code.includes(singleQuoted),
-  );
-}
-
-/**
  * Post-build verification: confirm the values actually reached the emitted
- * JavaScript.
+ * artifact.
  *
  * The pre-build guard checks configuration; this checks the artifact. Gatsby
  * exposing non-`GATSBY_` variables from an env file to browser code is
  * behaviour that could change on upgrade, and if it did, the guard would
  * still pass while the shipped bundle silently fell back to the localhost
  * development snap. Reading the build output is the only check that cannot be
- * fooled by that.
+ * fooled by that; the verifier itself lives in `release-check.js` so it can
+ * be tested with a fake artifact.
  *
  * @param {object} args - Gatsby onPostBuild args.
  * @param {object} args.reporter - Gatsby reporter.
@@ -459,25 +439,35 @@ module.exports.onPostBuild = ({ reporter }) => {
 
   /* eslint-disable n/no-sync */
   const publicDir = join(__dirname, 'public');
-  const emitted = collectScripts(publicDir).map((path) =>
+  const scripts = collectScripts(publicDir).map((path) =>
     readFileSync(path, 'utf8'),
+  );
+  const html = collectFiles(publicDir, (name) => name.endsWith('.html')).map(
+    (path) => readFileSync(path, 'utf8'),
   );
   /* eslint-enable n/no-sync */
 
-  // The origin must appear as the quoted `npm:<name>` literal and the
-  // version as the quoted version literal: the strings client code actually
-  // receives from the env substitution.
-  const hasOrigin = hasQuotedLiteral(emitted, snapOrigin);
-  const hasVersion = hasQuotedLiteral(emitted, snapVersion);
-
-  if (!hasOrigin || !hasVersion) {
+  // The identity is read from the values the client module evaluated (the
+  // meta tags `gatsby-ssr.tsx` renders from `src/config`), not from string
+  // literals: the connector ships the published snap ID and the release
+  // version as constants of its own, so the literals are present in every
+  // build whether or not Gatsby embedded the environment, and a literal
+  // search would pass on exactly the build that fell back to the localhost
+  // development snap.
+  const { problems, warnings } = verifyEmittedIdentity(
+    { html, scripts },
+    { snapOrigin, snapVersion },
+  );
+  for (const warning of warnings) {
+    reporter.warn(warning);
+  }
+  if (problems.length > 0) {
     reporter.panic(
-      `The built site does not carry the audited snap identity. Expected ` +
-        `the quoted literal "${snapOrigin}" (found: ${hasOrigin}) and the ` +
-        `quoted version "${snapVersion}" (found: ${hasVersion}) in the ` +
-        `emitted JavaScript. The browser bundle would fall back to the ` +
-        `development snap. Check how the Gatsby version in use exposes ` +
-        `environment variables to client code.`,
+      `The built site does not carry the audited snap identity:\n  ${problems.join(
+        '\n  ',
+      )}\nThe browser bundle would fall back to the development snap. Check ` +
+        `how the Gatsby version in use exposes environment variables to ` +
+        `client code and to server rendering.`,
     );
   }
 

@@ -15,6 +15,17 @@ import { onUserInput } from '.';
 import { resetAddressCache } from './keys';
 import { MAX_ACCOUNT_INDEX } from './state';
 
+/**
+ * The SLIP-10 path node for the account index a `snap_getBip32PublicKey`
+ * request names (`m/44'/148'/<index>'`), typed the way key-tree wants it.
+ *
+ * @param path - The requested BIP-32 path.
+ * @returns The hardened account node.
+ */
+function accountPathNode(path: string[]): `slip10:${number}'` {
+  return `slip10:${path[3] ?? ''}` as `slip10:${number}'`;
+}
+
 /** Official SEP-0005 test vector 1 (no passphrase). */
 const SEP5_MNEMONIC =
   'illness spike retreat truth genius clock brain pass fit cave bargain toe';
@@ -478,6 +489,8 @@ describe('onUserInput add-account flow', () => {
   let dialogs: unknown[];
   let dialogResponse: boolean;
   let updates: number;
+  /** When set, `snap_updateInterface` fails, as it does once the page is closed. */
+  let updateFails: boolean;
 
   beforeEach(async () => {
     const entropy = await SLIP10Node.fromDerivationPath({
@@ -488,6 +501,7 @@ describe('onUserInput add-account flow', () => {
     dialogs = [];
     dialogResponse = true;
     updates = 0;
+    updateFails = false;
     // The address cache and the entropy-binding latch are module state that
     // outlives a test. Each test here swaps in a fresh store, and a latch
     // still warm from the previous test would stop the binding reconciliation
@@ -513,10 +527,22 @@ describe('onUserInput add-account flow', () => {
             return null;
           case 'snap_getBip32Entropy':
             return entropy.toJSON();
+          case 'snap_getBip32PublicKey': {
+            // The subtree's own key, or the hardened account one level below.
+            const path = (args.params as { path?: string[] }).path ?? [];
+            const node =
+              path.length === 3
+                ? entropy
+                : await entropy.derive([accountPathNode(path)]);
+            return node.publicKey;
+          }
           case 'snap_dialog':
             dialogs.push(args.params.content);
             return dialogResponse;
           case 'snap_updateInterface':
+            if (updateFails) {
+              throw new Error('interface closed');
+            }
             updates += 1;
             return null;
           default:
@@ -572,6 +598,17 @@ describe('onUserInput add-account flow', () => {
     // The user was told, and the page was re-read rather than left stale.
     expect(dialogs).toHaveLength(1);
     expect(updates).toBe(1);
+  });
+
+  it('survives a re-render it cannot deliver', async () => {
+    // The platform treats a throw escaping this handler as a crash and stops
+    // the snap, which resets every in-memory control (rate limits, cooldowns,
+    // the entropy-binding latch). A page the user closed while a dialog was
+    // open makes the interface update fail; the interaction itself already
+    // landed and was reported, so the failed re-render is swallowed.
+    updateFails = true;
+    expect(await click('add-account')).toBeUndefined();
+    expect((stored as { accounts: number[] }).accounts).toStrictEqual([0, 1]);
   });
 
   it('reveals the next account after confirmation', async () => {

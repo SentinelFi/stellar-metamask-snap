@@ -45,13 +45,108 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isString = (value: unknown): value is string => typeof value === 'string';
 
 /**
- * Whether a value is a string or absent.
+ * Shape predicates for the values the snap reports. Every string the typed
+ * API hands to dapp code is either a strkey, a hash, a base64 payload, an
+ * enumerated status, or bounded display text; a value outside those shapes
+ * did not come from the pinned snap release, and a dapp that renders or
+ * forwards it should not receive it as a validated one. The bounds are
+ * generous for real traffic and tight against a captured provider feeding a
+ * page a multi-megabyte "warning" or a signer address that is not a key.
+ */
+
+/** A classic `G...` ed25519 account address. */
+const ACCOUNT_ADDRESS = /^G[A-Z2-7]{55}$/u;
+
+/** A Soroban `C...` contract address. */
+const CONTRACT_ADDRESS = /^C[A-Z2-7]{55}$/u;
+
+/** A 64-character hex transaction hash. */
+const TRANSACTION_HASH = /^[0-9a-f]{64}$/iu;
+
+/** Base64 text (standard alphabet, optional padding). */
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/u;
+
+/**
+ * The submission statuses the snap can report: the Soroban RPC's status
+ * enumeration. A result carries `PENDING` or `DUPLICATE` (the accepted
+ * states); the failure states can appear on recovery data.
+ */
+const SUBMISSION_STATUSES = new Set([
+  'PENDING',
+  'DUPLICATE',
+  'TRY_AGAIN_LATER',
+  'ERROR',
+]);
+
+/** Largest signed payload (envelope, auth entry, or signature) accepted. */
+const MAX_PAYLOAD_LENGTH = 512 * 1024;
+
+/** Caps on the advisory warnings a signing result may carry. */
+const MAX_WARNINGS = 16;
+const MAX_WARNING_LENGTH = 512;
+
+/** Bounds on the self-reported token metadata `addToken` returns. */
+const MAX_SYMBOL_LENGTH = 32;
+const MAX_DECIMALS = 255;
+
+/** A bounded decimal amount: digits with an optional fraction. */
+const DECIMAL_AMOUNT = /^-?\d{1,40}(\.\d{1,40})?$/u;
+
+/** Largest display label (`CODE:ISSUER`, `SYMBOL:CONTRACT`) accepted. */
+const MAX_ASSET_LABEL_LENGTH = 128;
+
+/**
+ * Whether a value is an account address.
  *
  * @param value - The value to test.
- * @returns True for strings and undefined.
+ * @returns True for a `G...` strkey.
  */
-const isOptionalString = (value: unknown): value is string | undefined =>
-  value === undefined || typeof value === 'string';
+const isAccountAddress = (value: unknown): value is string =>
+  isString(value) && ACCOUNT_ADDRESS.test(value);
+
+/**
+ * Whether a value is a base64 payload within the size bound.
+ *
+ * @param value - The value to test.
+ * @returns True for bounded base64 text.
+ */
+const isPayload = (value: unknown): value is string =>
+  isString(value) &&
+  value.length > 0 &&
+  value.length <= MAX_PAYLOAD_LENGTH &&
+  BASE64.test(value);
+
+/**
+ * Whether a value is a transaction hash or absent.
+ *
+ * @param value - The value to test.
+ * @returns True for undefined or a 64-hex hash.
+ */
+const isOptionalHash = (value: unknown): value is string | undefined =>
+  value === undefined || (isString(value) && TRANSACTION_HASH.test(value));
+
+/**
+ * Whether a value is a known submission status or absent.
+ *
+ * @param value - The value to test.
+ * @returns True for undefined or an enumerated status.
+ */
+const isOptionalStatus = (value: unknown): value is string | undefined =>
+  value === undefined || (isString(value) && SUBMISSION_STATUSES.has(value));
+
+/**
+ * Whether a value is a bounded list of bounded warning strings, or absent.
+ *
+ * @param value - The value to test.
+ * @returns True for undefined or a conforming array.
+ */
+const isOptionalWarnings = (value: unknown): value is string[] | undefined =>
+  value === undefined ||
+  (Array.isArray(value) &&
+    value.length <= MAX_WARNINGS &&
+    value.every(
+      (entry) => isString(entry) && entry.length <= MAX_WARNING_LENGTH,
+    ));
 
 /**
  * The passphrase and endpoints the snap can report for each network, pinned
@@ -112,7 +207,9 @@ const knownNetwork = (
  * @returns True when the shape matches.
  */
 export const isAddressResult = (value: unknown): value is GetAddressResult =>
-  isRecord(value) && isString(value.address);
+  // Empty is the documented "not connected" answer; anything else must be an
+  // account address.
+  isRecord(value) && (value.address === '' || isAccountAddress(value.address));
 
 /**
  * Validates a `getNetwork` result: a known network name carrying exactly
@@ -163,12 +260,11 @@ export const isSignTransactionResult = (
   value: unknown,
 ): value is SignTransactionResultWithWarnings =>
   isRecord(value) &&
-  isString(value.signedTxXdr) &&
-  isString(value.signerAddress) &&
-  isOptionalString(value.hash) &&
-  isOptionalString(value.status) &&
-  (value.warnings === undefined ||
-    (Array.isArray(value.warnings) && value.warnings.every(isString)));
+  isPayload(value.signedTxXdr) &&
+  isAccountAddress(value.signerAddress) &&
+  isOptionalHash(value.hash) &&
+  isOptionalStatus(value.status) &&
+  isOptionalWarnings(value.warnings);
 
 /**
  * Validates a `signAuthEntry` result.
@@ -180,8 +276,8 @@ export const isSignAuthEntryResult = (
   value: unknown,
 ): value is SignAuthEntryResult =>
   isRecord(value) &&
-  isString(value.signedAuthEntry) &&
-  isString(value.signerAddress);
+  isPayload(value.signedAuthEntry) &&
+  isAccountAddress(value.signerAddress);
 
 /**
  * Validates a `signMessage` result.
@@ -193,8 +289,8 @@ export const isSignMessageResult = (
   value: unknown,
 ): value is SignMessageResult =>
   isRecord(value) &&
-  isString(value.signedMessage) &&
-  isString(value.signerAddress);
+  isPayload(value.signedMessage) &&
+  isAccountAddress(value.signerAddress);
 
 /**
  * Validates one revealed-account entry.
@@ -207,7 +303,7 @@ const isAccountInfo = (value: unknown): boolean =>
   typeof value.index === 'number' &&
   Number.isInteger(value.index) &&
   value.index >= 0 &&
-  isString(value.address);
+  isAccountAddress(value.address);
 
 /**
  * Validates a `getAccounts` result.
@@ -241,7 +337,7 @@ export const isSetActiveAccountResult = (
  * @returns True when the shape matches.
  */
 export const isFundResult = (value: unknown): value is FundResult =>
-  isRecord(value) && value.funded === true && isString(value.address);
+  isRecord(value) && value.funded === true && isAccountAddress(value.address);
 
 /**
  * Validates one balance row.
@@ -257,14 +353,25 @@ export const isFundResult = (value: unknown): value is FundResult =>
  * @returns True when the shape matches.
  */
 const isBalanceLine = (value: unknown): boolean => {
-  if (!isRecord(value) || !isString(value.asset) || !isString(value.balance)) {
+  if (
+    !isRecord(value) ||
+    !isString(value.asset) ||
+    value.asset.length === 0 ||
+    value.asset.length > MAX_ASSET_LABEL_LENGTH ||
+    !isString(value.balance) ||
+    !DECIMAL_AMOUNT.test(value.balance)
+  ) {
     return false;
   }
   if (value.type === 'soroban') {
-    return isString(value.contractId);
+    return (
+      isString(value.contractId) && CONTRACT_ADDRESS.test(value.contractId)
+    );
   }
   return (
-    (value.type === 'native' || value.type === 'classic') &&
+    (value.type === 'native' ||
+      value.type === 'classic' ||
+      value.type === 'pool') &&
     value.contractId === undefined
   );
 };
@@ -277,9 +384,10 @@ const isBalanceLine = (value: unknown): boolean => {
  */
 export const isBalancesResult = (value: unknown): value is BalancesResult =>
   isRecord(value) &&
-  isString(value.address) &&
+  isAccountAddress(value.address) &&
   typeof value.funded === 'boolean' &&
-  (value.sequence === null || isString(value.sequence)) &&
+  (value.sequence === null ||
+    (isString(value.sequence) && /^\d{1,30}$/u.test(value.sequence))) &&
   Array.isArray(value.balances) &&
   value.balances.every(isBalanceLine) &&
   // Absent or exactly `true`. Admitting `false` would give each flag two
@@ -297,6 +405,39 @@ export const isBalancesResult = (value: unknown): value is BalancesResult =>
 export const isAddTokenResult = (value: unknown): value is AddTokenResult =>
   isRecord(value) &&
   isString(value.contractId) &&
+  CONTRACT_ADDRESS.test(value.contractId) &&
   isString(value.symbol) &&
+  value.symbol.length > 0 &&
+  value.symbol.length <= MAX_SYMBOL_LENGTH &&
   typeof value.decimals === 'number' &&
-  Number.isInteger(value.decimals);
+  Number.isInteger(value.decimals) &&
+  value.decimals >= 0 &&
+  value.decimals <= MAX_DECIMALS;
+
+/**
+ * Bounds the recovery fields an error may carry (`snap.ts` copies them from
+ * the upstream error's `data`). The same shapes as the success results: a
+ * field that does not fit is dropped on its own, so a malformed `status`
+ * cannot take the signed envelope down with it.
+ *
+ * @param key - The recovery field name.
+ * @param value - The raw value.
+ * @returns True when the value has the field's documented shape.
+ */
+export const isRecoveryField = (
+  key: 'signedTxXdr' | 'signerAddress' | 'hash' | 'status',
+  value: unknown,
+): value is string => {
+  switch (key) {
+    case 'signedTxXdr':
+      return isPayload(value);
+    case 'signerAddress':
+      return isAccountAddress(value);
+    case 'hash':
+      return isString(value) && TRANSACTION_HASH.test(value);
+    case 'status':
+      return isString(value) && SUBMISSION_STATUSES.has(value);
+    default:
+      return false;
+  }
+};

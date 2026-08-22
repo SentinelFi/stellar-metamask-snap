@@ -27,6 +27,7 @@ import {
   isGetAccountsResult,
   isNetworkDetailsResult,
   isNetworkResult,
+  isRecoveryField,
   isSetActiveAccountResult,
   isSignAuthEntryResult,
   isSignMessageResult,
@@ -140,7 +141,11 @@ function toStellarSnapError(error: unknown): StellarSnapError {
   // MetaMask's own connect rejection (EIP-1193 4001) is a user rejection.
   const normalized = raw?.code === 4001 ? SEP43_ERROR_CODES.userRejected : code;
   // Preserve post-approval recovery data (signed envelope, hash, status) so a
-  // caller can poll or retry after an ambiguous submission failure.
+  // caller can poll or retry after an ambiguous submission failure. Each
+  // field is shape-checked like the success results are, and a field that
+  // does not fit is dropped on its own rather than taking the others with
+  // it: the `message` below is bounded, and text a dapp renders from
+  // `error.data` must be no less so.
   const data: StellarSnapErrorData = {};
   for (const key of [
     'signedTxXdr',
@@ -149,7 +154,7 @@ function toStellarSnapError(error: unknown): StellarSnapError {
     'status',
   ] as const) {
     const value = raw?.data?.[key];
-    if (typeof value === 'string') {
+    if (isRecoveryField(key, value)) {
       data[key] = value;
     }
   }
@@ -577,6 +582,13 @@ export class StellarSnap {
    * changes wallet state, or discloses wallet data is noise, and a
    * mid-session update fails closed with the same version-mismatch error
    * `connect()` throws.
+   *
+   * The check and the invocation are two provider requests, not one.
+   * `wallet_invokeSnap` carries no version parameter, so a snap the user
+   * updates in the instant between the `wallet_getSnaps` read settling and
+   * the invocation being dispatched is the release that answers. That is the
+   * shape of MetaMask's API rather than a gap in this client's ordering:
+   * every check here is as fresh as a separate read can be, and no fresher.
    *
    * @param method - The snap method name.
    * @param params - Optional params object.

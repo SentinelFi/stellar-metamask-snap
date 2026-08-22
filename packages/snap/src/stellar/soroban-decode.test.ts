@@ -704,3 +704,71 @@ describe('findUndisplayableAuthEntry', () => {
     expect(findUndisplayableAuthEntry([])).toBeNull();
   });
 });
+
+describe('text fields whose signed bytes are not clean UTF-8', () => {
+  /** Two byte strings that decode to the same replacement-bearing text. */
+  const FIRST = Buffer.from([0xff, 0x41]);
+  const SECOND = Buffer.from([0xfe, 0x41]);
+
+  it('renders an ScString from its bytes, as hex, rather than lossily', () => {
+    // A UTF-8 reading replaces every invalid sequence with U+FFFD, so two
+    // different signed arguments would display identically. Hex is lossless
+    // and cannot be mistaken for text.
+    expect(formatScVal(xdr.ScVal.scvString(FIRST))).toBe('str(hex:ff41)');
+    expect(formatScVal(xdr.ScVal.scvString(SECOND))).toBe('str(hex:fe41)');
+    expect(formatScVal(xdr.ScVal.scvString(FIRST))).not.toBe(
+      formatScVal(xdr.ScVal.scvString(SECOND)),
+    );
+  });
+
+  it('renders a symbol and a function name the same way', () => {
+    expect(formatScVal(xdr.ScVal.scvSymbol(FIRST))).toBe('sym(hex:ff41)');
+
+    const invoke = xdr.HostFunction.hostFunctionTypeInvokeContract(
+      new xdr.InvokeContractArgs({
+        contractAddress: new Address(CONTRACT).toScAddress(),
+        functionName: FIRST,
+        args: [],
+      }),
+    );
+    const decoded = decodeHostFunction(invoke);
+    expect(decoded.functionName).toBe('hex:ff41');
+    expect(decoded.truncated).toBe(false);
+
+    const entry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function:
+          xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+            new xdr.InvokeContractArgs({
+              contractAddress: new Address(CONTRACT).toScAddress(),
+              functionName: SECOND,
+              args: [],
+            }),
+          ),
+        subInvocations: [],
+      }),
+    });
+    expect(summarizeAuthEntries([entry]).join('\n')).toContain(
+      `${CONTRACT}.hex:fe41(`,
+    );
+  });
+
+  it('keeps rendering clean text as text', () => {
+    expect(formatScVal(xdr.ScVal.scvString(Buffer.from('plain')))).toBe(
+      'str("plain")',
+    );
+    expect(formatScVal(xdr.ScVal.scvSymbol(Buffer.from('transfer')))).toBe(
+      'sym(transfer)',
+    );
+  });
+
+  it('bounds a long non-UTF-8 string and marks the cut', () => {
+    const long = Buffer.alloc(300, 0xff);
+    const rendered = formatScVal(xdr.ScVal.scvString(long));
+    expect(rendered).toContain('+44 bytes');
+    const flags = { truncated: false };
+    formatScVal(xdr.ScVal.scvString(long), 0, flags);
+    expect(flags.truncated).toBe(true);
+  });
+});

@@ -141,23 +141,29 @@ async function rpcCall<Type, Schema>(
     result?: unknown;
     error?: { message?: string };
   } | null;
+  // The id is checked before anything else in the body is believed, error
+  // member included: a body answering some other request is not this call's
+  // reply, and its error text has no more business reaching the dialog than
+  // its result would.
   if (
     envelope === null ||
     typeof envelope !== 'object' ||
-    envelope.error ||
-    envelope.result === undefined
+    envelope.id !== RPC_REQUEST_ID
   ) {
+    throw externalServiceError(`Malformed Stellar RPC response (${method}).`);
+  }
+  if (envelope.error || envelope.result === undefined) {
     throw externalServiceError(
       // The endpoint's message is untrusted display text: strip control and
       // direction-altering characters before it can reach an error surface.
       `Stellar RPC error: ${
-        typeof envelope?.error?.message === 'string'
+        typeof envelope.error?.message === 'string'
           ? sanitizeInlineText(envelope.error.message).slice(0, 200)
           : 'empty result'
       }.`,
     );
   }
-  if (envelope.id !== RPC_REQUEST_ID || !is(envelope.result, resultStruct)) {
+  if (!is(envelope.result, resultStruct)) {
     throw externalServiceError(`Malformed Stellar RPC response (${method}).`);
   }
   return envelope.result;

@@ -3,6 +3,7 @@ export * from './snap';
 export * from './theme';
 export * from './localStorage';
 export * from './button';
+export * from './errors';
 export * from './format';
 export * from './handle';
 export * from './horizon';

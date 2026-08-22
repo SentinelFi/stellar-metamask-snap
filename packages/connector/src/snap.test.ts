@@ -9,6 +9,7 @@ import { StellarSnapError } from './types';
 const SNAP_ID = 'npm:stellar-soroban-snap';
 const LOCAL_SNAP_ID = 'local:http://localhost:8080';
 const ADDRESS = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
+const CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 
 type RecordedRequest = { method: string; params?: unknown };
 
@@ -467,7 +468,7 @@ describe('StellarSnap', () => {
         sequence: '1',
         balances: [{ asset: 'XLM', balance: '10.0000000', type: 'native' }],
       },
-      addToken: { contractId: 'CABC', symbol: 'USDC', decimals: 7 },
+      addToken: { contractId: CONTRACT, symbol: 'USDC', decimals: 7 },
       signAuthEntry: { signedAuthEntry: 'AAAA', signerAddress: ADDRESS },
     });
     const snap = new StellarSnap({ provider });
@@ -482,7 +483,7 @@ describe('StellarSnap', () => {
       address: ADDRESS,
     });
     expect((await snap.getBalances()).funded).toBe(true);
-    expect((await snap.addToken('CABC', 'Test SDF')).symbol).toBe('USDC');
+    expect((await snap.addToken(CONTRACT, 'Test SDF')).symbol).toBe('USDC');
     expect((await snap.signAuthEntry('AAAA')).signedAuthEntry).toBe('AAAA');
   });
 

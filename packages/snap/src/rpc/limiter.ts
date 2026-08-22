@@ -122,6 +122,12 @@ export const RATE_LIMITS: ReadonlyMap<
   ['getNetworkDetails', { limit: 120, windowMs: 60_000 }],
   ['getAccounts', { limit: 60, windowMs: 60_000 }],
   ['requestAccess', { limit: 30, windowMs: 60_000 }],
+  // Dialog-bearing, but each has a silent success path (the target network
+  // or account is already the active one) that the dialog throttle never
+  // sees, and every call, silent or not, costs the grant check's public-key
+  // fetch and two state decrypts. Same margin reasoning as `requestAccess`.
+  ['setNetwork', { limit: 30, windowMs: 60_000 }],
+  ['setActiveAccount', { limit: 30, windowMs: 60_000 }],
 ]);
 
 /**

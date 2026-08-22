@@ -12,6 +12,17 @@ import {
 } from '.';
 
 /**
+ * The SLIP-10 path node for the account index a `snap_getBip32PublicKey`
+ * request names (`m/44'/148'/<index>'`), typed the way key-tree wants it.
+ *
+ * @param path - The requested BIP-32 path.
+ * @returns The hardened account node.
+ */
+function accountPathNode(path: string[]): `slip10:${number}'` {
+  return `slip10:${path[3] ?? ''}` as `slip10:${number}'`;
+}
+
+/**
  * Resolves an address straight to a signing keypair, the way the signing
  * handlers do either side of their confirmation dialog.
  *
@@ -52,7 +63,10 @@ const FOREIGN_ADDRESS = Keypair.fromRawEd25519Seed(
 
 describe('key derivation', () => {
   let stored: unknown;
+  /** `snap_getBip32Entropy` calls: the private subtree crossing the boundary. */
   let entropyRequests: number;
+  /** `snap_getBip32PublicKey` calls: public keys only. */
+  let publicKeyRequests: number;
 
   beforeEach(async () => {
     const entropy = await SLIP10Node.fromDerivationPath({
@@ -61,6 +75,7 @@ describe('key derivation', () => {
     });
     resetAddressCache();
     entropyRequests = 0;
+    publicKeyRequests = 0;
     stored = {
       version: 2,
       network: 'TESTNET',
@@ -72,7 +87,7 @@ describe('key derivation', () => {
     (globalThis as { snap?: unknown }).snap = {
       request: async (args: {
         method: string;
-        params: { operation?: string; newState?: unknown };
+        params: { operation?: string; newState?: unknown; path?: string[] };
       }) => {
         await Promise.resolve();
         switch (args.method) {
@@ -85,6 +100,15 @@ describe('key derivation', () => {
           case 'snap_getBip32Entropy':
             entropyRequests += 1;
             return entropy.toJSON();
+          case 'snap_getBip32PublicKey': {
+            publicKeyRequests += 1;
+            const path = args.params.path ?? [];
+            const node =
+              path.length === 3
+                ? entropy
+                : await entropy.derive([accountPathNode(path)]);
+            return node.publicKey;
+          }
           default:
             throw new Error(`Unexpected method: ${args.method}`);
         }
@@ -162,14 +186,14 @@ describe('key derivation', () => {
     it('performs no derivation sweep for a repeated unowned address', async () => {
       // An origin can submit a valid-looking address the wallet does not hold
       // before any dialog or throttle applies. Resolution must not sweep and
-      // derive every revealed account each time it does: each repeat may cost
-      // exactly one parent-node fetch (which is how a changed secret recovery
-      // phrase is noticed before state is read), never one per revealed
-      // account.
+      // fetch every revealed account each time it does: each repeat may cost
+      // exactly one public-key request (the observation that notices a
+      // changed secret recovery phrase before state is read), never one per
+      // revealed account, and never private material.
       await expect(resolveSigningKeypair(FOREIGN_ADDRESS)).rejects.toThrow(
         'Unknown address',
       );
-      const afterFirst = entropyRequests;
+      const afterFirst = publicKeyRequests;
 
       const attempts = 20;
       for (let attempt = 0; attempt < attempts; attempt++) {
@@ -177,18 +201,25 @@ describe('key derivation', () => {
           'Unknown address',
         );
       }
-      expect(entropyRequests).toBe(afterFirst + attempts);
+      expect(publicKeyRequests).toBe(afterFirst + attempts);
+      expect(entropyRequests).toBe(0);
     });
 
-    it('derives the entropy node once per resolution', async () => {
-      // Each `snap_getBip32Entropy` call crosses the sandbox boundary with
-      // the SEP-5 parent node. Resolving an address must not repeat that per
-      // candidate index: with 256 revealed accounts, a single unmatched
-      // request would otherwise pull the parent node 256 times before any
-      // dialog is shown.
+    it('imports no private material to resolve an address', async () => {
+      // Resolution works from public keys: one observation of the phrase,
+      // one key per revealed index, and one confirming observation after
+      // the batch. The private subtree crosses the sandbox boundary only to
+      // sign, which an unmatched request never reaches.
       await expect(resolveSigningKeypair(FOREIGN_ADDRESS)).rejects.toThrow(
         'Unknown address',
       );
+      expect(entropyRequests).toBe(0);
+      expect(publicKeyRequests).toBe(1 + 3 + 1);
+    });
+
+    it('fetches the private subtree exactly once, to sign', async () => {
+      const { keypair } = await resolveSigningKeypair(SEP5_ADDRESS_1);
+      expect(keypair.publicKey()).toBe(SEP5_ADDRESS_1);
       expect(entropyRequests).toBe(1);
     });
   });
@@ -204,14 +235,16 @@ describe('key derivation', () => {
       ]);
     });
 
-    it('derives the entropy node once for the whole set', async () => {
+    it('fetches one public key per uncached index and no private material', async () => {
       // Called on every home-page render and by fund/getBalances/getAccounts.
-      // The binding's own fetch derives the active account; resolving the
-      // rest of the set then costs one more fetch, not one per index.
+      // The binding resolves the active account; the rest of the set then
+      // costs one public-key request per remaining index plus the confirming
+      // observation, and the private subtree is never imported.
       const binding = await ensureEntropyBinding();
-      const afterBinding = entropyRequests;
+      const afterBinding = publicKeyRequests;
       await getOwnedAccounts(binding);
-      expect(entropyRequests).toBe(afterBinding + 1);
+      expect(publicKeyRequests).toBe(afterBinding + 2 + 1);
+      expect(entropyRequests).toBe(0);
     });
   });
 

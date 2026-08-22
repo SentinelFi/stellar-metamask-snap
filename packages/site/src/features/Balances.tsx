@@ -34,6 +34,7 @@ const KIND_LABEL = {
   native: 'Native',
   classic: 'Classic',
   soroban: 'Soroban token',
+  pool: 'Pool shares',
 } as const;
 
 /**

@@ -12,8 +12,11 @@ set -e
 
 staged=$(git diff --cached --name-only)
 
+# The lockfile, the root package.json (its `resolutions` floor dependency
+# versions), and the Node pin all change the emitted bundle too, so a
+# dependency bump must rebuild just as a source change does.
 affects_bundle=$(printf '%s\n' "$staged" \
-  | grep -E '^packages/snap/(src/|snap\.config\.ts|package\.json|images/)' \
+  | grep -E '^(packages/snap/(src/|snap\.config\.ts|package\.json|images/)|yarn\.lock$|package\.json$|\.nvmrc$)' \
   | grep -vE '\.test\.tsx?$' || true)
 
 if [ -n "$affects_bundle" ]; then

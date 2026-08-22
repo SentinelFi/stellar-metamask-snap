@@ -14,6 +14,7 @@ import {
   isSignTransactionResult,
 } from './validate';
 
+const CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 const ADDRESS = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
 
 describe('isAddressResult', () => {
@@ -106,7 +107,7 @@ describe('signing results', () => {
     expect(
       isSignTransactionResult({
         ...base,
-        hash: 'abc',
+        hash: 'a'.repeat(64),
         status: 'PENDING',
         warnings: ['careful'],
       }),
@@ -220,25 +221,25 @@ describe('funding and balances', () => {
     expect(
       isBalancesResult(
         row({
-          asset: 'USDC:CABC',
+          asset: `USDC:${CONTRACT}`,
           balance: '1',
           type: 'soroban',
-          contractId: 'CABC',
+          contractId: CONTRACT,
         }),
       ),
     ).toBe(true);
     expect(
       isBalancesResult(
-        row({ asset: 'USDC:CABC', balance: '1', type: 'soroban' }),
+        row({ asset: `USDC:${CONTRACT}`, balance: '1', type: 'soroban' }),
       ),
     ).toBe(false);
     expect(
       isBalancesResult(
         row({
-          asset: 'USDC:GABC',
+          asset: `USDC:${ADDRESS}`,
           balance: '1',
           type: 'classic',
-          contractId: 'CABC',
+          contractId: CONTRACT,
         }),
       ),
     ).toBe(false);
@@ -247,10 +248,10 @@ describe('funding and balances', () => {
 
 describe('isAddTokenResult', () => {
   it('validates token metadata', () => {
-    const base = { contractId: 'CABC', symbol: 'USDC', decimals: 7 };
+    const base = { contractId: CONTRACT, symbol: 'USDC', decimals: 7 };
     expect(isAddTokenResult(base)).toBe(true);
     expect(isAddTokenResult({ ...base, decimals: 7.5 })).toBe(false);
     expect(isAddTokenResult({ ...base, symbol: 7 })).toBe(false);
-    expect(isAddTokenResult({ contractId: 'CABC' })).toBe(false);
+    expect(isAddTokenResult({ contractId: CONTRACT })).toBe(false);
   });
 });

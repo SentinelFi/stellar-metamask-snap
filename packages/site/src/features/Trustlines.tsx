@@ -70,20 +70,35 @@ export const Trustlines = () => {
       return;
     }
 
-    const envelope = newBuilder(
-      address,
-      balances.sequence,
-      network.networkPassphrase,
-    )
-      .addOperation(
-        Operation.changeTrust({
-          asset,
-          ...(trustLimit === undefined ? {} : { limit: trustLimit }),
-        }),
+    // The `handle()` wrapper this action runs under drops the returned
+    // promise, so a throw while assembling the envelope (a balance row whose
+    // issuer the SDK refuses, a sequence it cannot parse) would make the
+    // button silently do nothing. Converted into a visible problem instead,
+    // exactly as the send form does.
+    let envelope: string;
+    try {
+      envelope = newBuilder(
+        address,
+        balances.sequence,
+        network.networkPassphrase,
       )
-      .setTimeout(TX_TIMEOUT_SECONDS)
-      .build()
-      .toXDR();
+        .addOperation(
+          Operation.changeTrust({
+            asset,
+            ...(trustLimit === undefined ? {} : { limit: trustLimit }),
+          }),
+        )
+        .setTimeout(TX_TIMEOUT_SECONDS)
+        .build()
+        .toXDR();
+    } catch (error) {
+      setProblem(
+        error instanceof Error
+          ? error.message
+          : 'Could not build the trustline transaction.',
+      );
+      return;
+    }
 
     const result = await run(async (client) =>
       client.signTransaction(envelope, {

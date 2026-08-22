@@ -315,3 +315,75 @@ describe('requestFriendbot', () => {
     ).rejects.toThrow('already be funded');
   });
 });
+
+describe('account checks body shape', () => {
+  it('treats a 200 without signers and thresholds as unchecked', async () => {
+    // Horizon always returns both for an account that exists. A body without
+    // them (an intermediary answering with some other JSON object) must not
+    // parse into an account with no signers and no thresholds that silently
+    // passes the weight check; it degrades to null, which the safety layer
+    // discloses as a check that did not run.
+    mockFetch(mockResponse({}));
+    expect(await getAccountChecks(HORIZON, ADDRESS)).toBeNull();
+
+    mockFetch(mockResponse({ signers: [] }));
+    expect(await getAccountChecks(HORIZON, ADDRESS)).toBeNull();
+  });
+});
+
+describe('balance row shapes', () => {
+  it('renders liquidity-pool shares under their own kind', async () => {
+    const poolId = 'a'.repeat(64);
+    mockFetch(
+      mockResponse({
+        sequence: '1',
+        balances: [
+          {
+            asset_type: 'liquidity_pool_shares',
+            liquidity_pool_id: poolId,
+            balance: '5.0000000',
+          },
+        ],
+      }),
+    );
+    expect((await getAccountSummary(HORIZON, ADDRESS)).balances).toStrictEqual([
+      { asset: `Pool shares:${poolId}`, balance: '5.0000000', type: 'pool' },
+    ]);
+  });
+
+  it('refuses an issued-asset row that does not identify its asset', async () => {
+    // Validated at the boundary rather than labelled with placeholders: a
+    // `credit_alphanum4` row without a code or issuer names no asset.
+    mockFetch(
+      mockResponse({
+        sequence: '1',
+        balances: [{ asset_type: 'credit_alphanum4', balance: '2.0000000' }],
+      }),
+    );
+    await expect(getAccountSummary(HORIZON, ADDRESS)).rejects.toThrow(
+      'Malformed Horizon account response.',
+    );
+  });
+
+  it('refuses a pool-share row without a pool and an unknown asset type', async () => {
+    mockFetch(
+      mockResponse({
+        sequence: '1',
+        balances: [{ asset_type: 'liquidity_pool_shares', balance: '1.0' }],
+      }),
+    );
+    await expect(getAccountSummary(HORIZON, ADDRESS)).rejects.toThrow(
+      'Malformed Horizon account response.',
+    );
+
+    mockFetch(
+      mockResponse({
+        sequence: '1',
+        balances: [{ asset_type: 'something_new', balance: '1.0' }],
+      }),
+    );
+    await expect(getAccountSummary(HORIZON, ADDRESS)).rejects.toThrow(
+      'Malformed Horizon account response.',
+    );
+  });
+});

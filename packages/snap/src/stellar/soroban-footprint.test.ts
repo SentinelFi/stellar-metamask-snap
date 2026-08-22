@@ -176,3 +176,53 @@ describe('getSorobanData', () => {
     expect(summarizeFootprint(extracted)?.lines.join('\n')).toContain(CONTRACT);
   });
 });
+
+describe('Soroban data extension', () => {
+  it('lists the read-write entries a transaction auto-restores', () => {
+    // The extension is signed too: version 1 names read-write entries the
+    // transaction restores from the archive before it runs. A section that
+    // claims to show the accessed data in full must carry that list.
+    const data = new xdr.SorobanTransactionData({
+      ext: new xdr.SorobanTransactionDataExt(
+        1,
+        new xdr.SorobanResourcesExtV0({ archivedSorobanEntries: [0, 2] }),
+      ),
+      resources: new xdr.SorobanResources({
+        footprint: new xdr.LedgerFootprint({
+          readOnly: [],
+          readWrite: [
+            contractDataKey(xdr.ScVal.scvU32(1)),
+            contractDataKey(xdr.ScVal.scvU32(2)),
+            contractDataKey(xdr.ScVal.scvU32(3)),
+          ],
+        }),
+        instructions: 1,
+        diskReadBytes: 2,
+        writeBytes: 3,
+      }),
+      resourceFee: xdr.Int64.fromString('100'),
+    });
+    const summary = summarizeFootprint(data);
+    expect(summary?.truncated).toBe(false);
+    expect(summary?.lines).toContain('Auto-restore: read-write entries #1, #3');
+  });
+
+  it('says nothing about restores when the extension is empty', () => {
+    const data = new xdr.SorobanTransactionData({
+      ext: new xdr.SorobanTransactionDataExt(0),
+      resources: new xdr.SorobanResources({
+        footprint: new xdr.LedgerFootprint({
+          readOnly: [contractDataKey()],
+          readWrite: [],
+        }),
+        instructions: 1,
+        diskReadBytes: 2,
+        writeBytes: 3,
+      }),
+      resourceFee: xdr.Int64.fromString('100'),
+    });
+    const summary = summarizeFootprint(data);
+    expect(summary?.truncated).toBe(false);
+    expect(summary?.lines.join('\n')).not.toContain('Auto-restore');
+  });
+});

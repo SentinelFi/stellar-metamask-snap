@@ -1,4 +1,11 @@
-import { beforeEach, describe, expect, it } from '@jest/globals';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
 
 import {
   assertRateAllowed,
@@ -362,5 +369,63 @@ describe('withInflightBudget', () => {
       resolve();
     }
     await Promise.all(held);
+  });
+});
+
+describe('dialog-bearing methods with silent success paths', () => {
+  beforeEach(() => {
+    resetRequestLimits();
+  });
+
+  it.each(['setNetwork', 'setActiveAccount'])(
+    'throttles %s once its window limit is reached',
+    (method) => {
+      // Both have a no-dialog success path (the target is already active)
+      // that the dialog throttle never sees, and every call costs the grant
+      // check's key request and two state decrypts.
+      const { limit } = RATE_LIMITS.get(method) as { limit: number };
+      for (let index = 0; index < limit; index += 1) {
+        expect(() => assertRateAllowed(ORIGIN, method)).not.toThrow();
+      }
+      expect(() => assertRateAllowed(ORIGIN, method)).toThrow(
+        `Too many ${method} requests`,
+      );
+    },
+  );
+});
+
+describe('sliding window expiry', () => {
+  beforeEach(() => {
+    resetRequestLimits();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('admits the origin again once its window has elapsed', () => {
+    let now = 1_000_000;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    const { limit, windowMs } = RATE_LIMITS.get('fund') as {
+      limit: number;
+      windowMs: number;
+    };
+    for (let index = 0; index < limit; index += 1) {
+      assertRateAllowed(ORIGIN, 'fund');
+    }
+    expect(() => assertRateAllowed(ORIGIN, 'fund')).toThrow('Too many fund');
+
+    // Just inside the window: still refused.
+    now += windowMs - 1;
+    expect(() => assertRateAllowed(ORIGIN, 'fund')).toThrow('Too many fund');
+
+    // The window has elapsed: every request above was recorded at the same
+    // instant, so they age out together and the full allowance returns,
+    // and not one call more.
+    now += 1;
+    for (let index = 0; index < limit; index += 1) {
+      expect(() => assertRateAllowed(ORIGIN, 'fund')).not.toThrow();
+    }
+    expect(() => assertRateAllowed(ORIGIN, 'fund')).toThrow('Too many fund');
   });
 });

@@ -96,6 +96,8 @@ Switches the wallet's active account. Requires a grant, and the index must alrea
 
 Adds `networkUrl` (Horizon) and `sorobanRpcUrl` to the above. These are the endpoints the wallet itself uses; a dapp reading the ledger directly should read from the same ones, or it may show a user state from a network their wallet is not on. The connector validates every network result against the pinned per-network constants (passphrase and both URLs), so a response carrying any other value, whatever answered the provider request, is rejected rather than handed to dapp code.
 
+Every other typed result is shape-checked the same way before dapp code receives it: addresses must be `G...` strkeys and contract IDs `C...` strkeys, hashes 64 hex characters, signed payloads bounded base64, statuses one of the Soroban RPC's values, balances decimal strings, warnings a short list of short strings, and token metadata bounded. The recovery fields an error can carry (`signedTxXdr`, `signerAddress`, `hash`, `status`) take the same checks field by field, and a field that does not fit is dropped on its own. A value outside those shapes did not come from the pinned snap release.
+
 ### `setNetwork(network: NetworkName): Promise<NetworkDetailsResult>`
 
 Switches the wallet-global network, dialog-confirmed. `NetworkName` is `'PUBLIC' | 'TESTNET' | 'FUTURENET'`.
@@ -163,14 +165,14 @@ type BalancesResult = {
 };
 
 type BalanceLine = {
-  asset: string; // 'XLM' | 'CODE:ISSUER' | 'SYMBOL:CONTRACT_ID'
+  asset: string; // 'XLM' | 'CODE:ISSUER' | 'SYMBOL:CONTRACT_ID' | 'Pool shares:POOL_ID'
   balance: string;
-  type: 'native' | 'classic' | 'soroban';
+  type: 'native' | 'classic' | 'soroban' | 'pool';
   contractId?: string;
 };
 ```
 
-**Branch on `type`, never on parsing `asset`.** A classic asset renders as `CODE:ISSUER` and a tracked Soroban token as `SYMBOL:CONTRACT_ID`, so the two strings are the same shape, and a token's symbol is chosen by whoever wrote its contract. A contract the user was persuaded to track can call itself `USDC`, and a caller splitting on `:` will display exactly that.
+**Branch on `type`, never on parsing `asset`.** A classic asset renders as `CODE:ISSUER` and a tracked Soroban token as `SYMBOL:CONTRACT_ID`, so the two strings are the same shape, and a token's symbol is chosen by whoever wrote its contract. A contract the user was persuaded to track can call itself `USDC`, and a caller splitting on `:` will display exactly that. Liquidity-pool shares are their own kind, `pool`, labelled by pool ID; they are not payable with a classic `payment` and never carry a `contractId`.
 
 `tokensUnavailable` means the wallet skipped its tracked-token reads because its token-read budget was exhausted. Read it as "token rows are missing", never as "this account holds none of them": a total that ignores the difference is wrong, and so is a UI that concludes a token is absent.
 

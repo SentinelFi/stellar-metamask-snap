@@ -220,17 +220,40 @@ describe('readTokenBalance return-type guard', () => {
     ).toBeNull();
   });
 
-  it('accepts the number and digit-string shapes a balance may decode to', async () => {
-    // scValToNative yields a plain number for 32-bit values, and the narrow
-    // integer-string form is allowed on the same grounds; both must format at
-    // the token's precision like the common bigint shape.
+  it('accepts the number shape a small balance may decode to', async () => {
+    // scValToNative yields a plain number for 32-bit values; it must format
+    // at the token's precision like the common bigint shape.
     mockBalance(nativeToScVal(5, { type: 'u32' }));
     expect(await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7)).toBe(
       '0.0000005',
     );
+  });
+
+  it('refuses a digit string, which no real balance decodes to', async () => {
+    // A string of digits is not a shape `balance()` ever returns, and
+    // accepting one handed the contract an unbounded integer to parse and
+    // format on every read: a 700,000-digit "balance" fits the response cap.
     mockBalance(xdr.ScVal.scvString('123'));
-    expect(await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7)).toBe(
-      '0.0000123',
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
+    ).toBeNull();
+    mockBalance(xdr.ScVal.scvString('9'.repeat(100_000)));
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
+    ).toBeNull();
+  });
+
+  it('refuses an integer outside the i128 range a balance is defined in', async () => {
+    // A contract answering `balance()` with a u256 is not reporting a
+    // balance; the wider variants are refused like any other wrong shape,
+    // while the i128 extremes themselves are accepted.
+    mockBalance(nativeToScVal(2n ** 200n, { type: 'u256' }));
+    expect(
+      await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 0),
+    ).toBeNull();
+    mockBalance(nativeToScVal(2n ** 127n - 1n, { type: 'i128' }));
+    expect(await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 0)).toBe(
+      (2n ** 127n - 1n).toString(),
     );
   });
 
@@ -254,5 +277,21 @@ describe('readTokenBalance return-type guard', () => {
     expect(
       await readTokenBalance(NETWORKS.TESTNET, CONTRACT, ADDRESS, 7),
     ).toBeNull();
+  });
+});
+
+describe('token symbol alphabet', () => {
+  it('refuses punctuation a renderer could read as markup or a path', () => {
+    expect(sanitizeTokenMetadata('USDC', 7)).toStrictEqual({
+      symbol: 'USDC',
+      decimals: 7,
+    });
+    expect(sanitizeTokenMetadata('wBTC.v2_1-x', 8)).toStrictEqual({
+      symbol: 'wBTC.v2_1-x',
+      decimals: 8,
+    });
+    for (const symbol of ['*USD*', '`XLM`', 'a/b', '[x]', '~x~', 'G:1']) {
+      expect(sanitizeTokenMetadata(symbol, 7)).toBeNull();
+    }
   });
 });

@@ -221,3 +221,22 @@ describe('simulateTransaction', () => {
     );
   });
 });
+
+describe('envelope id on error responses', () => {
+  it('refuses an error envelope that answers some other request', async () => {
+    // The id is checked before anything else in the body is believed, the
+    // error member included: a body answering another request is not this
+    // call's reply, and its error text has no more business reaching a
+    // dialog than its result would.
+    mockFetch(
+      mockResponse({
+        jsonrpc: '2.0',
+        id: 2,
+        error: { message: 'a failure that belongs to someone else' },
+      }),
+    );
+    await expect(getLatestLedger(RPC)).rejects.toThrow(
+      'Malformed Stellar RPC response (getLatestLedger).',
+    );
+  });
+});

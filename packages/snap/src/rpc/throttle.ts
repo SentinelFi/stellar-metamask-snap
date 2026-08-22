@@ -54,7 +54,7 @@ export const COOLDOWN_MS = 30_000;
  * the origin currently making requests at the most-recently-used end, where
  * it cannot be evicted.
  */
-const MAX_TRACKED_ORIGINS = 100;
+export const MAX_TRACKED_ORIGINS = 100;
 
 type ThrottleEntry = {
   /** Consecutive rejections since the last approval or expired cooldown. */

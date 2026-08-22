@@ -82,8 +82,15 @@ export type TokenMetadata = { symbol: string; decimals: number };
  */
 export const MAX_TOKEN_DECIMALS = 38;
 
-/** Symbols must be short printable ASCII — no control/bidi spoofing chars. */
-const SYMBOL_PATTERN = /^[!-~]{1,12}$/u;
+/**
+ * Symbols must be short and drawn from an alphabet that cannot carry markup
+ * or spoofing characters: letters, digits, dot, underscore, and hyphen. Every
+ * real SEP-41 symbol fits; what the wider printable-ASCII range would have
+ * admitted is punctuation such as `*`, `_` pairs, and backticks, which a
+ * markdown-aware renderer could read as emphasis, and brackets and slashes
+ * that let a symbol imitate a path or an address.
+ */
+const SYMBOL_PATTERN = /^[A-Za-z0-9._-]{1,12}$/u;
 
 /**
  * Validates contract-reported token metadata. The contract is chosen by the
@@ -206,26 +213,35 @@ export async function readTokenBalance(
   return formatTokenAmount(value, decimals);
 }
 
+/** The signed 128-bit range a SEP-41 `balance()` is defined to return. */
+const I128_MAX = 2n ** 127n - 1n;
+const I128_MIN = -(2n ** 127n);
+
 /**
  * Narrows a decoded contract return value to the integer a token balance is
- * allowed to be: a bigint, a safe integer number, or a string of digits with
- * an optional sign. Everything else (booleans, floats, objects, strings that
- * merely coerce) is rejected rather than coerced.
+ * allowed to be: a bigint or a safe-integer number (the shapes `scValToNative`
+ * produces for the integer ScVal variants), within the `i128` range a SEP-41
+ * balance is defined in. Everything else is rejected rather than coerced:
+ * booleans, floats, objects, and strings, including a string of digits. A
+ * digit string is not a shape a real balance ever decodes to, and accepting
+ * one handed the contract (or the endpoint answering for it) an unbounded
+ * integer to parse, divide, and render on every balance read. The range
+ * check refuses the wider `u256`/`i256` variants the same way: a contract
+ * answering `balance()` with one is not reporting a balance.
  *
  * @param raw - The natively decoded return value.
  * @returns The balance as a bigint, or null when the value is not one.
  */
 function toBalanceBigInt(raw: unknown): bigint | null {
+  let value: bigint;
   if (typeof raw === 'bigint') {
-    return raw;
+    value = raw;
+  } else if (typeof raw === 'number' && Number.isSafeInteger(raw)) {
+    value = BigInt(raw);
+  } else {
+    return null;
   }
-  if (typeof raw === 'number') {
-    return Number.isSafeInteger(raw) ? BigInt(raw) : null;
-  }
-  if (typeof raw === 'string' && /^-?[0-9]+$/u.test(raw)) {
-    return BigInt(raw);
-  }
-  return null;
+  return value >= I128_MIN && value <= I128_MAX ? value : null;
 }
 
 /**

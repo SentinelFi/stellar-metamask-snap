@@ -94,6 +94,49 @@ export function formatSymbolName(name: string): string {
     : escapeHiddenCharacters(JSON.stringify(name));
 }
 
+/**
+ * The signed bytes of an XDR string or symbol field, whichever form the
+ * decoder handed back.
+ *
+ * @param raw - The field as decoded: a Buffer, or a string for a value the
+ * SDK built in memory.
+ * @returns The bytes.
+ */
+function fieldBytes(raw: string | Uint8Array): Buffer {
+  return typeof raw === 'string' ? Buffer.from(raw, 'utf8') : Buffer.from(raw);
+}
+
+/**
+ * Whether decoding the bytes as UTF-8 and encoding the result gives the same
+ * bytes back. When it does not, the text form has replaced something with
+ * U+FFFD and two different signed values could read identically.
+ *
+ * @param bytes - The signed bytes.
+ * @returns True when the UTF-8 reading is lossless.
+ */
+function isCleanUtf8(bytes: Buffer): boolean {
+  return Buffer.from(bytes.toString('utf8'), 'utf8').equals(bytes);
+}
+
+/**
+ * Renders a symbol or function-name field from its signed bytes. A Soroban
+ * `ScSymbol` is limited by the protocol to `[A-Za-z0-9_]`, but the XDR type is
+ * an arbitrary byte string, and the decoder's UTF-8 reading replaces every
+ * invalid sequence with U+FFFD. A name rendered from that reading could show
+ * the same text for different signed bytes, so bytes that do not survive the
+ * round trip are shown as hex instead: lossless, and impossible to mistake
+ * for an identifier.
+ *
+ * @param raw - The field as decoded.
+ * @returns The display string.
+ */
+export function formatSymbolBytes(raw: string | Uint8Array): string {
+  const bytes = fieldBytes(raw);
+  return isCleanUtf8(bytes)
+    ? formatSymbolName(bytes.toString('utf8'))
+    : `hex:${bytes.toString('hex')}`;
+}
+
 /** Mutable truncation marker threaded through a rendering walk. */
 type TruncationFlags = { truncated: boolean };
 
@@ -181,10 +224,27 @@ function formatScValInner(
       return `bytes(${hexBytes}${suffix})`;
     }
     case 'scvString': {
+      // An `ScString` is an arbitrary byte string; the host does not require
+      // UTF-8. Rendered from the signed bytes: when they are not clean UTF-8
+      // the text reading has replaced something with U+FFFD, and two
+      // different arguments could then read identically, so such a value is
+      // shown as hex instead. `manageData` keys and home domains take the
+      // same route for the same reason.
+      const bytes = fieldBytes(value.str());
+      if (!isCleanUtf8(bytes)) {
+        const shownBytes = bytes.subarray(0, MAX_SCVAL_STRING_CHARS);
+        if (bytes.length > MAX_SCVAL_STRING_CHARS) {
+          flags.truncated = true;
+          return `str(hex:${shownBytes.toString('hex')} …+${
+            bytes.length - MAX_SCVAL_STRING_CHARS
+          } bytes)`;
+        }
+        return `str(hex:${shownBytes.toString('hex')})`;
+      }
       // JSON.stringify escapes control characters but leaves format
       // characters (bidi overrides, zero-width marks) raw; escape those too
       // so a hostile argument cannot reorder or hide dialog text.
-      const text = value.str().toString();
+      const text = bytes.toString('utf8');
       const codePoints = [...text];
       let shown = text;
       let suffix = '';
@@ -196,7 +256,7 @@ function formatScValInner(
       return `str(${escapeHiddenCharacters(JSON.stringify(shown))}${suffix})`;
     }
     case 'scvSymbol':
-      return `sym(${formatSymbolName(value.sym().toString())})`;
+      return `sym(${formatSymbolBytes(value.sym())})`;
     case 'scvAddress':
       return Address.fromScVal(value).toString();
     case 'scvVec': {
@@ -281,6 +341,11 @@ function formatScValInner(
 export type DecodedHostFunction = {
   kind: 'invoke' | 'uploadWasm' | 'createContract' | 'unknown';
   contract?: string;
+  /**
+   * The invoked function, in display form: a plain identifier bare, anything
+   * else quoted with hidden characters escaped, and a name whose signed bytes
+   * are not clean text as hex (see {@link formatSymbolBytes}).
+   */
   functionName?: string;
   args: string[];
   /** Display lines for non-invoke host functions (deploy parameters). */
@@ -373,7 +438,7 @@ export function decodeHostFunction(
         contract: Address.fromScAddress(
           invocation.contractAddress(),
         ).toString(),
-        functionName: invocation.functionName().toString(),
+        functionName: formatSymbolBytes(invocation.functionName()),
         args,
         truncated: flags.truncated,
       };
@@ -465,9 +530,9 @@ function describeInvocation(
         flags.truncated = true;
         rendered.push(`…+${args.args().length - MAX_SCVAL_ITEMS} more`);
       }
-      return `${contract}.${formatSymbolName(
-        args.functionName().toString(),
-      )}(${rendered.join(', ')})`;
+      return `${contract}.${formatSymbolBytes(args.functionName())}(${rendered.join(
+        ', ',
+      )})`;
     }
     case 'sorobanAuthorizedFunctionTypeCreateContractHostFn':
       return `create-contract(${describeCreateContractArgs(
@@ -895,6 +960,27 @@ export function summarizeFootprint(
       `Write bytes: ${resources.writeBytes()}`,
       `Resource fee: ${sorobanData.resourceFee().toString()} stroops`,
     );
+
+    // The data extension is signed too. Version 1 lists read-write entries
+    // the transaction restores from the archive before it runs; the restore
+    // cannot widen what is authorized and its cost is inside the resource
+    // fee above, but a section that claims to show the accessed data in full
+    // must not leave a signed list out. A version this decoder does not know
+    // is reported as incomplete, like every other unknown variant here.
+    const ext = sorobanData.ext();
+    if (ext.switch() === 1) {
+      const archived = ext.resourceExt().archivedSorobanEntries();
+      if (archived.length > 0) {
+        lines.push(
+          `Auto-restore: read-write entries ${archived
+            .map((position: number) => `#${position + 1}`)
+            .join(', ')}`,
+        );
+      }
+    } else if (ext.switch() !== 0) {
+      flags.truncated = true;
+      lines.push('Unknown Soroban data extension: cannot be shown');
+    }
   } catch {
     // A footprint this decoder cannot walk must be reported as incomplete
     // rather than shown as an empty scope.

@@ -6,6 +6,7 @@ import {
   Asset,
   Claimant,
   Memo,
+  nativeToScVal,
   Networks,
   Operation,
   TransactionBuilder,
@@ -603,5 +604,135 @@ describe('offer, claimable-balance, and liquidity-pool renderers', () => {
     expect(withdraw).toContain('Withdraw from liquidity pool');
     expect(withdraw).toContain(poolId);
     expect(withdraw).toContain('Pool shares');
+  });
+});
+
+describe('deployment authorizations', () => {
+  /**
+   * Builds a create-contract (V2, constructor-bearing) deployment whose
+   * single authorization entry is approved by the transaction signature and
+   * whose constructor, under that authority, transfers from the deployer.
+   *
+   * @returns The operation.
+   */
+  function deploymentWithConstructorTransfer(): xdr.Operation {
+    const deployArgs = new xdr.CreateContractArgsV2({
+      contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+        new xdr.ContractIdPreimageFromAddress({
+          address: new Address(SOURCE).toScAddress(),
+          salt: Buffer.alloc(32, 7),
+        }),
+      ),
+      executable: xdr.ContractExecutable.contractExecutableWasm(
+        Buffer.alloc(32, 9),
+      ),
+      constructorArgs: [],
+    });
+    const transfer = new xdr.SorobanAuthorizedInvocation({
+      function:
+        xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(CONTRACT).toScAddress(),
+            functionName: 'transfer',
+            args: [
+              new Address(SOURCE).toScVal(),
+              new Address(DESTINATION).toScVal(),
+              nativeToScVal(1_000_000n, { type: 'i128' }),
+            ],
+          }),
+        ),
+      subInvocations: [],
+    });
+    const entry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function:
+          xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeCreateContractV2HostFn(
+            deployArgs,
+          ),
+        subInvocations: [transfer],
+      }),
+    });
+    return Operation.invokeHostFunction({
+      func: xdr.HostFunction.hostFunctionTypeCreateContractV2(deployArgs),
+      auth: [entry],
+    });
+  }
+
+  it('shows the authorization a constructor exercises under the deployer', () => {
+    // A deployment carries authorization entries like an invocation does. A
+    // constructor that calls `require_auth` on the deployer yields a
+    // source-account entry whose sub-invocation (here a token transfer) is
+    // approved by the very signature the dialog collects. The dialog used to
+    // print only the deploy parameters for this host-function kind, so the
+    // transfer went unshown while the signing gate had verified it as
+    // displayable.
+    const tx = buildTx([deploymentWithConstructorTransfer()]);
+    const dialog = JSON.stringify(
+      buildSignTransactionDialog({
+        origin: ORIGIN,
+        network: 'TESTNET',
+        tx,
+        xdr: tx.toXDR(),
+        signingAddress: SOURCE,
+        accountIndex: 0,
+      }),
+    );
+    expect(dialog).toContain('Create contract');
+    expect(dialog).toContain('Authorizations (1)');
+    expect(dialog).toContain('[source-account]');
+    expect(dialog).toContain(`${CONTRACT}.transfer(`);
+    expect(dialog).toContain(DESTINATION);
+    expect(dialog).not.toContain('raw transaction XDR below');
+  });
+});
+
+describe('fee-bump inner transaction', () => {
+  it('does not accuse the inner transaction of acting for another account', () => {
+    // The wallet signs only the outer envelope of a fee bump, which
+    // authorizes fee payment and nothing on the inner source account, so the
+    // source-mismatch banner would be false there. It fires on ordinary
+    // transactions sourced from another account, where it is the defence
+    // against co-signature harvesting, and a banner that also fires on every
+    // fee bump for someone else's transaction trains the user to dismiss it.
+    const inner = new TransactionBuilder(new Account(DESTINATION, '1'), {
+      fee: '100',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(PAYMENT)
+      .setTimeout(300)
+      .build();
+    const bump = TransactionBuilder.buildFeeBumpTransaction(
+      SOURCE,
+      '200',
+      inner,
+      Networks.TESTNET,
+    );
+    const dialog = JSON.stringify(
+      buildSignTransactionDialog({
+        origin: ORIGIN,
+        network: 'TESTNET',
+        tx: bump,
+        xdr: bump.toXDR(),
+        signingAddress: SOURCE,
+        accountIndex: 0,
+      }),
+    );
+    expect(dialog).toContain('Sign fee bump');
+    expect(dialog).not.toContain(SOURCE_MISMATCH_TITLE);
+
+    // The positive control: the same inner transaction signed on its own,
+    // by an account that is not its source, still gets the banner.
+    const direct = JSON.stringify(
+      buildSignTransactionDialog({
+        origin: ORIGIN,
+        network: 'TESTNET',
+        tx: inner,
+        xdr: inner.toXDR(),
+        signingAddress: SOURCE,
+        accountIndex: 0,
+      }),
+    );
+    expect(direct).toContain(SOURCE_MISMATCH_TITLE);
   });
 });

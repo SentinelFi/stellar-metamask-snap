@@ -99,7 +99,13 @@ export const onInstall: OnInstallHandler = async () => installWelcome();
  *
  * @returns Resolves when dismissed, or immediately when nothing needs saying.
  */
-export const onUpdate: OnUpdateHandler = async () => updateNotice();
+export const onUpdate: OnUpdateHandler = async () => {
+  // Best effort: a state read failing here would otherwise count as a crash
+  // of the freshly updated snap (see `onUserInput`). The notice is advisory;
+  // the capability it describes stays refused until the site re-consents
+  // whether or not the user saw it.
+  await updateNotice().catch(() => undefined);
+};
 
 /**
  * Shows a plain informational dialog.
@@ -373,9 +379,21 @@ export const onUserInput: OnUserInputHandler = async ({ id, event }) => {
   if (!(await applyUserInputSafely(event))) {
     return;
   }
-  const { content } = await homePage();
-  await snap.request({
-    method: 'snap_updateInterface',
-    params: { id, ui: content },
-  });
+  // The re-render is guarded like the interaction itself. An escaping throw
+  // here (a state read failing after the page's derivation already degraded,
+  // or an interface the user closed while the dialog was open) is treated by
+  // the platform as a crash and stops the snap, which wipes every in-memory
+  // control with it: the rate-limit windows, the in-flight counters, the
+  // dialog cooldowns, and the entropy-binding latch. Only the user reaches
+  // this handler, so that is robustness rather than an attack, but a stale
+  // page is the better failure.
+  try {
+    const { content } = await homePage();
+    await snap.request({
+      method: 'snap_updateInterface',
+      params: { id, ui: content },
+    });
+  } catch {
+    // Nothing to report: the interaction's own outcome was already shown.
+  }
 };

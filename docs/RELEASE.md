@@ -180,7 +180,7 @@ The site ships HTTP security headers in `packages/site/static/_headers`, which G
 
 The headers are:
 
-- `Content-Security-Policy`: `default-src 'self'; script-src 'self' <per-build sha256 hashes>; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`. `style-src` keeps `'unsafe-inline'` because styled-components injects rules through the CSSOM at runtime, which no hash can cover; that is a far weaker exposure than inline script.
+- `Content-Security-Policy`: `default-src 'self'; script-src 'self' <per-build sha256 hashes>; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://horizon.stellar.org https://horizon-testnet.stellar.org https://horizon-futurenet.stellar.org; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`. `style-src` keeps `'unsafe-inline'` because styled-components injects rules through the CSSOM at runtime, which no hash can cover; that is a far weaker exposure than inline script.
 - `X-Frame-Options: DENY`
 - `Referrer-Policy: no-referrer`
 - `X-Content-Type-Options: nosniff`

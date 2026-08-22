@@ -14,6 +14,7 @@ import {
   COOLDOWN_MS,
   DIALOG_METHODS,
   MAX_CONSECUTIVE_REJECTIONS,
+  MAX_TRACKED_ORIGINS,
   MAX_UNANSWERED_DIALOGS,
   recordDialogOpened,
   recordDialogRejection,
@@ -162,5 +163,50 @@ describe('dialog throttle', () => {
     }
     expect(check(ORIGIN)).not.toBeNull();
     expect(check('https://other.example')).toBeNull();
+  });
+});
+
+describe('tracked-origin bound', () => {
+  beforeEach(() => {
+    resetDialogThrottle();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('evicts the least recently used origin once the map is full', () => {
+    // Filling the map with other origins pushes out the first one's partial
+    // rejection count. Eviction fails open by design: the evicting party
+    // already controls that many origins, each of which had to pass a
+    // snap-access approval, so the bound is a memory cap, not a gate.
+    recordDialogOpened(ORIGIN);
+    recordDialogRejection(ORIGIN);
+    for (let index = 0; index < MAX_TRACKED_ORIGINS; index += 1) {
+      recordDialogOpened(`https://other-${index}.example`);
+    }
+    // Two more rejections would have blocked a tracked origin; the evicted
+    // one starts over from zero.
+    recordDialogOpened(ORIGIN);
+    recordDialogRejection(ORIGIN);
+    recordDialogOpened(ORIGIN);
+    recordDialogRejection(ORIGIN);
+    expect(check(ORIGIN)).toBeNull();
+  });
+
+  it('keeps a blocked origin resident while it keeps calling', () => {
+    // A blocked origin must not be able to rotate other origins in to evict
+    // the record of its own cooldown: every refused call refreshes it.
+    jest.spyOn(Date, 'now').mockImplementation(() => 1_000_000);
+    for (let index = 0; index < MAX_CONSECUTIVE_REJECTIONS; index += 1) {
+      recordDialogOpened(ORIGIN);
+      recordDialogRejection(ORIGIN);
+    }
+    expect(check(ORIGIN)).not.toBeNull();
+    for (let index = 0; index < MAX_TRACKED_ORIGINS - 1; index += 1) {
+      recordDialogOpened(`https://other-${index}.example`);
+      expect(check(ORIGIN)).not.toBeNull();
+    }
+    expect(check(ORIGIN)?.message).toContain('Too many rejected requests');
   });
 });

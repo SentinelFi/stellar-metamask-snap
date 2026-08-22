@@ -3,7 +3,7 @@ import type { JsonRpcRequest } from '@metamask/snaps-sdk';
 import { MethodNotFoundError, SnapError } from '@metamask/snaps-sdk';
 
 import { externalServiceError, userRejected } from './errors';
-import { resetRequestLimits } from './limiter';
+import { MAX_INFLIGHT_PER_ORIGIN, resetRequestLimits } from './limiter';
 import { route } from './router';
 import { assertDialogAllowed, recordDialogRejection } from './throttle';
 import { getAddress } from '../handlers/access';
@@ -157,5 +157,45 @@ describe('route', () => {
     await expect(route(ORIGIN, request('signTransaction', {}))).rejects.toThrow(
       'Too many signTransaction requests',
     );
+  });
+});
+
+describe('route: refusal shapes and concurrency wiring', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetRequestLimits();
+  });
+
+  it('bounds the echoed method name and carries the SEP-43 code', async () => {
+    const name = `x${'y'.repeat(500)}`;
+    const error = await route(ORIGIN, request(name)).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(MethodNotFoundError);
+    expect((error as Error).message.length).toBeLessThan(100);
+    expect((error as SnapError).data).toMatchObject({ code: -3 });
+  });
+
+  it('refuses a request beyond the per-origin in-flight budget', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (getNetwork as jest.Mock).mockImplementation(async () => {
+      await gate;
+      return {};
+    });
+    const pending = Array.from({ length: MAX_INFLIGHT_PER_ORIGIN }, async () =>
+      route(ORIGIN, request('getNetwork')),
+    );
+    // Let the in-flight counter observe every pending request.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(route(ORIGIN, request('getNetwork'))).rejects.toThrow(
+      'Too many concurrent requests from this site',
+    );
+    release();
+    await Promise.all(pending);
+    // Released slots are reusable.
+    expect(await route(ORIGIN, request('getNetwork'))).toStrictEqual({});
   });
 });

@@ -179,6 +179,12 @@ jobs:
       - name: Connector tests (with coverage thresholds)
         run: yarn workspace stellar-soroban-snap-connector test:coverage
 
+      # The companion site's pure modules: the release-identity verifier
+      # behind gatsby-node.js and the validators that gate user input and
+      # provider-reported values. The production build exercises the rest.
+      - name: Site tests
+        run: yarn workspace site test
+
       # The docs site is rendered from the repository's markdown, and the
       # renderer additionally asserts that every public method of the
       # connector's client appears in docs/CONNECTOR-API.md. Running it here

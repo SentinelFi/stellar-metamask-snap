@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { Asset, LiquidityPoolAsset, Memo } from '@stellar/stellar-sdk';
+import { Asset, LiquidityPoolAsset } from '@stellar/stellar-sdk';
 
 import {
   bytesToDisplay,
@@ -8,7 +8,6 @@ import {
   escapeHiddenCharacters,
   formatAsset,
   formatLiquidityPool,
-  formatMemo,
   formatTokenAsset,
   isHexDisplay,
   isLossyInline,
@@ -270,34 +269,6 @@ describe('sanitizeInlineText', () => {
   });
 });
 
-describe('formatMemo', () => {
-  it('renders each memo type', () => {
-    expect(formatMemo(Memo.text('hello'))).toStrictEqual([
-      'Memo (text)',
-      'hello',
-    ]);
-    expect(formatMemo(Memo.id('42'))).toStrictEqual(['Memo (ID)', '42']);
-
-    const hash = Buffer.alloc(32, 1);
-    expect(formatMemo(Memo.hash(hash))).toStrictEqual([
-      'Memo (hash)',
-      hash.toString('hex'),
-    ]);
-    expect(formatMemo(Memo.return(hash))).toStrictEqual([
-      'Memo (return)',
-      hash.toString('hex'),
-    ]);
-  });
-
-  it('returns null for an empty memo', () => {
-    expect(formatMemo(Memo.none())).toBeNull();
-  });
-
-  it('sanitizes dapp-controlled text memos', () => {
-    expect(formatMemo(Memo.text('a\nb'))).toStrictEqual(['Memo (text)', 'a b']);
-  });
-});
-
 describe('escapeHiddenCharacters', () => {
   it('makes bidi overrides visible as unicode escapes', () => {
     expect(escapeHiddenCharacters('a\u202Eb')).toBe('a\\u{202e}b');
@@ -399,5 +370,18 @@ describe('bytesToDisplay', () => {
       `hex:${Buffer.from('a\u200Bb', 'utf8').toString('hex')}`,
     );
     expect(bytesToDisplay(Buffer.from('plain', 'utf8'))).toBe('plain');
+  });
+});
+
+describe('lone surrogates', () => {
+  it('counts an unpaired surrogate as a hidden character', () => {
+    // A JSON payload can carry an unpaired surrogate. It displays as a blank
+    // or a box, and UTF-8 encoding (what gets signed) replaces it with
+    // U+FFFD, so it is the one case where the signed bytes differ from the
+    // string shown with no visible sign at all.
+    expect(containsHiddenCharacters('pay \ud800 100')).toBe(true);
+    expect(escapeHiddenCharacters('pay \ud800 100')).toBe('pay \\u{d800} 100');
+    // A well-formed pair is ordinary text.
+    expect(containsHiddenCharacters('pay \u{1F600} 100')).toBe(false);
   });
 });

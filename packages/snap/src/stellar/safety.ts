@@ -1,5 +1,6 @@
 import type { OperationRecord, Transaction } from '@stellar/stellar-sdk/base';
 
+import type { AccountChecks } from './horizon';
 import { getAccountChecks } from './horizon';
 import { takePredialogBudget } from '../rpc/limiter';
 import type { NetworkConfig } from '../state/networks';
@@ -184,7 +185,12 @@ export async function collectSafetyWarnings(
   // let an attacker exhaust the budget to block a legitimate signature, and
   // dropping the warnings silently would let them exhaust it to suppress a
   // real one.
-  const lookups = destinations.length + sources.length;
+  // One lookup per distinct account: an account that is both a value
+  // destination and an operation source (paying oneself, merging into an
+  // account one also spends from) is fetched once and charged to the budget
+  // once, rather than twice under two labels.
+  const accountsToCheck = [...new Set([...destinations, ...sources])];
+  const lookups = accountsToCheck.length;
   if (lookups > 0 && !takePredialogBudget(connected, lookups)) {
     warnings.push(
       `${SKIPPED_PREFIX} too many account lookups have run recently, so the accounts in this transaction were NOT checked for existence, memo requirements (SEP-29), or signature weight. Review it carefully, or retry in a minute for the full checks.`,
@@ -192,28 +198,31 @@ export async function collectSafetyWarnings(
     return warnings;
   }
 
-  const [destinationChecks, sourceChecks] = await Promise.all([
-    Promise.all(
-      destinations.map(async (destination) =>
-        getAccountChecks(network.horizonUrl, destination),
+  const checksByAccount = new Map<string, AccountChecks | null>(
+    await Promise.all(
+      accountsToCheck.map(
+        async (account): Promise<[string, AccountChecks | null]> => [
+          account,
+          await getAccountChecks(network.horizonUrl, account),
+        ],
       ),
     ),
-    Promise.all(
-      sources.map(async (source) =>
-        getAccountChecks(network.horizonUrl, source),
-      ),
-    ),
-  ]);
+  );
+  const destinationChecks = destinations.map(
+    (destination) => checksByAccount.get(destination) ?? null,
+  );
+  const sourceChecks = sources.map(
+    (source) => checksByAccount.get(source) ?? null,
+  );
 
   // A lookup that returned nothing (Horizon error status, timeout, or a body
   // that failed validation) is a check that did not run, not a check that
   // passed. Count those accounts and say so, in the same voice as the other
   // skips above: without this line a Horizon outage produces zero warnings,
   // which reads exactly like a transaction that was checked and found clean.
-  const uncheckedAccounts = [
-    ...destinationChecks.filter((checks) => checks === null),
-    ...sourceChecks.filter((checks) => checks === null),
-  ].length;
+  const uncheckedAccounts = accountsToCheck.filter(
+    (account) => checksByAccount.get(account) === null,
+  ).length;
   if (uncheckedAccounts > 0) {
     warnings.push(
       `${SKIPPED_PREFIX} Horizon could not be reached or returned an unusable response, so ${uncheckedAccounts} account(s) in this transaction were NOT checked for existence, memo requirements (SEP-29), or signature weight. Review them carefully.`,

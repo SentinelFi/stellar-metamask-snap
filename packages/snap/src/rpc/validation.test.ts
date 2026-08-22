@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { SnapError } from '@metamask/snaps-sdk';
+import type { Struct } from '@metamask/superstruct';
 
 import {
   AddTokenParams,
@@ -9,6 +10,8 @@ import {
   MAX_NETWORK_PASSPHRASE_LENGTH,
   MAX_XDR_LENGTH,
   OptionalAddressParams,
+  SetActiveAccountParams,
+  SetNetworkParams,
   SignAuthEntryParams,
   SignMessageParams,
   SignTransactionParams,
@@ -248,6 +251,80 @@ describe('AddTokenParams', () => {
     ];
     for (const contractId of invalid) {
       expect(() => validate({ contractId }, AddTokenParams)).toThrow(SnapError);
+    }
+  });
+});
+
+/**
+ * Runs a validation and returns the error it threw, or null.
+ *
+ * @param params - The params to validate.
+ * @param struct - The struct to validate against.
+ * @returns The thrown error, or null when validation passed.
+ */
+function failureOf<Type, Schema>(
+  params: unknown,
+  struct: Struct<Type, Schema>,
+): SnapError | null {
+  try {
+    validate(params, struct);
+    return null;
+  } catch (caught) {
+    return caught as SnapError;
+  }
+}
+
+describe('validation error messages', () => {
+  it('does not echo the rejected value back', () => {
+    // superstruct describes a failure with the received value serialized in
+    // full. For a non-object `params` that is the caller's whole payload,
+    // unbounded; the message keeps the path and the expectation and drops
+    // the value.
+    const huge = 'x'.repeat(1024 * 1024);
+    const error = failureOf(huge, SignMessageParams);
+    expect(error).toBeInstanceOf(SnapError);
+    expect(error?.message.length).toBeLessThan(260);
+    expect(error?.message).not.toContain('xxxxxxxx');
+  });
+
+  it('rejects unknown keys, including a prototype key', () => {
+    expect(
+      failureOf({ message: 'hi', extra: 1 }, SignMessageParams),
+    ).not.toBeNull();
+    expect(
+      failureOf(
+        JSON.parse('{"message":"hi","__proto__":{"polluted":true}}'),
+        SignMessageParams,
+      ),
+    ).not.toBeNull();
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+  });
+
+  it('rejects a non-object params value and a wrongly typed submit flag', () => {
+    for (const params of [null, [], 'text', 42]) {
+      expect(failureOf(params, SignMessageParams)).not.toBeNull();
+    }
+    expect(
+      failureOf({ xdr: 'AAAA', submit: 'yes' }, SignTransactionParams),
+    ).not.toBeNull();
+  });
+});
+
+describe('SetNetworkParams and SetActiveAccountParams', () => {
+  it('accept exactly the documented shapes', () => {
+    expect(validate({ network: 'PUBLIC' }, SetNetworkParams)).toStrictEqual({
+      network: 'PUBLIC',
+    });
+    expect(validate({ index: 3 }, SetActiveAccountParams)).toStrictEqual({
+      index: 3,
+    });
+  });
+
+  it('reject unknown networks and out-of-range or non-integer indices', () => {
+    expect(failureOf({ network: 'MAINNET' }, SetNetworkParams)).not.toBeNull();
+    expect(failureOf({ network: 'public' }, SetNetworkParams)).not.toBeNull();
+    for (const index of [-1, 1.5, 256, '1', Number.NaN]) {
+      expect(failureOf({ index }, SetActiveAccountParams)).not.toBeNull();
     }
   });
 });

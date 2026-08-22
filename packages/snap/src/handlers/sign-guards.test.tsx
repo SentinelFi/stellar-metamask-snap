@@ -15,6 +15,17 @@ import { signAuthEntry, signMessage, signTransaction } from './sign';
 import { resetAddressCache } from '../keys';
 import { resetRequestLimits, takePredialogBudget } from '../rpc/limiter';
 
+/**
+ * The SLIP-10 path node for the account index a `snap_getBip32PublicKey`
+ * request names (`m/44'/148'/<index>'`), typed the way key-tree wants it.
+ *
+ * @param path - The requested BIP-32 path.
+ * @returns The hardened account node.
+ */
+function accountPathNode(path: string[]): `slip10:${number}'` {
+  return `slip10:${path[3] ?? ''}` as `slip10:${number}'`;
+}
+
 /*
  * Fail-closed gate tests for the signing handlers.
  *
@@ -60,6 +71,24 @@ let dialogs: unknown[];
 let dialogResponse: boolean;
 
 /**
+ * Answers `snap_getBip32PublicKey` the way the platform does: the hex public
+ * key (zero prefix byte included) of the subtree itself, or of the hardened
+ * account index one level below it.
+ *
+ * @param subtree - The `m/44'/148'` node.
+ * @param path - The requested BIP-32 path.
+ * @returns The `0x`-prefixed public key.
+ */
+async function publicKeyAt(
+  subtree: SLIP10Node,
+  path: string[],
+): Promise<string> {
+  const node =
+    path.length === 3 ? subtree : await subtree.derive([accountPathNode(path)]);
+  return node.publicKey;
+}
+
+/**
  * Builds a version-2 state object.
  *
  * @param overrides - Field overrides.
@@ -100,7 +129,12 @@ describe('signing handlers: fail-closed gates', () => {
     (globalThis as { snap?: unknown }).snap = {
       request: async (args: {
         method: string;
-        params: { operation?: string; newState?: unknown; content?: unknown };
+        params: {
+          operation?: string;
+          newState?: unknown;
+          content?: unknown;
+          path?: string[];
+        };
       }) => {
         await Promise.resolve();
         switch (args.method) {
@@ -112,6 +146,8 @@ describe('signing handlers: fail-closed gates', () => {
             return null;
           case 'snap_getBip32Entropy':
             return entropy.toJSON();
+          case 'snap_getBip32PublicKey':
+            return publicKeyAt(entropy, args.params.path ?? []);
           case 'snap_dialog':
             dialogs.push(args.params.content);
             return dialogResponse;
@@ -922,6 +958,116 @@ describe('signing handlers: fail-closed gates', () => {
       expect(
         (stored as { origins: Record<string, unknown> }).origins[ORIGIN],
       ).toBeDefined();
+    });
+  });
+
+  describe('signTransaction: malformed Soroban data and deployment authorizations', () => {
+    it('refuses Soroban transaction data on a transaction with no Soroban operation', async () => {
+      // Malformed at the protocol level, and the one dialog path where a
+      // footprint could render with a "not shown in full" marker while the
+      // Soroban-only gate never ran. Refused outright instead.
+      const tx = new TransactionBuilder(new Account(ADDRESS_0, '1'), {
+        fee: '100',
+        networkPassphrase: Networks.TESTNET,
+      })
+        .addOperation(
+          Operation.payment({
+            destination: ADDRESS_1,
+            asset: Asset.native(),
+            amount: '1',
+          }),
+        )
+        .setSorobanData(
+          new SorobanDataBuilder()
+            .setFootprint([contractDataKey(0)], [])
+            .setResourceFee(1000n)
+            .build(),
+        )
+        .setTimeout(300)
+        .build();
+      await expect(
+        signTransaction(ORIGIN, { xdr: tx.toXDR() }),
+      ).rejects.toThrow('without a Soroban operation');
+      expect(dialogs).toHaveLength(0);
+    });
+
+    it('shows a constructor authorization in the deployment dialog', async () => {
+      // The signing gate verifies every embedded entry is displayable; the
+      // dialog must then display it for a deployment exactly as it does for
+      // an invocation, or the constructor's use of the deployer's authority
+      // is approved unseen.
+      const deployArgs = new xdr.CreateContractArgsV2({
+        contractIdPreimage:
+          xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+            new xdr.ContractIdPreimageFromAddress({
+              address: new Address(ADDRESS_0).toScAddress(),
+              salt: Buffer.alloc(32, 7),
+            }),
+          ),
+        executable: xdr.ContractExecutable.contractExecutableWasm(
+          Buffer.alloc(32, 9),
+        ),
+        constructorArgs: [],
+      });
+      const entry = new xdr.SorobanAuthorizationEntry({
+        credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
+        rootInvocation: new xdr.SorobanAuthorizedInvocation({
+          function:
+            xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeCreateContractV2HostFn(
+              deployArgs,
+            ),
+          subInvocations: [
+            new xdr.SorobanAuthorizedInvocation({
+              function:
+                xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+                  new xdr.InvokeContractArgs({
+                    contractAddress: new Address(CONTRACT).toScAddress(),
+                    functionName: 'transfer',
+                    args: [],
+                  }),
+                ),
+              subInvocations: [],
+            }),
+          ],
+        }),
+      });
+      const tx = new TransactionBuilder(new Account(ADDRESS_0, '1'), {
+        fee: '100',
+        networkPassphrase: Networks.TESTNET,
+      })
+        .addOperation(
+          Operation.invokeHostFunction({
+            func: xdr.HostFunction.hostFunctionTypeCreateContractV2(deployArgs),
+            auth: [entry],
+          }),
+        )
+        .setSorobanData(
+          new SorobanDataBuilder()
+            .setFootprint([contractDataKey(0)], [])
+            .setResourceFee(1000n)
+            .build(),
+        )
+        .setTimeout(300)
+        .build();
+      const result = await signTransaction(ORIGIN, { xdr: tx.toXDR() });
+      expect(result.signerAddress).toBe(ADDRESS_0);
+      expect(dialogs).toHaveLength(1);
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).toContain('Create contract');
+      expect(dialog).toContain('Authorizations (1)');
+      expect(dialog).toContain(`${CONTRACT}.transfer(`);
+    });
+  });
+
+  describe('signMessage: unpaired surrogates', () => {
+    it('shows the warning and the exact form for a lone surrogate', async () => {
+      // The signed bytes carry U+FFFD where the display shows a blank or a
+      // box; the escaped exact view is what lets the user see the code point
+      // that is actually present.
+      await signMessage(ORIGIN, { message: 'pay \ud800 100' });
+      const dialog = JSON.stringify(dialogs[0]);
+      expect(dialog).toContain('Display differs from signed text');
+      expect(dialog).toContain('u{d800}');
     });
   });
 });

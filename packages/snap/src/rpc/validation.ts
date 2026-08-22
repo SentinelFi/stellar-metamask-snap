@@ -113,10 +113,36 @@ export function validate<Type, Schema>(
     assert(params, struct);
     return params;
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Invalid request parameters.';
-    throw invalidRequest(message);
+    throw invalidRequest(describeValidationFailure(error));
   }
+}
+
+/** Upper bound on the validation detail echoed back to the caller. */
+const MAX_VALIDATION_DETAIL_LENGTH = 200;
+
+/**
+ * Turns a validation failure into a bounded, caller-facing message.
+ *
+ * `superstruct` describes a failure as "At path: x -- Expected ..., but
+ * received: <the value>", serializing the rejected value in full. For the
+ * fields that carry a `size()` bound that is a length, but for a non-object
+ * `params`, an unknown key, or a wrongly typed boolean it is the caller's
+ * own bytes, unbounded. Echoing a multi-megabyte payload back in an error is
+ * amplification the caller pays for but the wallet should not offer, so the
+ * "received" clause is dropped and the rest is truncated. The path and the
+ * expectation are what a developer needs; the value is what they sent.
+ *
+ * @param error - The thrown validation error.
+ * @returns A bounded description.
+ */
+function describeValidationFailure(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'Invalid request parameters.';
+  }
+  const detail = error.message.replace(/,? but received.*$/su, '');
+  return detail.length > MAX_VALIDATION_DETAIL_LENGTH
+    ? `${detail.slice(0, MAX_VALIDATION_DETAIL_LENGTH)}…`
+    : detail;
 }
 
 /**

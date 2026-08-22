@@ -63,7 +63,7 @@ export const Onboarding = () => {
       <Panel title="Update the snap">
         <Stack gap="1.2rem">
           <Alert tone="warning" title="Version mismatch.">
-            {`The installed snap is version ${installedSnap.version}, but this site was built for version ${defaultSnapVersion ?? 'unknown'}. Every control stays disabled until they match, so the page can never drive a release it was not built against.`}
+            {`The installed snap is version ${installedSnap.version.slice(0, 32)}, but this site was built for version ${defaultSnapVersion ?? 'unknown'}. Every control stays disabled until they match, so the page can never drive a release it was not built against.`}
           </Alert>
           <Button variant="primary" onClick={handle(async () => requestSnap())}>
             {`Update to ${defaultSnapVersion ?? 'the expected version'}`}

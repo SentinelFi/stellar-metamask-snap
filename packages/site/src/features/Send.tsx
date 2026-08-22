@@ -61,7 +61,7 @@ export const Send = () => {
 
   const [destination, setDestination] = useState('');
   const [assetKey, setAssetKey] = useState('native');
-  const [amount, setAmount] = useState('');
+  const [amountInput, setAmountInput] = useState('');
   const [memo, setMemo] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [submission, setSubmission] = useState<Submission | null>(null);
@@ -93,7 +93,11 @@ export const Send = () => {
       setProblem('Enter a valid destination address (G… or M…).');
       return;
     }
-    const amountProblem = validateAmount(amount.trim());
+    // One value is validated and built with: the trimmed input. Validating
+    // a trimmed copy and building with the raw field would let the two
+    // drift apart.
+    const amount = amountInput.trim();
+    const amountProblem = validateAmount(amount);
     if (amountProblem) {
       setProblem(amountProblem);
       return;
@@ -197,7 +201,7 @@ export const Send = () => {
         status: result.status,
         warnings: result.warnings,
       });
-      setAmount('');
+      setAmountInput('');
       setMemo('');
     }
   };
@@ -248,9 +252,9 @@ export const Send = () => {
               <Input
                 inputMode="decimal"
                 placeholder="0.0000000"
-                value={amount}
+                value={amountInput}
                 disabled={disabled}
-                onChange={(event) => setAmount(event.target.value)}
+                onChange={(event) => setAmountInput(event.target.value)}
               />
             </Field>
             <Field label="Memo" hint={`optional, ${MAX_MEMO_BYTES} bytes max`}>
@@ -265,7 +269,7 @@ export const Send = () => {
           <Cluster>
             <Button
               variant="primary"
-              disabled={disabled || !destination.trim() || !amount.trim()}
+              disabled={disabled || !destination.trim() || !amountInput.trim()}
               onClick={handle(async () => submit())}
             >
               Review in MetaMask

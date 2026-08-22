@@ -294,6 +294,16 @@ export async function signTransaction(
       'A Soroban operation must be the only operation in its transaction. This transaction can never execute and will not be signed.',
     );
   }
+  // The converse: Soroban transaction data on a transaction with no Soroban
+  // operation is malformed at the protocol level. The dialog would render the
+  // footprint anyway, and that is the one place a "not shown in full" marker
+  // could appear without the fail-closed gate below, which only runs for
+  // Soroban transactions. Refuse the envelope instead.
+  if (!isSoroban && getSorobanData(innerTx) !== null) {
+    throw invalidRequest(
+      'This transaction carries Soroban transaction data without a Soroban operation. It can never execute and will not be signed.',
+    );
+  }
 
   // Fail closed: a transaction whose effects cannot be displayed
   // faithfully must not be approvable. A warning over raw XDR is not a
