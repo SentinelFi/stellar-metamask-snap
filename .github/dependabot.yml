@@ -2,6 +2,14 @@
 # instead of being discovered during a release audit; the CI gates (manifest
 # shasum, randomness scan, audit, coverage) do the actual vetting of each
 # bump.
+#
+# Two things those gates cannot check, because they depend on upstream shape
+# rather than on this repository's own output: whether an SDK bump added a
+# variant that a display path renders as a placeholder instead of refusing,
+# and whether a bundle-absence marker was reworded upstream. Both are
+# enumerated in docs/RELEASE.md, "Re-derive on a dependency or surface
+# change". Work through that section's `@stellar/stellar-sdk` entries before
+# approving a bump of that package.
 version: 2
 updates:
   - package-ecosystem: npm

@@ -16,6 +16,7 @@ import {
 import {
   buildSignTransactionDialog,
   findUndisplayableOperation,
+  SUPPORTED_OPERATION_TYPES,
 } from './transaction';
 
 /*
@@ -734,5 +735,169 @@ describe('fee-bump inner transaction', () => {
       }),
     );
     expect(direct).toContain(SOURCE_MISMATCH_TITLE);
+  });
+});
+
+describe('operation allowlist and renderer parity', () => {
+  /*
+   * `handlers/sign.tsx` refuses any operation whose type is not in
+   * `SUPPORTED_OPERATION_TYPES`, and `renderOperationBody` has a `default:`
+   * arm that renders "This operation type is not decoded by the snap. Review
+   * the raw transaction XDR below before approving." for anything its switch
+   * does not handle.
+   *
+   * Those are two hand-maintained lists, and today they agree, so that arm is
+   * dead. Nothing enforces the agreement. Adding a type to the allowlist
+   * without adding a renderer arm is a one-line change that typechecks,
+   * lints, and passes every other test in this repository, and it silently
+   * converts a hard refusal into a soft "review the XDR yourself" banner,
+   * which is precisely the review mechanism the fail-closed policy exists to
+   * reject (see the unsupported-type gate in `handlers/sign.tsx`).
+   *
+   * So this suite is the enforcement. It is deliberately not a coverage
+   * exercise: the per-type assertions live in the suites above, and each
+   * fixture here is the minimum envelope that reaches its renderer.
+   */
+
+  /** The default arm's text, matched on the fragment that is unique to it. */
+  const UNDECODED_MARKER = 'not decoded by the snap';
+
+  const USD = new Asset('USD', DESTINATION);
+  const POOL_ID = 'cd'.repeat(32);
+
+  /**
+   * One minimal operation per allowlisted type. Keyed by the `type` the SDK
+   * decodes the envelope back to, which the first test below asserts rather
+   * than assumes: a fixture that decoded to some other type would test that
+   * other type twice and leave its own key unexercised, and the suite would
+   * still be green.
+   */
+  const OPERATION_FIXTURES: Record<string, () => xdr.Operation> = {
+    payment: () => PAYMENT,
+    createAccount: () =>
+      Operation.createAccount({
+        destination: DESTINATION,
+        startingBalance: '10',
+      }),
+    changeTrust: () => Operation.changeTrust({ asset: USD, limit: '1000' }),
+    pathPaymentStrictSend: () =>
+      Operation.pathPaymentStrictSend({
+        sendAsset: Asset.native(),
+        sendAmount: '1',
+        destination: DESTINATION,
+        destAsset: USD,
+        destMin: '1',
+        path: [],
+      }),
+    pathPaymentStrictReceive: () =>
+      Operation.pathPaymentStrictReceive({
+        sendAsset: Asset.native(),
+        sendMax: '2',
+        destination: DESTINATION,
+        destAsset: USD,
+        destAmount: '1',
+        path: [],
+      }),
+    manageData: () => Operation.manageData({ name: 'key', value: 'value' }),
+    setOptions: () => Operation.setOptions({ homeDomain: 'example.com' }),
+    accountMerge: () => Operation.accountMerge({ destination: DESTINATION }),
+    manageSellOffer: () =>
+      Operation.manageSellOffer({
+        selling: Asset.native(),
+        buying: USD,
+        amount: '10',
+        price: '1',
+        offerId: '0',
+      }),
+    manageBuyOffer: () =>
+      Operation.manageBuyOffer({
+        selling: Asset.native(),
+        buying: USD,
+        buyAmount: '10',
+        price: '1',
+        offerId: '0',
+      }),
+    createPassiveSellOffer: () =>
+      Operation.createPassiveSellOffer({
+        selling: Asset.native(),
+        buying: USD,
+        amount: '10',
+        price: '1',
+      }),
+    createClaimableBalance: () =>
+      Operation.createClaimableBalance({
+        asset: Asset.native(),
+        amount: '25',
+        claimants: [
+          new Claimant(DESTINATION, Claimant.predicateUnconditional()),
+        ],
+      }),
+    claimClaimableBalance: () =>
+      Operation.claimClaimableBalance({
+        balanceId: `00000000${'ab'.repeat(32)}`,
+      }),
+    liquidityPoolDeposit: () =>
+      Operation.liquidityPoolDeposit({
+        liquidityPoolId: POOL_ID,
+        maxAmountA: '100',
+        maxAmountB: '200',
+        minPrice: '0.5',
+        maxPrice: '2',
+      }),
+    liquidityPoolWithdraw: () =>
+      Operation.liquidityPoolWithdraw({
+        liquidityPoolId: POOL_ID,
+        amount: '10',
+        minAmountA: '1',
+        minAmountB: '2',
+      }),
+    invokeHostFunction: () =>
+      Operation.invokeHostFunction({
+        func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(CONTRACT).toScAddress(),
+            functionName: 'transfer',
+            args: [],
+          }),
+        ),
+        auth: [],
+      }),
+    extendFootprintTtl: () => Operation.extendFootprintTtl({ extendTo: 100 }),
+    restoreFootprint: () => Operation.restoreFootprint(),
+  };
+
+  it('has a fixture for exactly the allowlisted operation types', () => {
+    // Both directions. A new allowlist entry with no fixture fails here
+    // rather than going unrendered, and a fixture for a type that has been
+    // removed from the allowlist fails rather than lingering as a test for
+    // something the snap now refuses outright.
+    expect(Object.keys(OPERATION_FIXTURES).sort()).toStrictEqual(
+      [...SUPPORTED_OPERATION_TYPES].sort(),
+    );
+  });
+
+  // Driven from the map rather than from the Set, so the fixture arrives
+  // typed and no index lookup has to be narrowed inside the test body. The
+  // test above is what makes the two equivalent.
+  it.each(Object.entries(OPERATION_FIXTURES))(
+    'renders a dedicated section for %s rather than the undecoded fallback',
+    (type, fixture) => {
+      const tx = buildTx([fixture()]);
+      // The fixture really is the type it is filed under; see the map's note.
+      expect(tx.operations[0]?.type).toBe(type);
+      expect(render({ tx })).not.toContain(UNDECODED_MARKER);
+    },
+  );
+
+  it('still reaches the fallback for a type outside the allowlist', () => {
+    // The positive control. Without it, the assertions above would pass just
+    // as happily if the fallback text were reworded or deleted, and the suite
+    // would be asserting nothing. `bumpSequence` is a real operation type the
+    // snap deliberately does not render, so `handlers/sign.tsx` refuses it
+    // before any dialog is built; this reaches the renderer directly, which
+    // is the only way to observe the arm.
+    expect(SUPPORTED_OPERATION_TYPES.has('bumpSequence')).toBe(false);
+    const tx = buildTx([Operation.bumpSequence({ bumpTo: '100' })]);
+    expect(render({ tx })).toContain(UNDECODED_MARKER);
   });
 });

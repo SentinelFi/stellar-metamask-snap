@@ -35,6 +35,12 @@ Any release that changes `snap.manifest.json` `initialPermissions` deserves an e
 
 Run from a clean tree on `main`, with CI green.
 
+If any dependency, RPC method, or renderable operation type changed since the
+last release, first work through
+[Re-derive on a dependency or surface change](#re-derive-on-a-dependency-or-surface-change).
+Those checks are not in CI, because what they depend on lives upstream or in a
+second hand-maintained list.
+
 1. **Pick the version** and confirm it against the rules above.
 2. **Update the changelog.** Move `[Unreleased]` entries under a new `[X.Y.Z]` heading with the date, add a fresh empty `[Unreleased]`, and update the link definitions at the bottom. Record the audited commit for any release that has been through an audit.
 3. **Bump all four version locations**, then verify:
@@ -179,6 +185,118 @@ every step below is mandatory for a production release:
 This same argument now covers the connector, which had no equivalent until `packages/connector/dist.sha256` was committed: `tsc` emits it, the digest is reviewed in the diff, and CI fails if a rebuild on another platform disagrees. Regenerate it by building the package (`yarn workspace stellar-soroban-snap-connector build` writes it, exactly as `mm-snap build` rewrites the snap's manifest shasum), and read the diff when it changes: a digest that moves without a source change is the signal this file exists to raise.
 
 The native transpiler behind `mm-snap build` (`@swc/core`) is delivered as platform-specific optional packages (`@swc/core-win32-x64-msvc`, `@swc/core-linux-x64-gnu`, and so on). Yarn 3 records no `checksum:` for platform-conditional packages in `yarn.lock`, and `yarn install --immutable` does not fail on them, so they are fetched over TLS with nothing but the registry's word for their contents. The compensating control is the cross-platform reproducibility that the manifest seal enforces: the bundle is built on Windows by the developer (with `@swc/core-win32-x64-msvc`) and the committed manifest carries its shasum; CI then rebuilds on Linux (with `@swc/core-linux-x64-gnu`) and fails unless `git diff --exit-code packages/snap/snap.manifest.json` is clean. A committed manifest that passes CI therefore means two independently fetched, un-checksummed native transpilers produced byte-identical output from the same source. A tampered binary on either side would have to produce exactly the other side's bytes to go unnoticed, which is a far stronger statement than a single checksum over one download. Keep the developer-side and CI-side platforms different on purpose; building the release bundle in CI alone would lose this property.
+
+## Re-derive on a dependency or surface change
+
+A few of this repository's safety properties are held by something other than a
+test or a type: by an upstream union having exactly the arms it has today, or by
+two hand-maintained lists agreeing. They hold at the audited commit. They are
+the ones to re-check when the thing underneath them moves, because none of them
+fails loudly on its own.
+
+Each entry below names its trigger, what would break, and how you would notice.
+Work through the entries whose trigger fired; skip the rest.
+
+### Trigger: bumping `@stellar/stellar-sdk`
+
+1. **`setOptions` signer key variants.** `describeSigner` in
+   [`packages/snap/src/ui/transaction.tsx`](../packages/snap/src/ui/transaction.tsx)
+   names the four `SignerKey` union arms and falls back to the literal string
+   `unknown signer type`. Unlike every comparable case in that file, the
+   fallback is **not** gated by `findUndisplayableOperation`, so it would be
+   displayed rather than refused, on the one operation that changes who controls
+   an account.
+
+   It is unreachable at the audited commit: the XDR union has exactly four arms,
+   so a fifth discriminant fails to decode before this code runs. A protocol
+   addition plus an SDK bump makes it reachable, and nothing would say so. The
+   SDK's own `setOptions` decoder has no `else` throw for an unrecognised arm; it
+   leaves `result.signer` carrying only `weight`. `OperationSigner` in the same
+   file is a hand-written structural type, so a new field does not fail
+   typecheck either.
+
+   Check that the arms the SDK handles are still exactly the four
+   `describeSigner` names:
+
+   ```bash
+   grep -rho 'arm === "[A-Za-z0-9]*"' node_modules/@stellar/stellar-sdk/lib --include=operation.js | sort -u
+   ```
+
+   If a fifth appears, gate it in `findUndisplayableOperation` so the signature
+   is refused, matching the treatment `extraSigners` already gets, before
+   shipping the bump.
+
+2. **Bundle markers.** [`audits/known-advisories.json`](../audits/known-advisories.json)
+   proves axios, form-data, and follow-redirects are absent from the shipped
+   bundle by grepping it for string literals from their runtime code. Re-derive
+   those markers whenever the SDK crosses a major version, as that file's own
+   note instructs: minification strips package names, so a marker upstream has
+   reworded silently disarms the check while CI still reports it clean.
+
+3. **`EXPECTED_RANDOM_REWRITES`.** `snap.config.ts` fails the build when the
+   `Math.random` occurrence count moves. This one does announce itself. When it
+   fires, confirm the new occurrences are real call sites rather than string
+   literals, then update the constant deliberately; never update it to turn a
+   red build green.
+
+4. **Keypair buffer semantics.** `wipeKeypair` and `deriveFromNode` depend on
+   `Keypair.fromRawEd25519Seed` copying its buffer rather than retaining it, and
+   on `rawSecretKey()` returning the live buffer. Both are asserted in
+   `packages/snap/src/keys/index.test.ts`, so a change fails the suite rather
+   than silently leaving key material reachable. No manual check needed; listed
+   so the failure is recognisable for what it is when it happens.
+
+### Trigger: adding an RPC method
+
+1. **Dialog throttle membership.** A method that can open a dialog must be in
+   `DIALOG_METHODS` in `packages/snap/src/rpc/throttle.ts`, or it bypasses the
+   consecutive-rejection cooldown entirely.
+
+2. **Global work budget.** A method that makes an outbound request must claim a
+   global budget (`takePredialogBudget` or `takeTokenReadBudget`), not only a
+   per-origin entry in `RATE_LIMITS`: every control keyed on `origin` resets per
+   subdomain, which is the reason the global budgets exist.
+
+3. **Rate-limit map sizing.** `requestLog` in
+   [`packages/snap/src/rpc/limiter.ts`](../packages/snap/src/rpc/limiter.ts) is
+   keyed per `(origin, method)` pair but capped by `MAX_TRACKED_ORIGINS` (100).
+   With the current 13 rate-limited methods that is roughly 7 concurrently
+   active origins before LRU eviction begins resetting live windows. Eviction
+   fails open, which is the correct direction for an availability control and
+   why this is not urgent, but the constant bounds fewer origins than its name
+   suggests and the gap widens with every method added. If `RATE_LIMITS` grows
+   much beyond its current size, size the cap as
+   `MAX_TRACKED_ORIGINS * RATE_LIMITS.size`, or key the map by origin with a
+   per-method sub-record so the constant means what it says.
+
+### Trigger: adding a renderable operation type
+
+`SUPPORTED_OPERATION_TYPES` (the allowlist `handlers/sign.tsx` enforces) and the
+`renderOperationBody` switch are two hand-maintained lists whose agreement is
+what keeps the `default:` "not decoded by the snap" arm dead. Drift converts a
+hard refusal into a soft "review the XDR yourself" banner, which is the review
+mechanism the fail-closed policy exists to reject.
+
+This one is enforced: the "operation allowlist and renderer parity" suite in
+`packages/snap/src/ui/transaction-fidelity.test.tsx` checks both directions,
+asserts each fixture really decodes to the type it is filed under, and carries a
+positive control so the assertion cannot rot into vacuity. Add the fixture
+alongside the allowlist entry and the suite stays green.
+
+### Trigger: bumping `CURRENT_DISCLOSURE_VERSION`
+
+Re-gating a capability on a new disclosure version does not re-gate everything a
+standing grant implies. `getAccounts` checks `grantHasCurrentDisclosure`;
+`getBalances` and `fund` check only that a grant exists, and both distinguish an
+owned address from an unowned one. An origin holding an older grant therefore
+keeps a membership oracle for addresses it already knows, after losing
+enumeration.
+
+That is a defensible gradient, since probing requires already holding the
+address where enumeration does not, and it is empty at the audited commit
+because every grant in existence carries version 1. Decide it explicitly at bump
+time rather than inheriting it, and record the decision in the
+`CURRENT_DISCLOSURE_VERSION` docstring in `packages/snap/src/state/index.ts`.
 
 ## One-time setup outside the repository
 
