@@ -862,6 +862,14 @@ export async function reconcileEntropyBinding(
 /**
  * Removes a tracked token from a network's registry (idempotent).
  *
+ * Takes no `expectedFingerprint`, unlike every mutation that grants or
+ * discloses something. The token registry is deliberately one of the two
+ * things a phrase-change reset keeps (see `reconcileEntropyBinding`), because
+ * a tracked contract is a display preference rather than anything derived
+ * from the phrase. So there is no wallet-specific consent for a stale
+ * approval to misapply: the user asked to stop showing a contract, and it is
+ * the same contract in either wallet. The write only ever removes.
+ *
  * @param network - The network name.
  * @param contractId - The token contract to stop tracking.
  */
@@ -886,6 +894,15 @@ export async function removeToken(
 
 /**
  * Removes an origin's connection grant (idempotent).
+ *
+ * Takes no `expectedFingerprint`, and should not. The comparison exists to
+ * stop an approval collected under one phrase from committing against
+ * another's state, which matters when the write grants something. This one
+ * revokes, so refusing it is the unsafe direction: it would leave a grant in
+ * place because the wallet changed underneath the click. The case is empty
+ * anyway, since a phrase change clears `origins` outright, so the mismatch a
+ * fingerprint would detect is a state in which there is nothing left to
+ * revoke.
  *
  * @param origin - The dapp origin to disconnect.
  */

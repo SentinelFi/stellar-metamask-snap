@@ -1133,9 +1133,21 @@ export async function simulateForDisplay(
   try {
     response = await simulateTransaction(rpcUrl, transactionXdr);
   } catch (error) {
+    // Held to the same rule as the endpoint's own error text below. A thrown
+    // message reaching here is snap-authored today, and the one variant that
+    // embeds endpoint text sanitizes it first, but that guarantee lives in
+    // another module and is stated at neither end. Sanitizing at the point of
+    // use makes it local, costs nothing when the text is already clean, and
+    // means a new thrower on this path cannot put raw endpoint bytes in a
+    // dialog. The bound matches the one below rather than the wider one
+    // `rpcCall` applies, so the two branches cannot render at different
+    // lengths.
     return {
       ok: false,
-      error: error instanceof Error ? error.message : 'Simulation failed.',
+      error:
+        error instanceof Error
+          ? truncate(sanitizeInlineText(error.message), 120)
+          : 'Simulation failed.',
     };
   }
 

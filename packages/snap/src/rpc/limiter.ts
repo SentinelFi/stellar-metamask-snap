@@ -294,7 +294,17 @@ export function takeTokenReadBudget(count: number): boolean {
  */
 const MAX_TRACKED_ORIGINS = 100;
 
-/** Request timestamps per `origin method` key (sliding window). */
+/**
+ * Request timestamps per key (sliding window). The key joins the origin and
+ * the method with a NUL, spelled as the `\0` escape rather than written as the
+ * byte itself: a literal U+0000 anywhere in a file makes GNU grep report
+ * "Binary file ... matches" instead of the matching line, for every search of
+ * that file, and this is one a reviewer should be able to read with ordinary
+ * tools.
+ *
+ * NUL rather than a space because it cannot occur in either part, so no pair
+ * of origin and method values can collide into a single window.
+ */
 const requestLog = new Map<string, number[]>();
 
 /**
@@ -356,7 +366,7 @@ export function assertRateAllowed(origin: string, method: string): void {
   if (!config) {
     return;
   }
-  const key = `${origin} ${method}`;
+  const key = `${origin}\0${method}`;
   const now = Date.now();
   const windowStart = now - config.windowMs;
   const known = requestLog.has(key);
