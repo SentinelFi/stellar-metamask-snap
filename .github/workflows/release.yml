@@ -241,7 +241,7 @@ jobs:
       # packs anything, so a rewritten artifact fails the release rather than
       # reaching a tarball.
       - name: Upload the snap build output
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: snap-dist
           path: packages/snap/dist
@@ -249,7 +249,7 @@ jobs:
           retention-days: 30
 
       - name: Upload the connector build output
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: connector-dist
           path: packages/connector/dist
@@ -542,7 +542,7 @@ jobs:
           tar -tzf "$CONNECTOR_TGZ"
 
       - name: Upload the packed tarballs
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-tarballs
           path: '*.tgz'
