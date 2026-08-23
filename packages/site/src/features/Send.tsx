@@ -197,6 +197,9 @@ export const Send = () => {
     );
     if (result) {
       setSubmission({
+        // Recorded here, at the submission, not read back when the result
+        // renders: the user may switch networks while it is still on screen.
+        network: network.network,
         hash: result.hash,
         status: result.status,
         warnings: result.warnings,
@@ -289,7 +292,6 @@ export const Send = () => {
         ) : null}
         <SubmissionResult
           submission={submission}
-          network={network?.network ?? null}
           onDismiss={() => setSubmission(null)}
         />
       </Stack>

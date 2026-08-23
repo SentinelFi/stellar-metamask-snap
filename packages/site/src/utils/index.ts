@@ -7,4 +7,5 @@ export * from './errors';
 export * from './format';
 export * from './handle';
 export * from './horizon';
+export * from './latest';
 export * from './tx';

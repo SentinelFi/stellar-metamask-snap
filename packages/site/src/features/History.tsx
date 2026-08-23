@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
 
 import { Button } from '../components/Form';
@@ -14,6 +14,7 @@ import {
   formatTimestamp,
   handle,
   HISTORY_LIMIT,
+  latestOnly,
 } from '../utils';
 
 // Incoming value is the one thing worth colouring: an outgoing row reads as
@@ -117,7 +118,15 @@ export const History = () => {
 
   const horizonUrl = network?.networkUrl ?? null;
 
+  // Which load may still write. This panel reads Horizon directly rather
+  // than through the wallet, and renders each entry against whichever network
+  // is active when it draws, so a reply arriving after a network switch would
+  // be listed under the new network's name with links into its explorer, for
+  // transactions that happened on the old one.
+  const latest = useRef(latestOnly());
+
   const load = useCallback(async () => {
+    const current = latest.current.claim();
     if (!horizonUrl || !address) {
       setEntries([]);
       setLoaded(false);
@@ -125,17 +134,33 @@ export const History = () => {
     }
     setLoading(true);
     try {
-      setEntries(await fetchHistory(horizonUrl, address));
+      const next = await fetchHistory(horizonUrl, address);
+      if (!current()) {
+        return;
+      }
+      setEntries(next);
       setLoaded(true);
     } finally {
-      setLoading(false);
+      if (current()) {
+        setLoading(false);
+      }
     }
   }, [horizonUrl, address]);
 
   // Reloads when the account or the network changes, and after any action
   // that refreshed wallet state (the wallet's balances object is replaced on
   // every refresh, which is what makes a submitted payment show up here).
+  //
+  // Outstanding loads are disowned here, at the moment the context changes,
+  // rather than when their replacement starts: those are not the same
+  // instant, and a reply landing between them is exactly the one that would
+  // be rendered under the wrong wallet. Clearing rather than leaving the old
+  // rows up is deliberate, since an empty table that is about to fill says
+  // less than a full one that is about to be wrong.
   useEffect(() => {
+    latest.current.invalidate();
+    setEntries([]);
+    setLoaded(false);
     load().catch(() => undefined);
   }, [load]);
 

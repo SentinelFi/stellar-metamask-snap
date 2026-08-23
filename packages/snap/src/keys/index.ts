@@ -423,26 +423,74 @@ async function fetchAddress(index: number, source: string): Promise<string> {
  * other address and every fingerprint comes from
  * {@link fetchPublicKeyBytes}.
  *
- * @param source - The entropy source to derive from, named explicitly for
- * the reason {@link primaryEntropySource} gives.
+ * Naming the source does not make the answer current, and this import is
+ * held to the same rule {@link observePrimaryPhrase} applies to public keys.
+ * The request names a source, so the platform returns that source's node
+ * however long it takes; a switch of the primary phrase landing in that await
+ * yields a node that is correctly the named phrase's for a wallet the user
+ * has left. Every signing path reaches this line just after
+ * {@link assertPhraseUnchanged} has confirmed the phrase, which is precisely
+ * why the interval matters: that confirmation is what makes the caller
+ * willing to sign, and the switch happens after it. Without the second read
+ * the node would be accepted, its fingerprint bound, and a signature produced
+ * under an approval the user gave for a different wallet.
+ *
+ * The expected phrase is passed in rather than inferred, so the check has
+ * something to compare against: the fingerprint proves the platform answered
+ * from the source the caller resolved its account under, and the re-read
+ * proves that source is still the primary one. Both run before
+ * {@link bindFingerprint}, so a node from an ended tenure cannot reconcile
+ * the store back to it, which is the same rollback the public path refuses.
+ *
+ * @param phrase - The phrase the caller resolved its work under. The node
+ * must derive for it, and it must still be primary when the node arrives.
  * @returns The SEP-0005 parent node.
+ * @throws An external-service error when the imported node is not that
+ * phrase's, or the primary source changed while it was being imported.
  */
-async function getAccountParentNode(source: string): Promise<SLIP10Node> {
+async function getAccountParentNode(phrase: BoundPhrase): Promise<SLIP10Node> {
   const entropy = await snap.request({
     method: 'snap_getBip32Entropy',
     params: {
       path: SUBTREE_PATH,
       curve: 'ed25519',
-      source,
+      source: phrase.source,
     },
   });
   const node = await SLIP10Node.fromJSON(entropy);
   const fingerprint = fingerprintOf(node.publicKeyBytes);
+  if (
+    fingerprint !== phrase.fingerprint ||
+    (await primaryEntropySource()) !== phrase.source
+  ) {
+    // Narrow the window on the subtree key that is about to be discarded.
+    // Best effort, and best effort is the honest description: the runtime may
+    // have copied it, and the JSON the platform returned holds it too. It
+    // leaves one fewer reachable copy than doing nothing would.
+    wipeNode(node);
+    throw phraseChangedError();
+  }
   // Recorded immutably against the node itself, so work that retained this
   // node across a later phrase change can prove which phrase it derives for.
   nodeFingerprints.set(node, fingerprint);
   await bindFingerprint(fingerprint);
   return node;
+}
+
+/**
+ * Zeroes the private halves of a parent node that is being thrown away.
+ *
+ * Only ever called on a node no caller will receive. {@link deriveFromNode}
+ * explains why a node that is still in use must keep these fields intact.
+ *
+ * @param node - The node to discard.
+ */
+function wipeNode(node: SLIP10Node): void {
+  try {
+    node.privateKeyBytes?.fill(0);
+  } catch {
+    // Never let best-effort cleanup replace the refusal it accompanies.
+  }
 }
 
 /**
@@ -793,14 +841,15 @@ async function deriveAddress(node: SLIP10Node, index: number): Promise<string> {
  * official SEP-0005 test vectors is enforced by the test suite.
  *
  * @param index - The SEP-0005 account index (`x` in `m/44'/148'/x'`).
- * @param source - The entropy source to derive from.
+ * @param phrase - The phrase to derive from. The import refuses if it is no
+ * longer the primary one by the time the node arrives.
  * @returns The Stellar keypair for the account.
  */
 export async function deriveKeypair(
   index: number,
-  source: string,
+  phrase: BoundPhrase,
 ): Promise<Keypair> {
-  return deriveFromNode(await getAccountParentNode(source), index);
+  return deriveFromNode(await getAccountParentNode(phrase), index);
 }
 
 /**
@@ -917,13 +966,13 @@ async function resolveAddresses(
  * then reuses the same promise, so the account sweep crosses the sandbox
  * boundary with the parent key material at most once.
  *
- * @param source - The entropy source the node must come from.
+ * @param phrase - The phrase the node must come from.
  * @returns A getter resolving the parent node.
  */
-function lazyAccountParentNode(source: string): () => Promise<SLIP10Node> {
+function lazyAccountParentNode(phrase: BoundPhrase): () => Promise<SLIP10Node> {
   let cached: Promise<SLIP10Node> | null = null;
   return async () => {
-    cached ??= getAccountParentNode(source);
+    cached ??= getAccountParentNode(phrase);
     return cached;
   };
 }
@@ -956,7 +1005,7 @@ export async function findAccountIndexByAddress(
   binding: EntropyBinding,
   address: string,
 ): Promise<number | null> {
-  const getNode = lazyAccountParentNode(binding.source);
+  const getNode = lazyAccountParentNode(binding);
   for (let index = 0; index < MAX_ACCOUNT_INDEX; index += 1) {
     let candidate = cachedAddress(index, binding.fingerprint);
     if (candidate === undefined) {
@@ -1139,9 +1188,11 @@ export async function resolveSigningAccount(
  * @param index - The account index resolution returned.
  * @param expectedAddress - The address resolution returned, and the dialog
  * showed.
- * @param source - The entropy source the displayed address came from, so the
+ * @param phrase - The phrase the displayed address came from, so the
  * signature is produced by that phrase's key and not by whichever phrase is
- * primary at the moment of derivation.
+ * primary at the moment of derivation. The import refuses outright if the
+ * phrase stopped being primary while the key was being fetched, which is the
+ * one interval the confirmation before this call cannot see.
  * @returns The signing keypair. Callers must {@link wipeKeypair} it after
  * their final signature.
  * @throws An invalid-request error when the derived key is not that address.
@@ -1149,9 +1200,9 @@ export async function resolveSigningAccount(
 export async function deriveSigningKeypair(
   index: number,
   expectedAddress: string,
-  source: string,
+  phrase: BoundPhrase,
 ): Promise<Keypair> {
-  const keypair = await deriveKeypair(index, source);
+  const keypair = await deriveKeypair(index, phrase);
   if (keypair.publicKey() !== expectedAddress) {
     wipeKeypair(keypair);
     addressCache.clear();

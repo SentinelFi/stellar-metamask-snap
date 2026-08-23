@@ -13,7 +13,11 @@
     // from the root config would emit extensionless imports that only
     // bundlers can resolve.
     "module": "NodeNext",
-    "moduleResolution": "NodeNext"
+    "moduleResolution": "NodeNext",
+    // Stated, not inherited: `dist.sha256` is committed and compared across
+    // operating systems, and this is the emit setting that has historically
+    // defaulted to the host's convention.
+    "newLine": "lf"
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]

@@ -53,9 +53,10 @@ function accountPathNode(path: string[]): `slip10:${number}'` {
 async function resolveSigningKeypair(
   requestedAddress?: string,
 ): Promise<{ keypair: Keypair; index: number }> {
-  const { index, address } = await resolveSigningAccount(requestedAddress);
+  const { index, address, phrase } =
+    await resolveSigningAccount(requestedAddress);
   return {
-    keypair: await deriveSigningKeypair(index, address, SOURCE_ID),
+    keypair: await deriveSigningKeypair(index, address, phrase),
     index,
   };
 }

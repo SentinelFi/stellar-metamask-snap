@@ -33,6 +33,7 @@ import { signAuthEntry, signMessage, signTransaction } from './sign';
 import {
   deriveSigningKeypair,
   ensureEntropyBinding,
+  findAccountIndexByAddress,
   getActiveAddress,
   getAddressForIndex,
   getOwnedAccounts,
@@ -129,6 +130,18 @@ let privateKeyFetches: number;
  * source-bound key request coming back.
  */
 let flipDuringNextSubtreeKey: boolean;
+/**
+ * The same, for the one request that imports the private subtree. Signing
+ * reaches it only after the phrase has been confirmed, so this is the
+ * interval no earlier check can see.
+ */
+let flipDuringNextPrivateImport: boolean;
+/**
+ * When set, the next private-subtree import is answered from this source
+ * whatever the request named. Models a platform that ignores the `source`
+ * option, which the sourced request is supposed to make impossible.
+ */
+let privateImportSource: string | null;
 /**
  * The `m/44'/148'` subtree of each entropy source the mocked platform holds.
  *
@@ -271,9 +284,10 @@ type RequestArgs = {
 async function resolveSigningKeypair(
   requestedAddress?: string,
 ): Promise<{ keypair: Keypair; index: number }> {
-  const { index, address } = await resolveSigningAccount(requestedAddress);
+  const { index, address, phrase } =
+    await resolveSigningAccount(requestedAddress);
   return {
-    keypair: await deriveSigningKeypair(index, address, primarySource),
+    keypair: await deriveSigningKeypair(index, address, phrase),
     index,
   };
 }
@@ -360,6 +374,24 @@ let mixedResponseSource: string | null = null;
  */
 function flipSourceDuringNextSubtreeKey(): void {
   flipDuringNextSubtreeKey = true;
+}
+
+/**
+ * Arms the platform to change its primary source while it serves the next
+ * private-subtree import.
+ */
+function flipSourceDuringNextPrivateImport(): void {
+  flipDuringNextPrivateImport = true;
+}
+
+/**
+ * Arms the next private-subtree import to be answered from the named source
+ * whatever the request asked for.
+ *
+ * @param source - The source that import should come from.
+ */
+function answerNextPrivateImportFrom(source: string): void {
+  privateImportSource = source;
 }
 
 /**
@@ -666,6 +698,8 @@ describe('connection gate and account resolution', () => {
     accountKeyFetches = 0;
     privateKeyFetches = 0;
     flipDuringNextSubtreeKey = false;
+    flipDuringNextPrivateImport = false;
+    privateImportSource = null;
     mixedResponseSource = null;
     sourceNodes.set(SOURCE_A, entropy);
     sourceNodes.set(
@@ -712,10 +746,24 @@ describe('connection gate and account resolution', () => {
             return null;
           case 'snap_listEntropySources':
             return entropySources();
-          case 'snap_getBip32Entropy':
+          case 'snap_getBip32Entropy': {
             entropyFetches += 1;
             privateKeyFetches += 1;
-            return nodeForSource(args.params.source).toJSON();
+            // Answered from the source the request named, with the switch
+            // landing after it: the node is correctly the named phrase's, and
+            // the wallet is the other phrase by the time anyone looks again.
+            let importSource = args.params.source;
+            if (privateImportSource !== null) {
+              importSource = privateImportSource;
+              privateImportSource = null;
+            }
+            const imported = nodeForSource(importSource).toJSON();
+            if (flipDuringNextPrivateImport) {
+              flipDuringNextPrivateImport = false;
+              primarySource = SOURCE_B;
+            }
+            return imported;
+          }
           case 'snap_getBip32PublicKey': {
             // The subtree's own key, or the hardened account one level below,
             // from the source the request named (or the primary one when it
@@ -1732,6 +1780,127 @@ describe('connection gate and account resolution', () => {
       expect((await ensureEntropyBinding()).fingerprint).toBe(
         fresh.fingerprint,
       );
+    });
+  });
+
+  describe('a phrase switch inside the private-key import', () => {
+    /*
+     * The last interval in a signing request, and the narrowest. Everything
+     * before it has been checked: the grant, the account, the dialog, and
+     * then `assertPhraseUnchanged` immediately after approval, which asks the
+     * platform directly rather than trusting what some earlier request
+     * observed. What follows that confirmation is one more source-bound
+     * request, for the private subtree this time, and a switch landing inside
+     * it returns a node that is correctly the approved phrase's for a wallet
+     * the user has just left.
+     *
+     * A signature produced there is the user's own approval applied to the
+     * wrong wallet, and the fingerprint bound alongside it can reconcile the
+     * store back to a phrase whose tenure has ended. So the import is held to
+     * the rule the public path already follows: read the primary source again
+     * once the key is in hand, and refuse before anything is bound, derived,
+     * or signed.
+     */
+
+    const signers: [string, () => Promise<unknown>][] = [
+      [
+        'signTransaction',
+        async () =>
+          signTransaction(ORIGIN, {
+            xdr: classicPaymentXdr(),
+            address: ADDRESS_1,
+          }),
+      ],
+      [
+        'signMessage',
+        async () =>
+          signMessage(ORIGIN, { message: 'hello', address: ADDRESS_1 }),
+      ],
+      [
+        'signAuthEntry',
+        async () =>
+          signAuthEntry(ORIGIN, { authEntry: addressAuthEntryXdr(ADDRESS_1) }),
+      ],
+    ];
+
+    it.each(signers)(
+      '%s produces no signature when the phrase changes under the import',
+      async (_name, call) => {
+        stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+        const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+        const held = call();
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        // Armed while the dialog is open, so the confirmation that follows
+        // the approval still sees the approved phrase and passes. The switch
+        // lands in the import after it.
+        flipSourceDuringNextPrivateImport();
+        gate.release();
+
+        await expect(held).rejects.toThrow('secret recovery phrase changed');
+        // The import happened, which is what makes this the interval under
+        // test rather than one an earlier check already covered.
+        expect(privateKeyFetches).toBe(1);
+      },
+    );
+
+    it("leaves the approved wallet's state untouched", async () => {
+      stored = stateV2({
+        origins: CONNECTED,
+        accounts: [0, 1],
+        network: 'TESTNET',
+      });
+      const gate = gateNextRequest((args) => args.method === 'snap_dialog');
+      const held = signMessage(ORIGIN, {
+        message: 'hello',
+        address: ADDRESS_1,
+      });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+      // Snapshotted with the dialog open, so it already carries everything
+      // the request legitimately wrote for the approved phrase. What must not
+      // change is anything after this point.
+      const before = JSON.stringify(stored);
+
+      flipSourceDuringNextPrivateImport();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      // The refusal is raised before `bindFingerprint`, so the import cannot
+      // reconcile the store to the phrase it names. Were it bound after a
+      // newer request had already moved the store on, this is where the
+      // grants, revealed accounts, and active account of the phrase actually
+      // in use would have been erased.
+      expect(JSON.stringify(stored)).toBe(before);
+    });
+
+    it('refuses a home-page lookup whose phrase changed under the import', async () => {
+      // The sweep shares the import, and while it signs nothing it does bind
+      // a fingerprint, so it can roll the store back the same way.
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const binding = await ensureEntropyBinding();
+      const before = JSON.stringify(stored);
+
+      flipSourceDuringNextPrivateImport();
+      await expect(
+        findAccountIndexByAddress(binding, ADDRESS_1),
+      ).rejects.toThrow('secret recovery phrase changed');
+      expect(JSON.stringify(stored)).toBe(before);
+    });
+
+    it('refuses a node the platform answered from the wrong phrase', async () => {
+      // The other half of the check, and the one a switch cannot produce: a
+      // node whose fingerprint is not the phrase the caller resolved under.
+      // The request named a source, so this should be unreachable; it is
+      // refused rather than assumed away, because what follows is a
+      // signature.
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const binding = await ensureEntropyBinding();
+      answerNextPrivateImportFrom(SOURCE_B);
+      await expect(
+        findAccountIndexByAddress(binding, ADDRESS_1),
+      ).rejects.toThrow('secret recovery phrase changed');
     });
   });
 

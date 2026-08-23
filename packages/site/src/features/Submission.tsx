@@ -6,6 +6,14 @@ import { explorerTxUrl } from '../utils';
 
 /** What a completed sign-and-submit left behind. */
 export type Submission = {
+  /**
+   * The network the transaction was submitted to, recorded when it was
+   * submitted rather than read back at render time. The explorer link is
+   * built from it, and the active network can change while a result is still
+   * on screen, which would otherwise point a user at the wrong chain's
+   * explorer for a hash that is not on it.
+   */
+  network: NetworkName;
   /** Present once the network assigned the transaction a hash. */
   hash?: string | undefined;
   /** Soroban RPC acceptance status, when the path went through the RPC. */
@@ -16,7 +24,6 @@ export type Submission = {
 
 export type SubmissionResultProps = {
   submission: Submission | null;
-  network: NetworkName | null;
   onDismiss: () => void;
 };
 
@@ -32,21 +39,20 @@ export type SubmissionResultProps = {
  *
  * @param props - Result props.
  * @param props.submission - The completed submission, or null.
- * @param props.network - The active network, for the explorer link.
  * @param props.onDismiss - Clears the result.
  * @returns The result block, or null when there is nothing to report.
  */
 export const SubmissionResult = ({
   submission,
-  network,
   onDismiss,
 }: SubmissionResultProps) => {
   if (!submission) {
     return null;
   }
 
-  const explorer =
-    network && submission.hash ? explorerTxUrl(network, submission.hash) : null;
+  const explorer = submission.hash
+    ? explorerTxUrl(submission.network, submission.hash)
+    : null;
 
   return (
     <Stack gap="0.8rem">

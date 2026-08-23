@@ -53,8 +53,19 @@ jobs:
       - name: Build snap (includes SES eval)
         run: yarn workspace stellar-soroban-snap build
 
-      - name: Verify committed manifest matches the built bundle
-        run: git diff --exit-code packages/snap/snap.manifest.json
+      # Two committed seals over the same bundle. The manifest's shasum is
+      # MetaMask's own checksum, checked by the platform at install time;
+      # `dist.sha256` is a plain digest of the emitted files, and exists so
+      # the release workflow can verify the same bytes with coreutils alone,
+      # in a job that has installed none of the tooling that produced them.
+      # Both are diffed rather than recomputed and trusted: the developer
+      # built on one operating system and committed these values, this job
+      # has just rebuilt on another, and a difference means the same source
+      # produced different bytes.
+      - name: Verify committed seals match the built bundle
+        run: |
+          git diff --exit-code packages/snap/snap.manifest.json
+          git diff --exit-code packages/snap/dist.sha256
 
       # The threat model claims the shipped bundle contains zero Math.random
       # references (snap.config.ts rewrites them to crypto.getRandomValues).
@@ -149,6 +160,9 @@ jobs:
 
       - name: Build connector
         run: yarn workspace stellar-soroban-snap-connector build
+
+      - name: Verify the committed seal matches the built connector
+        run: git diff --exit-code packages/connector/dist.sha256
 
       # The root tsconfig turns on `strict`, `noUncheckedIndexedAccess`, and
       # `exactOptionalPropertyTypes`, but nothing in this workflow used to run

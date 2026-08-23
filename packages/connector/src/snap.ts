@@ -357,8 +357,8 @@ export class StellarSnap {
   }
 
   /**
-   * Verifies, at most once per client for the happy path, that the snap
-   * MetaMask will route `wallet_invokeSnap` to is the pinned release.
+   * Verifies, on every invocation, that the snap MetaMask will route
+   * `wallet_invokeSnap` to is the pinned release.
    *
    * `connect()` already verifies what `wallet_requestSnaps` installed, but a
    * dapp is not obliged to call it first: `getAddress()` is silent by
@@ -367,16 +367,9 @@ export class StellarSnap {
    * directly, and the common "read the address, connect only if it is
    * empty" pattern would otherwise run every call against whatever release
    * happens to be installed under the published ID, with no one having
-   * compared it to the pin. This closes that gap: the first invocation on
-   * an `npm:` client reads `wallet_getSnaps`, a mismatch is refused with the
-   * same error `connect()` throws, and a match is remembered so later calls
-   * cost nothing extra.
-   *
-   * An absent snap is not an error here. MetaMask refuses the invocation
-   * itself in that case, and letting it do so keeps the behaviour a dapp
-   * already handles (and the way `getAddress()` fails before installation)
-   * unchanged. Nothing is remembered for that outcome either, so the check
-   * simply repeats until the snap is installed and compared.
+   * compared it to the pin. This closes that gap: every invocation on an
+   * `npm:` client reads `wallet_getSnaps`, and a mismatch is refused with
+   * the same error `connect()` throws.
    *
    * Nothing is remembered between calls. An earlier successful comparison
    * describes the bundle that was installed then, and MetaMask can replace

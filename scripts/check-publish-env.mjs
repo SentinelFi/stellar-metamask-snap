@@ -22,21 +22,23 @@
  * is the one lifecycle hook BOTH package managers honour on the publish path.
  *
  * How the release workflow relates to this check. `.github/workflows/release.yml`
- * is split in two: a build job that runs every gate and packs both tarballs
- * without holding an OIDC token, and a publish job that holds the token and
- * does nothing but verify the tarballs' digests and run `npm publish <tgz>
- * --provenance`. npm runs no lifecycle scripts when publishing a tarball, so
- * this guard fires in the build job's `npm pack`, which is a job that cannot
- * attest by design. That job therefore sets the escape hatch below, and the
- * "can this environment attest" question is answered where it belongs: by npm
- * itself, which refuses `--provenance` without an OIDC token in the publish
- * job. Any other use of the escape hatch should be a local `npm pack` for
- * inspection, never a publish.
+ * runs three jobs: a build job that runs every gate, a seal job that packs
+ * both tarballs and verifies them without having installed anything from this
+ * repository, and a publish job that holds the OIDC token and does nothing
+ * but verify the tarballs' digests and run `npm publish <tgz> --provenance`.
  *
- * Escape hatch: set `ALLOW_UNSIGNED_PACK=1` to pack without an attestation
- * (locally for inspection, or in the release workflow's build job). It is
- * deliberately not named "...PUBLISH": anyone reaching for it should be
- * packing, and if they are publishing they should read this file first.
+ * The seal job packs with `--ignore-scripts`, so this guard does not fire
+ * there and the workflow does not set the escape hatch below. That is the
+ * point of packing that way: nothing from the dependency graph runs in the
+ * job that verifies the archives, and the "can this environment attest"
+ * question is answered where it can be enforced rather than asserted, by npm
+ * itself, which refuses `--provenance` without an OIDC token in the publish
+ * job.
+ *
+ * Escape hatch: set `ALLOW_UNSIGNED_PACK=1` to pack without an attestation,
+ * locally, for inspection. It is deliberately not named "...PUBLISH": anyone
+ * reaching for it should be packing, and if they are publishing they should
+ * read this file first.
  */
 
 /* eslint-disable n/no-process-env, n/no-process-exit */

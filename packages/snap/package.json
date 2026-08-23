@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "allow-scripts": "yarn workspace stellar-metamask-snap allow-scripts",
-    "build": "mm-snap build",
+    "build": "mm-snap build && node ../../scripts/dist-manifest.mjs .",
     "build:clean": "yarn clean && yarn build",
     "clean": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\"",
     "lint": "yarn lint:eslint && yarn lint:misc --check",

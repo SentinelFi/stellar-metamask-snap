@@ -18,7 +18,7 @@ import { StellarSnap } from 'stellar-soroban-snap-connector';
 import { useMetaMaskContext } from './MetamaskContext';
 import { useMetaMask } from './useMetaMask';
 import { defaultSnapOrigin, defaultSnapVersion } from '../config';
-import { isExpectedSnapVersion } from '../utils';
+import { isExpectedSnapVersion, latestOnly } from '../utils';
 
 export type WalletState = {
   /** The connector, or null until MetaMask exposes a provider. */
@@ -116,7 +116,15 @@ export const WalletProvider: FunctionComponent<{ children: ReactNode }> = ({
     installedSnap !== null && !isExpectedSnapVersion(installedSnap);
   const ready = installedSnap !== null && !versionMismatch && client !== null;
 
+  // Which refresh may still write. Several run at a time in ordinary use:
+  // the effect below re-reads whenever the installed snap changes, and `run`
+  // re-reads after every action. `latestOnly` explains why the last reply to
+  // arrive is not the one to believe.
+  const latest = useRef(latestOnly());
+
   const refresh = useCallback(async () => {
+    const current = latest.current.claim();
+
     if (!ready || !client) {
       // A wrong-version snap is not read from at all, not even silently: the
       // page must never present it as the audited release.
@@ -131,6 +139,9 @@ export const WalletProvider: FunctionComponent<{ children: ReactNode }> = ({
         client.getAddress(),
         client.getNetworkDetails(),
       ]);
+      if (!current()) {
+        return;
+      }
       setNetwork(details);
       setAddress(addressResult.address);
 
@@ -149,6 +160,9 @@ export const WalletProvider: FunctionComponent<{ children: ReactNode }> = ({
         client.getAccounts(),
         client.getBalances(),
       ]);
+      if (!current()) {
+        return;
+      }
       if (accountsResult.status === 'fulfilled') {
         setAccounts(accountsResult.value.accounts);
         setActiveIndex(accountsResult.value.activeIndex);
@@ -158,8 +172,12 @@ export const WalletProvider: FunctionComponent<{ children: ReactNode }> = ({
       );
     } catch {
       // A failed status read is not worth an error box: it re-runs after the
-      // next action, and the panels already show what they do not have.
-      setNetwork(null);
+      // next action, and the panels already show what they do not have. A
+      // superseded refresh does not even report that much: the read that
+      // replaced it is the one describing the current wallet.
+      if (current()) {
+        setNetwork(null);
+      }
     }
   }, [client, ready]);
 

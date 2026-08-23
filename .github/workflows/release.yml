@@ -16,32 +16,57 @@ name: Release
 # would therefore skip BOTH the attestation and `mm-snap manifest`, silently,
 # with a successful exit code. The npm CLI runs both.
 #
-# The workflow is two jobs, and the split is the point:
+# The workflow is three jobs, and the split is the point:
 #
-#   build    Runs every gate (lint, versions, build, manifest seal, audits,
-#            typecheck, tests with coverage thresholds, SBOM), then packs both
-#            tarballs and records their SHA-256 digests as job outputs. It
-#            holds no secret and no OIDC token. Everything that executes
-#            third-party code (eslint, jest, ts-jest, the SBOM action, every
-#            dev dependency) executes here, in a job that cannot publish.
+#   build    Runs every gate (lint, versions, build, manifest and build-output
+#            seals, audits, typecheck, tests with coverage thresholds, SBOM)
+#            and uploads the two build-output trees. It holds no secret and no
+#            OIDC token. Everything that executes third-party code (eslint,
+#            jest, ts-jest, mm-snap, the SBOM action, every dev dependency)
+#            executes here, in a job that can neither publish nor vouch for
+#            what it produced.
+#
+#   seal     Packs both tarballs and verifies them completely, in a job that
+#            has never run this repository's dependency graph: it checks out
+#            the release commit, downloads the build output, and compares it
+#            against digests that were committed and reviewed before any
+#            compiler ran. It uses no tool from the repository, only the
+#            runner's own git, npm, tar, and coreutils.
 #
 #   publish  Holds the OIDC token and runs inside the `npm-publish`
 #            environment. It never checks out the repository and never runs a
-#            build tool: it downloads the tarballs the build job uploaded,
-#            refuses them unless their digests equal the ones the build job
+#            build tool: it downloads the tarballs the seal job uploaded,
+#            refuses them unless their digests equal the ones that job
 #            recorded, and runs `npm publish <tarball> --provenance`. Job
 #            outputs are stored by GitHub, not by the artifact store, so a
 #            step that could rewrite the artifact cannot also rewrite the
 #            digest it is checked against.
 #
-# Before the split, the manifest-seal check ran in the middle of one job and
-# test, lint, and SBOM tooling ran after it with the publish token in reach;
-# a compromised dev dependency could have substituted the artifact together
-# with a self-consistent manifest and nothing would have re-checked. Now the
-# seal is re-verified immediately before packing (after the last step that
-# rebuilds anything: `test:coverage` rebuilds the bundle, and `mm-snap build`
-# rewrites the manifest), the tarball's contents are compared to the committed
-# files, and what the publish job publishes is exactly that tarball.
+# Why the seal is a separate job rather than later steps of the build job.
+# Steps within a job share more than a working directory. `GITHUB_PATH` and
+# `GITHUB_ENV` are environment files whose contents apply to every later step,
+# so code running anywhere in the build job can put its own `git`, `tar`, or
+# `sha256sum` earlier on the PATH, or set a shell hook such as `BASH_ENV` that
+# a later non-interactive shell sources before it runs anything. Verification
+# performed after that point is verification the attacker configured: it can
+# be made to pass over a substituted archive and then emit that archive's
+# genuine digest for the publish job to honour. Recording an immutable Git
+# baseline does not help, because the same process controls the commands that
+# compare against it.
+#
+# Those environment files are scoped to one job. A separate job is a separate
+# runner with a fresh environment, so nothing the build job's dependencies did
+# reaches the seal job, and the seal job installs nothing from this repository
+# for them to have influenced. That is why it can afford to trust the tools it
+# invokes by name.
+#
+# What the seal job compares against is committed, not produced. Each package
+# carries a `dist.sha256` written at build time and reviewed in the diff, and
+# CI fails when a rebuild disagrees with it. A digest a build job takes of its
+# own output proves only that the same bytes were later packed; it cannot say
+# they are a faithful compilation of the reviewed source, because the compiler
+# had already run. The committed manifest is checkable with coreutils alone,
+# which is what lets the clean job verify without installing anything.
 on:
   push:
     tags: ['v*']
@@ -73,10 +98,6 @@ jobs:
       contents: read
     outputs:
       node-version: ${{ steps.toolchain.outputs.node-version }}
-      snap-tarball: ${{ steps.pack.outputs.snap-tarball }}
-      snap-sha256: ${{ steps.pack.outputs.snap-sha256 }}
-      connector-tarball: ${{ steps.pack.outputs.connector-tarball }}
-      connector-sha256: ${{ steps.pack.outputs.connector-sha256 }}
     steps:
       # A real publish must come from a release tag, whichever event started
       # the run. Pushing a tag satisfies this by construction; a manual run
@@ -95,20 +116,180 @@ jobs:
         with:
           persist-credentials: false
 
-      # Everything below this point runs code from the dependency graph with
-      # write access to the checkout, including its `.git` directory. Local
-      # `HEAD`, local refs, and even the object database can be rewritten from
-      # inside the job; `GITHUB_SHA` cannot, because the runner is told it by
-      # the event that started the run. So the release baseline is fixed to
-      # `GITHUB_SHA` here, before any of that code has run, and recorded as
-      # content hashes in a step output that no later step can rewrite.
+      # The publish job installs the same Node without a checkout, so the
+      # pinned version is handed over as an output rather than read twice.
+      - name: Read the pinned Node.js version
+        id: toolchain
+        run: echo "node-version=$(tr -d '[:space:]' < .nvmrc)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      # The release gates are the CI gates. They are repeated here rather than
+      # assumed from a green CI run on the same commit, because what gets
+      # published is this checkout, and a release must not depend on someone
+      # having noticed that some other run was green.
+      - name: Lint
+        run: yarn lint
+
+      - name: Verify release versions agree
+        run: yarn check:versions
+
+      - name: Build snap
+        run: yarn workspace stellar-soroban-snap build
+
+      # Two committed seals over one build output, and they answer different
+      # questions. The manifest's shasum is MetaMask's own checksum over a
+      # canonical form of the bundle, and is what the platform checks at
+      # install time. `dist.sha256` is a plain SHA-256 of the emitted files,
+      # and exists so the seal job can verify the same bytes with coreutils
+      # alone, without installing this repository's tooling to check the
+      # output that tooling produced.
       #
-      # Recording hashes rather than paths is what makes the later comparison
-      # independent of the repository: `git hash-object` recomputes a blob ID
-      # from bytes, so verifying a packed file against one of these IDs asks
-      # nothing of the object database, the refs, or `HEAD` at the time of the
-      # check. A commit created inside the job cannot launder a modified file
-      # past it.
+      # Both are diffed rather than recomputed-and-trusted: the developer
+      # built on one operating system and committed these values, CI has just
+      # rebuilt on another, and a difference means the same source produced
+      # different bytes. That cross-platform agreement is the actual control.
+      # A tampered toolchain on either side would have to produce exactly the
+      # other side's output to pass unnoticed.
+      - name: Verify committed seals match the built bundle
+        run: |
+          git diff --exit-code packages/snap/snap.manifest.json
+          git diff --exit-code packages/snap/dist.sha256
+
+      - name: Verify bundle contains no insecure randomness
+        run: |
+          BUNDLE=packages/snap/dist/bundle.js
+          ! grep -qE 'Math\.random|Math\[.random' "$BUNDLE"
+
+      - name: Audit direct runtime dependencies (all workspaces)
+        run: yarn npm audit --all --environment production
+
+      # The snap's exact, lockfile-resolved production graph, audited per
+      # version against the registry. See the fuller rationale on the same
+      # step in ci.yml.
+      - name: Audit the snap's exact production graph
+        run: node scripts/check-snap-graph-advisories.mjs
+
+      # The allowlist gate over Yarn's own audit of the snap's transitive
+      # production graph, including re-verification that every package the
+      # allowlist calls absent really is absent from the bundle about to be
+      # published. See the fuller rationale on the same step in ci.yml.
+      - name: Gate transitive production advisories against the allowlist
+        run: |
+          ( cd packages/snap && \
+            yarn npm audit --environment production --recursive --json ) \
+            > "$RUNNER_TEMP/audit.json" || true
+          node scripts/check-known-advisories.mjs "$RUNNER_TEMP/audit.json"
+
+      - name: Build connector
+        run: yarn workspace stellar-soroban-snap-connector build
+
+      # The connector's equivalent, and until it existed the connector had no
+      # pre-build anchor at all: its `dist/` is gitignored, so a digest taken
+      # after the compiler ran was the only record of it, and that digest is
+      # produced by the same job whose toolchain is in question. A compromised
+      # compiler emitting malicious JavaScript into an expected file would
+      # have been recorded, packed, and published faithfully.
+      - name: Verify the committed seal matches the built connector
+        run: git diff --exit-code packages/connector/dist.sha256
+
+      # After the connector build: the site resolves connector types from
+      # `dist/`. See the fuller note on the same step in ci.yml.
+      - name: Typecheck (all workspaces)
+        run: yarn typecheck
+
+      - name: Snap tests (with coverage thresholds)
+        run: yarn workspace stellar-soroban-snap test:coverage
+
+      - name: Connector tests (with coverage thresholds)
+        run: yarn workspace stellar-soroban-snap-connector test:coverage
+
+      - name: Site tests
+        run: yarn workspace site test
+
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          artifact-name: sbom.cdx.json
+
+      # `test:coverage` rebuilds the snap bundle, and both builds rewrite
+      # their own `dist.sha256`, so this is where a rebuild that disagrees
+      # with the reviewed output stops the release. The seal job checks the
+      # same thing again from its own checkout, which is the check that counts
+      # if this job's tooling cannot be trusted; this one is here so an
+      # ordinary non-reproducible build fails early and legibly.
+      - name: Re-verify the committed seals after the gates
+        run: |
+          git diff --exit-code packages/snap/snap.manifest.json
+          git diff --exit-code packages/snap/dist.sha256
+          git diff --exit-code packages/connector/dist.sha256
+
+      # Handed over as two artifacts with one path each, so each artifact's
+      # root is the directory itself and the seal job can restore it to a
+      # known location. Nothing about this transfer is trusted: the seal job
+      # verifies whatever arrives against the committed digests before it
+      # packs anything, so a rewritten artifact fails the release rather than
+      # reaching a tarball.
+      - name: Upload the snap build output
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: snap-dist
+          path: packages/snap/dist
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the connector build output
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: connector-dist
+          path: packages/connector/dist
+          if-no-files-found: error
+          retention-days: 30
+
+  seal:
+    name: Seal and pack
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # No `id-token`, no environment, no secrets, and nothing installed from
+    # this repository: this job can prove things about the artifact but
+    # cannot publish it, and nothing it runs came out of the dependency
+    # graph it is checking.
+    permissions:
+      contents: read
+    outputs:
+      snap-tarball: ${{ steps.pack.outputs.snap-tarball }}
+      snap-sha256: ${{ steps.pack.outputs.snap-sha256 }}
+      connector-tarball: ${{ steps.pack.outputs.connector-tarball }}
+      connector-sha256: ${{ steps.pack.outputs.connector-sha256 }}
+    steps:
+      - name: Checkout the tagged commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # The same baseline the build job used to record, recorded here instead,
+      # in the job that will actually compare against it. `GITHUB_SHA` is told
+      # to the runner by the event that started the run and cannot be written
+      # from inside a job; local `HEAD`, local refs, and the object database
+      # can be, which is why the blob IDs are read with `--no-replace-objects`
+      # and why a moved `HEAD` or any replacement ref stops the release.
+      #
+      # Recording content hashes rather than paths is what makes the later
+      # comparison independent of the repository: `git hash-object` recomputes
+      # a blob ID from bytes, so verifying a packed file against one of these
+      # IDs asks nothing of the object database, the refs, or `HEAD` at the
+      # time of the check.
       - name: Record the immutable release baseline
         id: baseline
         run: |
@@ -139,107 +320,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Release baseline pinned to $GITHUB_SHA"
 
-      # The publish job installs the same Node without a checkout, so the
-      # pinned version is handed over as an output rather than read twice.
-      - name: Read the pinned Node.js version
-        id: toolchain
-        run: echo "node-version=$(tr -d '[:space:]' < .nvmrc)" >> "$GITHUB_OUTPUT"
-
+      # Only to run `npm pack` and read a version out of a package.json.
+      # Nothing from this repository is installed: `npm pack --ignore-scripts`
+      # needs the workspace layout, not a node_modules tree, and every other
+      # tool below (git, tar, diff, sha256sum, cmp) is the runner's own.
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version-file: .nvmrc
-          cache: yarn
-
-      - name: Install dependencies
-        run: yarn install --immutable
-
-      # The release gates are the CI gates. They are repeated here rather than
-      # assumed from a green CI run on the same commit, because what gets
-      # published is this checkout, and a release must not depend on someone
-      # having noticed that some other run was green.
-      - name: Lint
-        run: yarn lint
-
-      - name: Verify release versions agree
-        run: yarn check:versions
-
-      - name: Build snap
-        run: yarn workspace stellar-soroban-snap build
-
-      - name: Verify committed manifest matches the built bundle
-        run: git diff --exit-code packages/snap/snap.manifest.json
-
-      - name: Verify bundle contains no insecure randomness
-        run: |
-          BUNDLE=packages/snap/dist/bundle.js
-          ! grep -qE 'Math\.random|Math\[.random' "$BUNDLE"
-
-      - name: Audit direct runtime dependencies (all workspaces)
-        run: yarn npm audit --all --environment production
-
-      # The snap's exact, lockfile-resolved production graph, audited per
-      # version against the registry. See the fuller rationale on the same
-      # step in ci.yml.
-      - name: Audit the snap's exact production graph
-        run: node scripts/check-snap-graph-advisories.mjs
-
-      # The allowlist gate over Yarn's own audit of the snap's transitive
-      # production graph, including re-verification that every package the
-      # allowlist calls absent really is absent from the bundle about to be
-      # published. See the fuller rationale on the same step in ci.yml.
-      - name: Gate transitive production advisories against the allowlist
-        run: |
-          ( cd packages/snap && \
-            yarn npm audit --environment production --recursive --json ) \
-            > "$RUNNER_TEMP/audit.json" || true
-          node scripts/check-known-advisories.mjs "$RUNNER_TEMP/audit.json"
-
-      - name: Build connector
-        run: yarn workspace stellar-soroban-snap-connector build
-
-      # The connector publishes only `dist/`, and `dist/` is gitignored, so
-      # neither the cleanliness check below nor the snap tarball comparison
-      # sees it. Its seal is this digest, taken now, before any further step
-      # (typecheck, tests, SBOM) executes third-party code with write access
-      # to the checkout, and re-checked immediately before packing: a tool
-      # that alters the connector's build output after this point fails the
-      # release instead of being packed and published.
-      - name: Record the connector build-output digest
-        id: connector-build
-        run: |
-          DIST_SHA256="$( ( cd packages/connector && find dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) | sha256sum | cut -d' ' -f1 )"
-          echo "dist-sha256=$DIST_SHA256" >> "$GITHUB_OUTPUT"
-          echo "connector dist digest: $DIST_SHA256"
-
-      # After the connector build: the site resolves connector types from
-      # `dist/`. See the fuller note on the same step in ci.yml.
-      - name: Typecheck (all workspaces)
-        run: yarn typecheck
-
-      - name: Snap tests (with coverage thresholds)
-        run: yarn workspace stellar-soroban-snap test:coverage
-
-      # The snap's `dist/` is gitignored build output, so no committed
-      # baseline can pin it. Its seal is this digest, taken after the last
-      # step that rebuilds the bundle (`test:coverage` above runs the build)
-      # and before the SBOM action and anything else executes third-party
-      # code with write access. It is re-checked immediately before packing,
-      # so a tool that alters the bundle after this point fails the release
-      # rather than being packed and published.
-      - name: Record the snap build-output digest
-        id: snap-build
-        run: |
-          set -euo pipefail
-          DIST_SHA256="$( ( cd packages/snap && find dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) | sha256sum | cut -d' ' -f1 )"
-          echo "dist-sha256=$DIST_SHA256" >> "$GITHUB_OUTPUT"
-          echo "snap dist digest: $DIST_SHA256"
-
-      - name: Connector tests (with coverage thresholds)
-        run: yarn workspace stellar-soroban-snap-connector test:coverage
-
-      - name: Site tests
-        run: yarn workspace site test
+          node-version: ${{ needs.build.outputs.node-version }}
 
       # The tag must name the version being published. A tag pointing at a
       # commit whose package.json says something else would publish a version
@@ -285,66 +373,48 @@ jobs:
           fi
           echo "Releasing $PKG_VERSION from annotated tag $GITHUB_REF_NAME on main"
 
-      - name: Generate SBOM (CycloneDX)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+      - name: Download the snap build output
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          path: .
-          format: cyclonedx-json
-          output-file: sbom.cdx.json
-          artifact-name: sbom.cdx.json
+          name: snap-dist
+          path: packages/snap/dist
 
-      # The seal, and the order inside it is the point. `mm-snap manifest`
-      # runs *first*, because it is the last dependency-controlled command
-      # this job executes and the assertions after it are what establish that
-      # nothing it did left a mark. (It validates and fails rather than
-      # rewriting, which is why it is safe to run at all; the checks below no
-      # longer take that on trust.) Everything after this step must be free of
-      # dependency-controlled code, which is why the pack runs with lifecycle
-      # scripts disabled.
+      - name: Download the connector build output
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: connector-dist
+          path: packages/connector/dist
+
+      # The check the whole split exists for. What arrives here is compared
+      # against a digest that was committed and reviewed before any compiler
+      # ran, using nothing but coreutils, in a job that has installed none of
+      # the packages that produced it.
       #
-      # `test:coverage` rebuilt the bundle, `mm-snap build` rewrites the
-      # manifest on every build, and every step since the first manifest check
-      # executed third-party code with write access. So the seal re-establishes
-      # three things about the files that will actually be packed: the
-      # checkout is still the commit this run was triggered for, nothing
-      # tracked or untracked under either package has changed, and every file
-      # a tarball will carry still hashes to the blob recorded from
-      # `GITHUB_SHA` before any of that code ran.
-      - name: Re-verify the release seal against the files to be packed
-        env:
-          BASELINE_BLOBS: ${{ steps.baseline.outputs.blobs }}
+      # `sha256sum -c` answers for every file the manifest lists and says
+      # nothing about a file it does not, so the inventory is compared as
+      # well: an extra file added to `dist/` would otherwise pass a check that
+      # only ever looked at the files it already knew about.
+      - name: Verify the build output against the committed digests
         run: |
           set -euo pipefail
-          yarn workspace stellar-soroban-snap exec mm-snap manifest
-
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
-            echo "Checkout HEAD moved to $(git rev-parse HEAD); the release commit is $GITHUB_SHA"
-            exit 1
-          fi
-          if [ -n "$(git replace --list)" ]; then
-            echo "Replacement refs appeared during the build"
-            exit 1
-          fi
-          git diff --exit-code -- packages/snap packages/connector
-          if [ -n "$(git status --porcelain -- packages/snap packages/connector)" ]; then
-            echo "Tracked or untracked changes under the packages after the gates ran:"
-            git status --porcelain -- packages/snap packages/connector
-            exit 1
-          fi
-          while IFS=' ' read -r FILE OID; do
-            [ -n "$FILE" ] || continue
-            ACTUAL="$(git hash-object "$FILE")"
-            if [ "$ACTUAL" != "$OID" ]; then
-              echo "$FILE is not the file committed at $GITHUB_SHA"
-              exit 1
-            fi
-          done <<< "$BASELINE_BLOBS"
-          echo "Seal holds: the working tree still matches $GITHUB_SHA."�
+          for PKG in snap connector; do
+            (
+              cd "packages/$PKG"
+              awk '{ print $2 }' dist.sha256 | LC_ALL=C sort > "$RUNNER_TEMP/$PKG.listed"
+              find dist -type f | LC_ALL=C sort > "$RUNNER_TEMP/$PKG.arrived"
+              if ! diff -u "$RUNNER_TEMP/$PKG.listed" "$RUNNER_TEMP/$PKG.arrived"; then
+                echo "packages/$PKG/dist is not the file set dist.sha256 describes"
+                exit 1
+              fi
+              sha256sum -c --quiet dist.sha256
+              echo "packages/$PKG/dist matches the digests committed at $GITHUB_SHA"
+            )
+          done
 
       # Pack both tarballs and verify each one completely against inputs that
-      # were fixed before any dependency-controlled code ran: an exact file
+      # were committed and reviewed before any compiler ran: an exact file
       # inventory, entry types, the committed bytes of every static file, and
-      # the recorded digest of the build output.
+      # the committed digest of every emitted file.
       #
       # "Completely" is the word that matters. Checking a few important files
       # leaves the rest of the archive unverified, and an archive is published
@@ -356,26 +426,24 @@ jobs:
       # The snap manifest's shasum is deliberately not recomputed here. It is
       # not a hash of the bundle file; it is MetaMask's own checksum over a
       # canonical form, and reimplementing it in shell would be a second,
-      # weaker implementation of the thing being checked. The chain used
-      # instead is: the packed manifest is byte-identical to the committed
-      # one, `mm-snap manifest` has just confirmed that manifest against the
-      # bundle on disk, and the packed bundle is byte-identical to that
-      # bundle.
+      # weaker implementation of the thing being checked, in the job whose
+      # whole purpose is to be a trustworthy checker. The bundle is verified
+      # here against `dist.sha256`, which is a plain digest of the same bytes
+      # and was reviewed in the same diff; `mm-snap manifest` confirms the
+      # manifest against the bundle in the build job and again at publish
+      # time, where npm runs the snap's `prepublishOnly`.
       #
       # Lifecycle scripts are disabled for the pack. `prepack` runs
       # scripts/check-publish-env.mjs, which refuses to pack where no
       # provenance attestation is possible; this job cannot attest, by design,
       # since it holds no OIDC token. Skipping the script is better than
-      # setting its escape hatch: nothing dependency-controlled then runs
-      # after the seal, and the question it asks is answered where it belongs,
-      # by npm itself in the publish job, which refuses `--provenance`
-      # without the token.
+      # setting its escape hatch: no repository code runs in this job at all,
+      # and the question it asks is answered where it belongs, by npm itself
+      # in the publish job, which refuses `--provenance` without the token.
       - name: Pack and record tarball digests
         id: pack
         env:
           BASELINE_BLOBS: ${{ steps.baseline.outputs.blobs }}
-          SNAP_DIST_SHA256: ${{ steps.snap-build.outputs.dist-sha256 }}
-          CONNECTOR_DIST_SHA256: ${{ steps.connector-build.outputs.dist-sha256 }}
         run: |
           set -euo pipefail
 
@@ -389,14 +457,13 @@ jobs:
           npm pack --ignore-scripts --workspace packages/connector --pack-destination .
           test -f "$SNAP_TGZ" && test -f "$CONNECTOR_TGZ"
 
-          # Verifies one archive against the immutable baseline. `$1` is the
+          # Verifies one archive against the committed baseline. `$1` is the
           # tarball, `$2` the package directory name, `$3` a file listing the
-          # exact paths the archive may contain, `$4` the recorded digest of
-          # that package's build output.
+          # exact paths the archive may contain.
           verify_archive() {
-            local TGZ="$1" PKG="$2" EXPECTED="$3" DIST_SHA="$4"
+            local TGZ="$1" PKG="$2" EXPECTED="$3"
             local EXTRACT="$RUNNER_TEMP/$PKG-package"
-            local BAD REL ACTUAL DIST_NOW FILE OID
+            local BAD REL ACTUAL FILE OID
 
             # Only regular files and directories. A symlink, hard link, or
             # device node is never something this build produced, and each is
@@ -433,47 +500,33 @@ jobs:
               fi
             done <<< "$BASELINE_BLOBS"
 
-            # Build output: still the tree whose digest was recorded before
-            # the later steps ran, and packed from it byte for byte.
-            test -n "$DIST_SHA"
-            DIST_NOW="$( ( cd "packages/$PKG" && find dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum ) | sha256sum | cut -d' ' -f1 )"
-            if [ "$DIST_NOW" != "$DIST_SHA" ]; then
-              echo "packages/$PKG/dist changed after its verified build (recorded $DIST_SHA, found $DIST_NOW)"
-              exit 1
-            fi
-            ( cd "packages/$PKG" && find dist -type f | LC_ALL=C sort ) > "$RUNNER_TEMP/$PKG.dist.built"
-            # An empty file list would make every comparison below pass
-            # vacuously; a package with no build output is not sealable.
-            test -s "$RUNNER_TEMP/$PKG.dist.built"
-            while IFS= read -r FILE; do
-              cmp "packages/$PKG/$FILE" "$EXTRACT/package/$FILE"
-            done < "$RUNNER_TEMP/$PKG.dist.built"
+            # Emitted files: verified inside the extracted archive against the
+            # committed digests, so what is checked is what would be
+            # published rather than a copy of it that happens to sit next to
+            # the tarball.
+            cp "packages/$PKG/dist.sha256" "$EXTRACT/package/dist.sha256"
+            ( cd "$EXTRACT/package" && sha256sum -c --quiet dist.sha256 )
+            rm "$EXTRACT/package/dist.sha256"
 
-            echo "$TGZ matches the committed files and the verified build output."
+            echo "$TGZ matches the files committed at $GITHUB_SHA."
           }
 
-          # The snap publishes exactly one bundle: `files` lists `dist/`, and
-          # the build emits `dist/bundle.js` and nothing else. Spelling the
-          # inventory out means an extra emitted file fails the release rather
-          # than riding along unexamined.
-          cat > "$RUNNER_TEMP/snap.expected" <<'SNAP_FILES'
-          LICENSE
-          README.md
-          dist/bundle.js
-          images/icon.svg
-          package.json
-          snap.manifest.json
-          SNAP_FILES
-          LC_ALL=C sort -o "$RUNNER_TEMP/snap.expected" "$RUNNER_TEMP/snap.expected"
-          verify_archive "$SNAP_TGZ" snap "$RUNNER_TEMP/snap.expected" "$SNAP_DIST_SHA256"
-
-          # The connector's `dist/` is a compiled tree of many files, so its
-          # inventory is the built tree itself, which the digest above pins.
+          # The inventory each package may carry: the files npm always
+          # includes, the extra static files each `files` entry names, and
+          # every emitted file the committed digest manifest lists. Spelling
+          # it out means an extra emitted file fails the release rather than
+          # riding along unexamined.
+          {
+            printf '%s\n' LICENSE README.md package.json snap.manifest.json images/icon.svg
+            awk '{ print $2 }' packages/snap/dist.sha256
+          } | LC_ALL=C sort > "$RUNNER_TEMP/snap.expected"
           {
             printf '%s\n' LICENSE README.md package.json
-            ( cd packages/connector && find dist -type f )
+            awk '{ print $2 }' packages/connector/dist.sha256
           } | LC_ALL=C sort > "$RUNNER_TEMP/connector.expected"
-          verify_archive "$CONNECTOR_TGZ" connector "$RUNNER_TEMP/connector.expected" "$CONNECTOR_DIST_SHA256"
+
+          verify_archive "$SNAP_TGZ" snap "$RUNNER_TEMP/snap.expected"
+          verify_archive "$CONNECTOR_TGZ" connector "$RUNNER_TEMP/connector.expected"
 
           SNAP_SHA256="$(sha256sum "$SNAP_TGZ" | cut -d' ' -f1)"
           CONNECTOR_SHA256="$(sha256sum "$CONNECTOR_TGZ" | cut -d' ' -f1)"
@@ -503,10 +556,12 @@ jobs:
 
   publish:
     name: Publish
-    needs: build
+    needs: [build, seal]
     # Never on a dry run, and never from anything but a release tag: the
-    # build job already fails a manual non-tag run with dry-run disabled, and
-    # this condition states the same rule where the token lives.
+    # build job already fails a manual non-tag run with dry-run disabled, the
+    # seal job re-checks the tag against the version with tooling the build
+    # graph cannot influence, and this condition states the same rule where
+    # the token lives.
     if: ${{ !inputs.dry-run && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -522,9 +577,9 @@ jobs:
       # only job that holds it, and it runs nothing but npm.
       id-token: write
     steps:
-      # No checkout: the job publishes the tarballs the build job produced
+      # No checkout: the job publishes the tarballs the seal job produced
       # and has no use for the source tree. Node comes from the build job's
-      # reading of .nvmrc so both jobs run the same pinned version.
+      # reading of .nvmrc so every job runs the same pinned version.
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -579,14 +634,14 @@ jobs:
 
       # The artifact store is writable by anything in this run that holds the
       # runtime token; the job outputs are not. Refuse to publish anything
-      # whose digest is not the one the build job recorded, and refuse extra
+      # whose digest is not the one the seal job recorded, and refuse extra
       # files in the artifact outright.
-      - name: Verify the tarballs are the ones the build job packed
+      - name: Verify the tarballs are the ones the seal job packed
         env:
-          SNAP_TGZ: ${{ needs.build.outputs.snap-tarball }}
-          SNAP_SHA256: ${{ needs.build.outputs.snap-sha256 }}
-          CONNECTOR_TGZ: ${{ needs.build.outputs.connector-tarball }}
-          CONNECTOR_SHA256: ${{ needs.build.outputs.connector-sha256 }}
+          SNAP_TGZ: ${{ needs.seal.outputs.snap-tarball }}
+          SNAP_SHA256: ${{ needs.seal.outputs.snap-sha256 }}
+          CONNECTOR_TGZ: ${{ needs.seal.outputs.connector-tarball }}
+          CONNECTOR_SHA256: ${{ needs.seal.outputs.connector-sha256 }}
         working-directory: tarballs
         run: |
           test -n "$SNAP_TGZ" && test -n "$SNAP_SHA256"
@@ -623,18 +678,18 @@ jobs:
       #
       # Publishing a tarball runs no lifecycle scripts (no `prepack`, no
       # `prepublishOnly`): everything those scripts checked was checked in the
-      # build job, against the exact bytes in these files. `--provenance`
+      # seal job, against the exact bytes in these files. `--provenance`
       # makes npm refuse to publish without an OIDC token, so a run that
       # somehow reached here without one stops rather than publishing an
       # unattested artifact.
       - name: Publish snap
         env:
-          SNAP_TGZ: ${{ needs.build.outputs.snap-tarball }}
+          SNAP_TGZ: ${{ needs.seal.outputs.snap-tarball }}
           NODE_AUTH_TOKEN: ${{ inputs.bootstrap-token && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
         run: npm publish "tarballs/$SNAP_TGZ" --provenance --access public
 
       - name: Publish connector
         env:
-          CONNECTOR_TGZ: ${{ needs.build.outputs.connector-tarball }}
+          CONNECTOR_TGZ: ${{ needs.seal.outputs.connector-tarball }}
           NODE_AUTH_TOKEN: ${{ inputs.bootstrap-token && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
         run: npm publish "tarballs/$CONNECTOR_TGZ" --provenance --access public

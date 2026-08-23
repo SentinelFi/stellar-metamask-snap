@@ -496,7 +496,7 @@ export async function signTransaction(
   const keypair = await deriveSigningKeypair(
     accountIndex,
     signerAddress,
-    phrase.source,
+    phrase,
   );
   try {
     tx.sign(keypair);
@@ -823,7 +823,7 @@ export async function signAuthEntry(
   const keypair = await deriveSigningKeypair(
     accountIndex,
     signerAddress,
-    phrase.source,
+    phrase,
   );
   let signed;
   try {
@@ -935,7 +935,7 @@ export async function signMessage(
   const keypair = await deriveSigningKeypair(
     accountIndex,
     signerAddress,
-    phrase.source,
+    phrase,
   );
   let signature;
   try {

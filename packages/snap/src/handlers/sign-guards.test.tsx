@@ -928,8 +928,8 @@ describe('signing handlers: fail-closed gates', () => {
         tx.toXDR(),
         Networks.TESTNET,
       ) as ReturnType<typeof classicTx>;
-      const { deriveKeypair } = await import('../keys');
-      signed.sign(await deriveKeypair(0, SOURCE_ID));
+      const { deriveKeypair, ensureEntropyBinding } = await import('../keys');
+      signed.sign(await deriveKeypair(0, await ensureEntropyBinding()));
       const expected = signed.hash().toString('hex');
 
       stubHorizon({ hash: expected });
