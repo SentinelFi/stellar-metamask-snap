@@ -12,7 +12,6 @@ import { Buffer } from 'buffer';
 import { assertConnected } from './account';
 import type { EntropyBinding } from '../keys';
 import {
-  assertBindingCurrent,
   assertPhraseUnchanged,
   deriveSigningKeypair,
   resolveSigningAccount,
@@ -510,11 +509,15 @@ export async function signTransaction(
   // after the derivation above confirmed the displayed address still belongs
   // to the active phrase. Best effort: see `recordGrantBestEffort`.
   await recordGrantBestEffort(origin, phrase.fingerprint);
-  // The grant write awaited, and a concurrent request can observe a phrase
-  // change in that interval. The envelope below either goes to a submission
-  // endpoint or back to the origin, and both are answers about a wallet the
-  // snap may already know was left; refuse before either happens.
-  assertBindingCurrent(phrase);
+  // The grant write awaited, and a switch of the primary secret recovery
+  // phrase can land inside that interval with nothing else running to
+  // observe it, which no in-context comparison can see. The envelope below
+  // either goes to a submission endpoint or back to the origin, and both are
+  // answers about a wallet the user may have left, so the platform is asked
+  // again before either happens. The same observation settles the store's
+  // reconciliation, so a grant the write above recorded for a superseded
+  // phrase is reset before this request refuses.
+  await assertPhraseUnchanged(phrase);
   const warningsField = warnings.length > 0 ? { warnings } : {};
 
   if (request.submit) {
@@ -534,12 +537,12 @@ export async function signTransaction(
       // Soroban transactions must go through the RPC; classic ones use
       // Horizon's synchronous endpoint.
       //
-      // The submission round trip is the longest await in the request, and a
-      // switch of the primary secret recovery phrase can land inside it with
-      // nothing else running to observe it — the in-context generation check
-      // above only sees what some request has already noticed. The envelope
-      // may already be at the endpoint by then, and that cannot be undone;
-      // what can be prevented is answering the origin with a signature and
+      // The submission round trip is the longest await in the request, and
+      // the observation above ran before dispatch: a switch of the primary
+      // secret recovery phrase can still land while the submission is in
+      // flight, with nothing else running to observe it. The envelope may
+      // already be at the endpoint by then, and that cannot be undone; what
+      // can be prevented is answering the origin with a signature and
       // submission report for a wallet the user has left. So the platform is
       // asked again after each submission settles, before its response is
       // believed or anything is returned.
@@ -863,16 +866,19 @@ export async function signAuthEntry(
     wipeKeypair(keypair);
   }
   // `authorizeEntry` awaited between the derivation's currency check and
-  // here, so a concurrent request can have observed a phrase change while
-  // the entry was being signed. The grant below and the signed entry both
-  // describe the wallet the user approved for; neither may outlive it.
-  assertBindingCurrent(phrase);
+  // here, and a switch of the primary secret recovery phrase can land in
+  // that interval with nothing else running to observe it, which no
+  // in-context comparison can see. The grant below and the signed entry
+  // both describe the wallet the user approved for, so the platform is
+  // asked again before either leaves the snap.
+  await assertPhraseUnchanged(phrase);
 
   // Recorded only after the derivation confirmed the displayed address still
   // belongs to the active phrase. Best effort: see `recordGrantBestEffort`.
   await recordGrantBestEffort(origin, phrase.fingerprint);
-  // The grant write awaited too; re-checked before the signature leaves.
-  assertBindingCurrent(phrase);
+  // The grant write awaited too; the platform is asked again before the
+  // signature leaves.
+  await assertPhraseUnchanged(phrase);
 
   return {
     signedAuthEntry: signed.toXDR('base64'),
@@ -980,9 +986,12 @@ export async function signMessage(
   // Recorded only after the derivation confirmed the displayed address still
   // belongs to the active phrase. Best effort: see `recordGrantBestEffort`.
   await recordGrantBestEffort(origin, phrase.fingerprint);
-  // The grant write awaited; a supersession observed during it means this
-  // signature describes a wallet the user has left, so it is not returned.
-  assertBindingCurrent(phrase);
+  // The grant write awaited, and a switch of the primary secret recovery
+  // phrase can land inside it with nothing else running to observe it. The
+  // platform is asked again, so a signature for a wallet the user has left
+  // is never returned, and a grant the write above recorded for a
+  // superseded phrase is reset by the observation's reconciliation.
+  await assertPhraseUnchanged(phrase);
 
   return { signedMessage: signature.toString('base64'), signerAddress };
 }

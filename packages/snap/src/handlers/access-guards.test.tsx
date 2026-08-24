@@ -256,6 +256,13 @@ let horizonSubmission: { status: number; body: unknown };
 let sorobanSubmission: { status: number; body: unknown };
 
 /**
+ * How many `sendTransaction` submissions reached the mocked Soroban RPC. The
+ * submission shares its URL with the simulation endpoint, so a URL log alone
+ * cannot say whether an envelope was dispatched.
+ */
+let sorobanSubmissions: number;
+
+/**
  * Decodes a simulateTransaction request body and returns the ScVal the named
  * contract function should answer with.
  *
@@ -869,6 +876,7 @@ describe('connection gate and account resolution', () => {
     privateImportSource = null;
     mixedResponseSource = null;
     horizonSubmission = { status: 200, body: { hash: 'a'.repeat(64) } };
+    sorobanSubmissions = 0;
     sorobanSubmission = {
       status: 200,
       body: {
@@ -1021,6 +1029,7 @@ describe('connection gate and account resolution', () => {
         // The Soroban RPC submission, answered from the per-test fixture
         // exactly like the Horizon endpoint above.
         if (String(init.body).includes('"sendTransaction"')) {
+          sorobanSubmissions += 1;
           return jsonResponse(sorobanSubmission.body, {
             status: sorobanSubmission.status,
           });
@@ -2496,6 +2505,151 @@ describe('connection gate and account resolution', () => {
       expect(result.hash).toBe(expected);
       expect(result.status).toBe('PENDING');
       expect(dialogs).toHaveLength(1);
+    });
+  });
+
+  describe('an unobserved switch inside the post-signing awaits', () => {
+    /*
+     * The intervals after a signature exists and before it leaves the snap:
+     * the best-effort grant write every signing method performs, and
+     * `authorizeEntry`'s signing interval. The schedules above cover a
+     * supersession some other request observed; here the switch is observed
+     * by nobody — no concurrent request runs — so any in-context comparison
+     * would pass, and only the handler asking the platform again can notice.
+     * Each schedule holds one such await, switches the phrase, releases, and
+     * asserts that no artifact leaves and no submission begins.
+     */
+
+    /**
+     * Settles a held signing request into an assertable shape, so the
+     * assertions in the tests stay unconditional.
+     *
+     * @param held - The signing promise.
+     * @returns The rejection message and serialized error data (or the
+     * literal 'resolved' when the request wrongly succeeded).
+     */
+    async function settledFailure(
+      held: Promise<unknown>,
+    ): Promise<{ message: string; serialized: string }> {
+      return held.then(
+        () => ({ message: 'resolved', serialized: '' }),
+        (error: unknown) => {
+          const failure = error as { message?: unknown; data?: unknown };
+          return {
+            message: String(failure.message),
+            serialized: JSON.stringify(failure.data ?? {}),
+          };
+        },
+      );
+    }
+
+    const grantWriters: [string, () => Promise<unknown>][] = [
+      [
+        'signTransaction',
+        async () => signTransaction(ORIGIN, { xdr: classicPaymentXdr() }),
+      ],
+      ['signMessage', async () => signMessage(ORIGIN, { message: 'hello' })],
+    ];
+
+    it.each(grantWriters)(
+      '%s returns no artifact once the phrase changed during grant recording',
+      async (_name, call) => {
+        // Cold signing from an empty grant registry, so the grant write is
+        // the held await, and nothing observes the switch until the handler
+        // itself asks the platform again.
+        stored = stateV2({ accounts: [0, 1] });
+        const gate = gateNextRequest(isGrantWrite);
+        const held = call();
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        swapEntropy();
+        gate.release();
+
+        const failure = await settledFailure(held);
+        expect(failure.message).toContain('secret recovery phrase changed');
+        expect(failure.serialized).not.toContain('signedTxXdr');
+        expect(failure.serialized).not.toContain('signedMessage');
+        expect(failure.serialized).not.toContain('signerAddress');
+        // The handler's own observation reconciled the store, so the grant
+        // the held write recorded for the superseded phrase did not survive
+        // either.
+        expect(
+          (stored as { origins: Record<string, unknown> }).origins,
+        ).toStrictEqual({});
+      },
+    );
+
+    const submitters: [string, () => string][] = [
+      ['classic Horizon', classicPaymentXdr],
+      ['Soroban RPC', sorobanTransferXdr],
+    ];
+
+    it.each(submitters)(
+      '%s: no submission begins once the phrase changed during grant recording',
+      async (_name, envelope) => {
+        stored = stateV2({ accounts: [0, 1] });
+        const gate = gateNextRequest(isGrantWrite);
+        const held = signTransaction(ORIGIN, {
+          xdr: envelope(),
+          submit: true,
+        });
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        swapEntropy();
+        gate.release();
+
+        const failure = await settledFailure(held);
+        expect(failure.message).toContain('secret recovery phrase changed');
+        expect(failure.serialized).not.toContain('signedTxXdr');
+        // The refusal comes before the submit branch is entered: the
+        // envelope of the wallet the user left never reaches an endpoint,
+        // which the post-submission re-observation alone could not prevent.
+        expect(fetchCalls.some((url) => url.includes('/transactions'))).toBe(
+          false,
+        );
+        expect(sorobanSubmissions).toBe(0);
+      },
+    );
+
+    it('signAuthEntry returns no signed entry once the phrase changed inside authorizeEntry', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const gate = gateNextAuthorizeEntry();
+      try {
+        const held = signAuthEntry(ORIGIN, {
+          authEntry: addressAuthEntryXdr(ADDRESS_1),
+        });
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        // No observer runs: nothing advances the in-context state before
+        // the handler itself asks the platform.
+        swapEntropy();
+        gate.release();
+
+        const failure = await settledFailure(held);
+        expect(failure.message).toContain('secret recovery phrase changed');
+        expect(failure.serialized).not.toContain('signedAuthEntry');
+        // The refusal runs before the grant write, and the observation
+        // reset the store: the origin's standing grant for the old wallet
+        // is gone rather than renewed.
+        expect(
+          (stored as { origins: Record<string, unknown> }).origins,
+        ).toStrictEqual({});
+      } finally {
+        gate.restore();
+      }
+    });
+
+    it('the positive control: cold signing completes and records the grant while the phrase holds', async () => {
+      stored = stateV2({ accounts: [0, 1] });
+      const result = await signMessage(ORIGIN, { message: 'hello' });
+      expect(result.signerAddress).toBe(ADDRESS_0);
+      expect(typeof result.signedMessage).toBe('string');
+      expect(
+        Object.keys((stored as { origins: Record<string, unknown> }).origins),
+      ).toStrictEqual([ORIGIN]);
     });
   });
 

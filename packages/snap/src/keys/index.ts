@@ -800,28 +800,16 @@ export async function assertPhraseUnchanged(
   }
 }
 
-/**
- * Refuses a continuation whose binding some request has already observed to
- * be superseded, without asking the platform again.
- *
- * The in-context complement of {@link assertPhraseUnchanged}, for the awaits
- * that come *after* that check has already run: the grant recording every
- * signing handler performs, and `authorizeEntry`'s internal signing interval.
- * Those awaits are windows in which a concurrent request can observe a new
- * phrase and reconcile the store to it, and a signature or result returned
- * afterwards would describe a wallet the snap already knows was left. This
- * check is synchronous and costs nothing, so it runs after every such await;
- * what it cannot see, by construction, is a switch nothing observed, which
- * only a fresh platform observation can catch.
- *
- * @param phrase - The phrase the request was authorised under.
- * @throws An external-service error when a supersession has been observed.
+/*
+ * There is deliberately no synchronous, in-context-only counterpart to
+ * {@link assertPhraseUnchanged} for the awaits that follow it (grant
+ * recording, `authorizeEntry`'s signing interval, submission round trips). A
+ * generation comparison alone sees only a supersession some request has
+ * already observed; a switch nothing observed passes it, and those awaits
+ * are exactly where one can hide. Every point where a signature or signed
+ * envelope is about to leave the snap therefore re-observes the platform,
+ * and the generation comparison lives inside that observation.
  */
-export function assertBindingCurrent(phrase: BoundPhrase): void {
-  if (contextGeneration !== phrase.generation) {
-    throw phraseChangedError();
-  }
-}
 
 /**
  * Derives one account keypair from an already-fetched parent node.
