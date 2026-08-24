@@ -171,6 +171,10 @@ export const DevBench = () => {
         // Stated for the same reason the production flows state it: the
         // wallet requires the caller's network on PUBLIC before signing.
         networkPassphrase: network.networkPassphrase,
+        // Bound to the account the envelope was built for, as the production
+        // flows do, so an active-account change cannot present a
+        // source/signer mismatch for review.
+        address,
       });
     });
 

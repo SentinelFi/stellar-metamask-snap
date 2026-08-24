@@ -193,6 +193,11 @@ export const Send = () => {
         // both sides can confirm they mean the same one before a mainnet
         // signature is produced.
         networkPassphrase: network.networkPassphrase,
+        // The envelope's source is the account this page built it for; naming
+        // it binds the signing request to that account, so a wallet whose
+        // active account moved meanwhile signs as the source or refuses
+        // rather than presenting a source/signer mismatch to review.
+        address,
       }),
     );
     if (result) {

@@ -250,6 +250,7 @@ describe('balance-change disclosure', () => {
         ok: true,
         minResourceFee: '1000',
         authSigners: [],
+        authSignersTruncated: false,
         restoreRequired: false,
         ...(balanceChanges ? { balanceChanges } : {}),
       },

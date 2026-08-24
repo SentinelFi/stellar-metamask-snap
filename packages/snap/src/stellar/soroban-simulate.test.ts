@@ -163,6 +163,7 @@ describe('simulateForDisplay', () => {
       ok: true,
       minResourceFee: '12345',
       authSigners: [ACCOUNT],
+      authSignersTruncated: false,
       restoreRequired: false,
       latestLedger: 99,
     });
@@ -252,6 +253,7 @@ describe('simulateForDisplay', () => {
       ok: true,
       minResourceFee: null,
       authSigners: [ACCOUNT],
+      authSignersTruncated: false,
       restoreRequired: false,
       latestLedger: 99,
     });
@@ -269,6 +271,71 @@ describe('simulateForDisplay', () => {
     const summary = await simulateForDisplay(RPC, ENVELOPE);
 
     expect(summary).toMatchObject({ authSigners: [ACCOUNT, OTHER] });
+  });
+
+  it('marks the signer list partial when the unique-signer cap is reached', async () => {
+    // Distinct authorizing accounts beyond the cap: the visible prefix must
+    // not read as the whole list, or an endpoint could hide a signer simply
+    // by reporting twenty others ahead of it.
+    const signers = Array.from({ length: 21 }, (_unused, index) =>
+      Address.contract(Buffer.alloc(32, index + 1)).toString(),
+    );
+    mockRpc({
+      minResourceFee: '1',
+      results: [{ auth: signers.map((signer) => authEntry(signer)) }],
+    });
+
+    const summary = await simulateForDisplay(RPC, ENVELOPE);
+
+    expect(summary).toMatchObject({
+      ok: true,
+      authSigners: signers.slice(0, 20),
+      authSignersTruncated: true,
+    });
+  });
+
+  it('marks the signer list partial when a result or entry cap drops data', async () => {
+    // More results than are decoded: whatever auth the dropped results carry
+    // goes unread, so the list must say it may be incomplete.
+    mockRpc({
+      minResourceFee: '1',
+      results: Array.from({ length: 11 }, () => ({
+        auth: [authEntry(ACCOUNT)],
+      })),
+    });
+
+    expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({
+      ok: true,
+      authSigners: [ACCOUNT],
+      authSignersTruncated: true,
+    });
+
+    // The per-result auth-entry cap, same rule.
+    mockRpc({
+      minResourceFee: '1',
+      results: [{ auth: Array.from({ length: 21 }, () => authEntry(ACCOUNT)) }],
+    });
+
+    expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({
+      ok: true,
+      authSigners: [ACCOUNT],
+      authSignersTruncated: true,
+    });
+  });
+
+  it('does not mark a merely duplicated signer list as partial', async () => {
+    // Deduplication drops entries without losing information; only a cap
+    // that leaves data unread makes the list partial.
+    mockRpc({
+      minResourceFee: '1',
+      results: [{ auth: [authEntry(ACCOUNT), authEntry(ACCOUNT)] }],
+    });
+
+    expect(await simulateForDisplay(RPC, ENVELOPE)).toMatchObject({
+      ok: true,
+      authSigners: [ACCOUNT],
+      authSignersTruncated: false,
+    });
   });
 
   it('skips an undecodable auth entry without failing the summary', async () => {

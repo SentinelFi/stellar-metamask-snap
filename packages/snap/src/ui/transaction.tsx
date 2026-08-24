@@ -1807,6 +1807,15 @@ function renderSimulation(
           <Copyable value={simulation.authSigners.join('\n')} />
         </Box>
       ) : null}
+      {simulation.authSignersTruncated ? (
+        <Banner title="Signer list incomplete" severity="warning">
+          <Text>
+            The endpoint reported more authorization data than can be shown, so
+            this list may be missing signers. Review the raw XDR below before
+            approving.
+          </Text>
+        </Banner>
+      ) : null}
       {simulation.restoreRequired ? (
         <Banner title="Restore required" severity="warning">
           <Text>

@@ -11,10 +11,13 @@ name: Release
 # It is worth being precise about why this workflow uses `npm publish` rather
 # than `yarn npm publish`, because the repository otherwise pins Yarn 3 for
 # everything. Yarn 3 does not implement provenance at all (the string does not
-# appear anywhere in .yarn/releases/yarn-3.2.1.cjs), and it does not run the
-# `prepublishOnly` lifecycle script either. Publishing the snap through Yarn
-# would therefore skip BOTH the attestation and `mm-snap manifest`, silently,
-# with a successful exit code. The npm CLI runs both.
+# appear anywhere in .yarn/releases/yarn-3.2.1.cjs): it would publish an
+# unattested tarball, silently, with a successful exit code, while the npm CLI
+# refuses to publish with `--provenance` and no OIDC token. Note that
+# publishing a tarball runs no lifecycle scripts under either CLI (no
+# `prepack`, no `prepublishOnly`); `mm-snap manifest` runs and is checked in
+# the build job, and the sealed archives are published byte-for-byte as
+# verified.
 #
 # The workflow is three jobs, and the split is the point:
 #
@@ -430,8 +433,9 @@ jobs:
       # whole purpose is to be a trustworthy checker. The bundle is verified
       # here against `dist.sha256`, which is a plain digest of the same bytes
       # and was reviewed in the same diff; `mm-snap manifest` confirms the
-      # manifest against the bundle in the build job and again at publish
-      # time, where npm runs the snap's `prepublishOnly`.
+      # manifest against the bundle in the build job, and the publish job
+      # ships these verified archives byte-for-byte (publishing a tarball
+      # runs no lifecycle scripts, so nothing re-runs there).
       #
       # Lifecycle scripts are disabled for the pack. `prepack` runs
       # scripts/check-publish-env.mjs, which refuses to pack where no

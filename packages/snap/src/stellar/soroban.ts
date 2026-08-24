@@ -1072,6 +1072,13 @@ export type SimulationSummary =
       minResourceFee: string | null;
       /** Addresses that must sign address-credential auth entries. */
       authSigners: string[];
+      /**
+       * True when a decoding cap was reached while collecting the signer
+       * list, so `authSigners` may be incomplete. Endpoint-reported data is
+       * non-authoritative either way, but an explicitly partial list must
+       * say so rather than read as "these are all the signers".
+       */
+      authSignersTruncated: boolean;
       /** Archived ledger entries must be restored before submission. */
       restoreRequired: boolean;
       /**
@@ -1165,21 +1172,33 @@ export async function simulateForDisplay(
   // unreviewably large dialog.
   const authSigners: string[] = [];
   const seenSigners = new Set<string>();
-  for (const result of (response.results ?? []).slice(0, MAX_SIM_RESULTS)) {
-    for (const authXdr of (result.auth ?? []).slice(
-      0,
-      MAX_SIM_AUTH_PER_RESULT,
-    )) {
+  // Reaching any cap means part of the endpoint's report went unread, and a
+  // signer list missing entries must be labeled partial: an attacker-shaped
+  // response could otherwise push a signer past a cap and have the dialog
+  // present the visible prefix as the whole list.
+  let authSignersTruncated = false;
+  const results = response.results ?? [];
+  if (results.length > MAX_SIM_RESULTS) {
+    authSignersTruncated = true;
+  }
+  for (const result of results.slice(0, MAX_SIM_RESULTS)) {
+    const auth = result.auth ?? [];
+    if (auth.length > MAX_SIM_AUTH_PER_RESULT) {
+      authSignersTruncated = true;
+    }
+    for (const authXdr of auth.slice(0, MAX_SIM_AUTH_PER_RESULT)) {
       try {
         const decoded = decodeAuthEntry(
           xdr.SorobanAuthorizationEntry.fromXDR(authXdr, 'base64'),
         );
-        if (
-          decoded.credentialsType === 'address' &&
-          decoded.address &&
-          !seenSigners.has(decoded.address) &&
-          authSigners.length < MAX_SIM_AUTH_SIGNERS
-        ) {
+        if (decoded.credentialsType === 'address' && decoded.address) {
+          if (seenSigners.has(decoded.address)) {
+            continue;
+          }
+          if (authSigners.length >= MAX_SIM_AUTH_SIGNERS) {
+            authSignersTruncated = true;
+            continue;
+          }
           seenSigners.add(decoded.address);
           authSigners.push(decoded.address);
         }
@@ -1208,6 +1227,7 @@ export async function simulateForDisplay(
     ok: true,
     minResourceFee: usableResourceFee(response.minResourceFee),
     authSigners,
+    authSignersTruncated,
     restoreRequired: Boolean(response.restorePreamble),
     ...(balanceChanges === undefined ? {} : { balanceChanges }),
     ...(response.latestLedger === undefined

@@ -18,6 +18,7 @@ import {
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk';
+import type * as stellarBase from '@stellar/stellar-sdk/base';
 
 import { getAddress, requestAccess } from './access';
 import {
@@ -592,6 +593,113 @@ function addressAuthEntryXdr(address: string): string {
       subInvocations: [],
     }),
   }).toXDR('base64');
+}
+
+/**
+ * Holds the next account-key derivation performed on a node the code under
+ * test imported (the harness's own source nodes pass through untouched), so a
+ * test can suspend a request inside `node.derive()` — an await with no
+ * platform request in it — while a second request observes a phrase change.
+ *
+ * Declared at module scope because the match is a conditional, which
+ * `jest/no-conditional-in-test` refuses in a test body. Callers must invoke
+ * `restore` when done, or the spy leaks into later tests.
+ *
+ * @returns `hit`, true once the held derivation has arrived; `release`, which
+ * lets it proceed; and `restore`, which removes the spy.
+ */
+function gateNextChildDerivation(): {
+  hit: () => boolean;
+  release: () => void;
+  restore: () => void;
+} {
+  const real = SLIP10Node.prototype.derive;
+  const harnessNodes = new Set(sourceNodes.values());
+  let arrived = false;
+  let armed = true;
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const spy = jest
+    .spyOn(SLIP10Node.prototype, 'derive')
+    .mockImplementation(async function (
+      this: SLIP10Node,
+      ...args: Parameters<typeof real>
+    ) {
+      if (armed && !harnessNodes.has(this)) {
+        armed = false;
+        arrived = true;
+        await gate;
+      }
+      return real.apply(this, args);
+    });
+  return { hit: () => arrived, release, restore: () => spy.mockRestore() };
+}
+
+/**
+ * Holds the next `authorizeEntry` call, so a test can suspend `signAuthEntry`
+ * inside the SDK's signing interval — after the keypair's currency was
+ * confirmed, before the handler's own completion checks — while a second
+ * request observes a phrase change.
+ *
+ * Declared at module scope because the one-shot arming is a conditional,
+ * which `jest/no-conditional-in-test` refuses in a test body. Callers must
+ * invoke `restore` when done.
+ *
+ * @returns `hit`, `release`, and `restore`, as for
+ * {@link gateNextChildDerivation}.
+ */
+function gateNextAuthorizeEntry(): {
+  hit: () => boolean;
+  release: () => void;
+  restore: () => void;
+} {
+  // The namespace-import view exposes non-configurable getters, so the
+  // wrapper is installed on the module object itself — the one the handler's
+  // compiled named import reads a property from at call time.
+  const base = jest.requireActual<{
+    authorizeEntry: typeof stellarBase.authorizeEntry;
+  }>('@stellar/stellar-sdk/base');
+  const real = base.authorizeEntry;
+  let arrived = false;
+  let armed = true;
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  base.authorizeEntry = async (...args) => {
+    if (armed) {
+      armed = false;
+      arrived = true;
+      await gate;
+    }
+    return real(...args);
+  };
+  return {
+    hit: () => arrived,
+    release,
+    restore: () => {
+      base.authorizeEntry = real;
+    },
+  };
+}
+
+/**
+ * Matches the state write that records the requesting origin's connection
+ * grant, for {@link gateNextRequest}: the first mutation whose new state
+ * names the origin. Declared at module scope because the compound check is a
+ * conditional, which `jest/no-conditional-in-test` refuses in a test body.
+ *
+ * @param args - The intercepted request.
+ * @returns True for a `snap_manageState` write that includes the origin.
+ */
+function isGrantWrite(args: RequestArgs): boolean {
+  return (
+    args.method === 'snap_manageState' &&
+    args.params.operation !== 'get' &&
+    JSON.stringify(args.params.newState ?? {}).includes(ORIGIN)
+  );
 }
 
 /**
@@ -1901,6 +2009,285 @@ describe('connection gate and account resolution', () => {
       await expect(
         findAccountIndexByAddress(binding, ADDRESS_1),
       ).rejects.toThrow('secret recovery phrase changed');
+    });
+  });
+
+  describe('superseded private work cannot resume when the phrase changes away and back', () => {
+    /*
+     * The A → B → A schedule. Every fingerprint comparison passes here: the
+     * imported node really is the approved phrase's, and that phrase really
+     * is primary again by the time anyone re-reads it. What ended is the
+     * *tenure* the request was bound under — two reconciliations reset the
+     * store in between — so letting the held work complete would spend an
+     * approval, and bind state, from a wallet period that no longer exists.
+     * Only the binding generation tells the two A periods apart.
+     */
+
+    /**
+     * Changes the phrase to B, lets a fresh request observe and reconcile it,
+     * then changes back to A and lets another request do the same, so the
+     * held request resumes with its own fingerprint primary again.
+     */
+    async function observeAwayAndBack(): Promise<void> {
+      swapEntropy();
+      await ensureEntropyBinding();
+      restoreEntropy();
+      await ensureEntropyBinding();
+    }
+
+    const signers: [string, () => Promise<unknown>][] = [
+      [
+        'signTransaction',
+        async () =>
+          signTransaction(ORIGIN, {
+            xdr: classicPaymentXdr(),
+            address: ADDRESS_1,
+          }),
+      ],
+      [
+        'signMessage',
+        async () =>
+          signMessage(ORIGIN, { message: 'hello', address: ADDRESS_1 }),
+      ],
+      [
+        'signAuthEntry',
+        async () =>
+          signAuthEntry(ORIGIN, { authEntry: addressAuthEntryXdr(ADDRESS_1) }),
+      ],
+    ];
+
+    it.each(signers)(
+      '%s neither signs nor records a grant for the earlier tenure',
+      async (_name, call) => {
+        stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+        // Held at the private import, which runs after the approval and
+        // after `assertPhraseUnchanged` has confirmed the phrase.
+        const gate = gateNextRequest(
+          (args) => args.method === 'snap_getBip32Entropy',
+        );
+        const held = call();
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        await observeAwayAndBack();
+
+        gate.release();
+        await expect(held).rejects.toThrow('secret recovery phrase changed');
+        // The import itself completed, and for the right phrase: the refusal
+        // is the tenure check, not an earlier fingerprint comparison.
+        expect(privateKeyFetches).toBe(1);
+        // No signature was returned above, and the stale approval did not
+        // become a grant in the phrase's second period.
+        expect(
+          (stored as { origins: Record<string, unknown> }).origins,
+        ).toStrictEqual({});
+      },
+    );
+
+    it('signTransaction does not submit an envelope for the earlier tenure', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const gate = gateNextRequest(
+        (args) => args.method === 'snap_getBip32Entropy',
+      );
+      const held = signTransaction(ORIGIN, {
+        xdr: classicPaymentXdr(),
+        address: ADDRESS_1,
+        submit: true,
+      });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      await observeAwayAndBack();
+
+      gate.release();
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(fetchCalls.some((url) => url.includes('/transactions'))).toBe(
+        false,
+      );
+    });
+
+    it('the home-page finder does not answer from the earlier tenure', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const binding = await ensureEntropyBinding();
+      const gate = gateNextRequest(
+        (args) => args.method === 'snap_getBip32Entropy',
+      );
+      const held = findAccountIndexByAddress(binding, ADDRESS_1);
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      await observeAwayAndBack();
+      const reconciled = JSON.stringify(stored);
+
+      gate.release();
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      // The refused sweep bound nothing: the store still reads exactly as
+      // the second period's reconciliation wrote it.
+      expect(JSON.stringify(stored)).toBe(reconciled);
+    });
+  });
+
+  describe('a phrase switch observed while the child key derives', () => {
+    /*
+     * The interval after the private import has passed every check: the
+     * parent node is confirmed, the phrase re-read, the binding current, and
+     * the only thing left is deriving the account key from the node already
+     * in hand. That derivation awaits with no platform request in it, and a
+     * concurrent request can observe a changed secret recovery phrase in
+     * exactly that window. The keypair the derivation produces signs
+     * correctly for the *former* wallet, and no later platform read exists to
+     * notice, so the completion itself must re-check the node's tenure before
+     * a signature can exist.
+     */
+
+    const signers: [string, () => Promise<unknown>][] = [
+      [
+        'signTransaction',
+        async () =>
+          signTransaction(ORIGIN, {
+            xdr: classicPaymentXdr(),
+            address: ADDRESS_1,
+          }),
+      ],
+      [
+        'signMessage',
+        async () =>
+          signMessage(ORIGIN, { message: 'hello', address: ADDRESS_1 }),
+      ],
+      [
+        'signAuthEntry',
+        async () =>
+          signAuthEntry(ORIGIN, { authEntry: addressAuthEntryXdr(ADDRESS_1) }),
+      ],
+    ];
+
+    it.each(signers)(
+      '%s returns no signature once the change is observed mid-derivation',
+      async (_name, call) => {
+        stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+        const gate = gateNextChildDerivation();
+        try {
+          const held = call();
+          held.catch(() => undefined);
+          await waitUntil(gate.hit);
+
+          swapEntropy();
+          await ensureEntropyBinding();
+
+          gate.release();
+          await expect(held).rejects.toThrow('secret recovery phrase changed');
+          // The import and the derivation both happened: the refusal is the
+          // completion's own currency check, not an earlier gate.
+          expect(privateKeyFetches).toBe(1);
+          // The stale approval left no grant in the new phrase's store.
+          expect(
+            (stored as { origins: Record<string, unknown> }).origins,
+          ).toStrictEqual({});
+        } finally {
+          gate.restore();
+        }
+      },
+    );
+
+    it('the home-page finder refuses an address derived across the change', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const binding = await ensureEntropyBinding();
+      const gate = gateNextChildDerivation();
+      try {
+        const held = findAccountIndexByAddress(binding, ADDRESS_1);
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        swapEntropy();
+        await ensureEntropyBinding();
+
+        gate.release();
+        await expect(held).rejects.toThrow('secret recovery phrase changed');
+      } finally {
+        gate.restore();
+      }
+    });
+  });
+
+  describe('supersession observed after the signature exists', () => {
+    /*
+     * The tail of a signing request: the signature was produced under a fully
+     * confirmed phrase, and what remains is recording the ancillary grant and
+     * returning. Both await, and a concurrent request can observe a phrase
+     * change inside those awaits. The store-side fingerprint check already
+     * keeps the grant out of the new phrase's state; what it cannot do is
+     * stop the *response*: a signature handed back after the snap has
+     * recorded the supersession answers for a wallet it knows was left.
+     */
+
+    const coldSigners: [string, () => Promise<unknown>][] = [
+      [
+        'signTransaction',
+        async () =>
+          signTransaction(ORIGIN, { xdr: classicPaymentXdr(), submit: true }),
+      ],
+      ['signMessage', async () => signMessage(ORIGIN, { message: 'hello' })],
+    ];
+
+    it.each(coldSigners)(
+      '%s returns nothing once superseded during grant recording',
+      async (_name, call) => {
+        // Cold signing from an empty grant registry, so the grant write the
+        // approval implies is the first mutation naming the origin.
+        stored = stateV2({ accounts: [0, 1] });
+        const gate = gateNextRequest(isGrantWrite);
+        const held = call();
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        // The held request sits inside the state lock, so the observer's
+        // reconciliation queues behind it; but the *in-context* supersession
+        // is recorded synchronously once the observation completes, which is
+        // the interleaving under test: observed, not yet reconciled.
+        swapEntropy();
+        const before = subtreeFetches;
+        const observer = ensureEntropyBinding();
+        observer.catch(() => undefined);
+        await waitUntil(() => subtreeFetches > before);
+
+        gate.release();
+        await expect(held).rejects.toThrow('secret recovery phrase changed');
+        await observer;
+        // The submission never started, and once the queued reconciliation
+        // ran, the new phrase's store carries no grant from the stale
+        // approval.
+        expect(fetchCalls.some((url) => url.includes('/transactions'))).toBe(
+          false,
+        );
+        expect(
+          (stored as { origins: Record<string, unknown> }).origins,
+        ).toStrictEqual({});
+      },
+    );
+
+    it('signAuthEntry returns no signed entry once superseded inside authorizeEntry', async () => {
+      stored = stateV2({ origins: CONNECTED, accounts: [0, 1] });
+      const gate = gateNextAuthorizeEntry();
+      try {
+        const held = signAuthEntry(ORIGIN, {
+          authEntry: addressAuthEntryXdr(ADDRESS_1),
+        });
+        held.catch(() => undefined);
+        await waitUntil(gate.hit);
+
+        swapEntropy();
+        await ensureEntropyBinding();
+
+        gate.release();
+        // The entry was signed inside the SDK call; the handler must still
+        // refuse to return it, and must not record the grant.
+        await expect(held).rejects.toThrow('secret recovery phrase changed');
+        expect(
+          (stored as { origins: Record<string, unknown> }).origins,
+        ).toStrictEqual({});
+      } finally {
+        gate.restore();
+      }
     });
   });
 

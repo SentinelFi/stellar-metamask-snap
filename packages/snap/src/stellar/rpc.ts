@@ -137,22 +137,31 @@ async function rpcCall<Type, Schema>(
   }
 
   const envelope = body as {
+    jsonrpc?: unknown;
     id?: unknown;
     result?: unknown;
     error?: { message?: string };
   } | null;
-  // The id is checked before anything else in the body is believed, error
-  // member included: a body answering some other request is not this call's
-  // reply, and its error text has no more business reaching the dialog than
-  // its result would.
+  // The version and id are checked before anything else in the body is
+  // believed, error member included: a body that is not a JSON-RPC 2.0
+  // reply, or that answers some other request, is not this call's reply,
+  // and its error text has no more business reaching the dialog than its
+  // result would.
   if (
     envelope === null ||
     typeof envelope !== 'object' ||
+    envelope.jsonrpc !== '2.0' ||
     envelope.id !== RPC_REQUEST_ID
   ) {
     throw externalServiceError(`Malformed Stellar RPC response (${method}).`);
   }
-  if (envelope.error || envelope.result === undefined) {
+  // JSON-RPC 2.0 makes `result` and `error` mutually exclusive. A body
+  // carrying both is answering two ways at once, and picking either half
+  // would be trusting a response the protocol says cannot exist.
+  if (envelope.error !== undefined && envelope.result !== undefined) {
+    throw externalServiceError(`Malformed Stellar RPC response (${method}).`);
+  }
+  if (envelope.error !== undefined || envelope.result === undefined) {
     throw externalServiceError(
       // The endpoint's message is untrusted display text: strip control and
       // direction-altering characters before it can reach an error surface.

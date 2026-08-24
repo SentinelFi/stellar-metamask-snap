@@ -34,12 +34,23 @@ export type EntropyBinding = {
    * was primary at the instant the platform served it".
    */
   source: string;
+  /**
+   * The binding generation the observation was made under (see
+   * {@link contextGeneration}). A fingerprint names a phrase; the generation
+   * names one *tenure* of it, so work bound before a switch away and back
+   * cannot pass for work bound after.
+   */
+  generation: number;
   /** A state snapshot whose persisted fingerprint equals `fingerprint`. */
   state: SnapState;
 };
 
 /** What a request must present to have its binding reaffirmed. */
-export type BoundPhrase = { fingerprint: string; source: string };
+export type BoundPhrase = {
+  fingerprint: string;
+  source: string;
+  generation: number;
+};
 
 /**
  * Public addresses by account index, memoized for this execution context.
@@ -63,30 +74,45 @@ const addressCache = new Map<number, string>();
 let contextFingerprint: string | null = null;
 
 /**
- * The fingerprint each fetched parent node was observed under, immutable for
- * the node's lifetime.
+ * A counter that moves forward every time {@link contextFingerprint} changes:
+ * the binding generation.
+ *
+ * The fingerprint alone cannot order observations. A phrase can change from A
+ * to B and back to A while a request bound under the first A period is still
+ * in flight; when that request resumes, the fingerprint it holds matches the
+ * one now observed, yet everything between has been reconciled away and its
+ * approval, snapshot, and cached resolutions describe a tenure that ended.
+ * The generation is what tells the two A periods apart: work bound at
+ * generation `g` may only complete while the context is still at `g`.
+ */
+let contextGeneration = 0;
+
+/**
+ * The binding generation each fetched parent node was observed under,
+ * immutable for the node's lifetime.
  *
  * Requests overlap: one request can retain a parent node while another
  * observes a changed secret recovery phrase, clears the cache, and moves
  * {@link contextFingerprint} on. The retained node still derives valid-looking
  * addresses for a phrase the wallet no longer uses, and nothing about the node
- * itself says so. Recording the fingerprint per node is what lets a completion
+ * itself says so. Recording the generation per node is what lets a completion
  * prove, at the moment it caches or returns a result, that the phrase it
- * derived from is still the active one.
+ * derived from is still the active one, and that its own tenure of that
+ * phrase has not ended and restarted in between.
  */
-const nodeFingerprints = new WeakMap<SLIP10Node, string>();
+const nodeGenerations = new WeakMap<SLIP10Node, number>();
 
 /**
  * Whether the given parent node still belongs to the active secret recovery
- * phrase.
+ * phrase, in the same tenure it was imported under.
  *
- * @param node - A parent node previously passed through
- * {@link bindToEntropySource}.
- * @returns True when its fingerprint is the one currently observed.
+ * @param node - A parent node previously recorded by
+ * {@link getAccountParentNode}.
+ * @returns True when its generation is the one currently observed.
  */
 function isNodeCurrent(node: SLIP10Node): boolean {
-  const fingerprint = nodeFingerprints.get(node);
-  return fingerprint !== undefined && fingerprint === contextFingerprint;
+  const generation = nodeGenerations.get(node);
+  return generation !== undefined && generation === contextGeneration;
 }
 
 /**
@@ -220,6 +246,7 @@ let bindingVerified = false;
 export function resetAddressCache(): void {
   addressCache.clear();
   contextFingerprint = null;
+  contextGeneration = 0;
   bindingReconciliation = null;
   reconciledFingerprint = null;
   reconciliationTicket = null;
@@ -383,7 +410,17 @@ async function observePrimaryPhrase(): Promise<BoundPhrase> {
     throw phraseChangedError();
   }
   await bindFingerprint(fingerprint);
-  return { fingerprint, source };
+  // Binding awaits the persisted reconciliation, and another request can
+  // observe a newer phrase in that interval. What this observation saw then
+  // no longer describes the wallet, and returning it would hand the caller a
+  // binding that was superseded before it existed.
+  if (contextFingerprint !== fingerprint) {
+    throw phraseChangedError();
+  }
+  // The generation the context holds right now, with the fingerprint just
+  // confirmed to be this observation's: the caller's work is bound to this
+  // tenure of the phrase, not merely to the phrase.
+  return { fingerprint, source, generation: contextGeneration };
 }
 
 /**
@@ -461,7 +498,14 @@ async function getAccountParentNode(phrase: BoundPhrase): Promise<SLIP10Node> {
   const fingerprint = fingerprintOf(node.publicKeyBytes);
   if (
     fingerprint !== phrase.fingerprint ||
-    (await primaryEntropySource()) !== phrase.source
+    (await primaryEntropySource()) !== phrase.source ||
+    // The two checks above prove the node is the requested phrase's and that
+    // the phrase is primary *now*; neither proves the request's own binding
+    // was not superseded in between. A phrase that changed away and back
+    // passes both, and letting the resumed import bind would reconcile the
+    // store under a request whose approval belongs to the earlier tenure.
+    // The generation is what tells the tenures apart.
+    contextGeneration !== phrase.generation
   ) {
     // Narrow the window on the subtree key that is about to be discarded.
     // Best effort, and best effort is the honest description: the runtime may
@@ -471,8 +515,8 @@ async function getAccountParentNode(phrase: BoundPhrase): Promise<SLIP10Node> {
     throw phraseChangedError();
   }
   // Recorded immutably against the node itself, so work that retained this
-  // node across a later phrase change can prove which phrase it derives for.
-  nodeFingerprints.set(node, fingerprint);
+  // node across a later phrase change can prove which tenure it derives for.
+  nodeGenerations.set(node, phrase.generation);
   await bindFingerprint(fingerprint);
   return node;
 }
@@ -512,10 +556,17 @@ function wipeNode(node: SLIP10Node): void {
  * @param fingerprint - The fingerprint of the phrase just observed.
  */
 async function bindFingerprint(fingerprint: string): Promise<void> {
-  if (contextFingerprint !== null && contextFingerprint !== fingerprint) {
-    addressCache.clear();
+  if (contextFingerprint !== fingerprint) {
+    if (contextFingerprint !== null) {
+      addressCache.clear();
+    }
+    // Every change of fingerprint starts a new tenure, the first observation
+    // included: a binding taken before the change must not be able to
+    // complete after it, even when the phrase later changes back and the
+    // fingerprints agree again.
+    contextGeneration += 1;
+    contextFingerprint = fingerprint;
   }
-  contextFingerprint = fingerprint;
   // The persisted reconciliation costs a state read and is only meaningful
   // once per fingerprint, so it runs on the first key use for the phrase
   // being derived from and not on every parent-node fetch. Keying the latch
@@ -658,13 +709,10 @@ async function bindFingerprint(fingerprint: string): Promise<void> {
  * when the phrase changed underneath the request.
  */
 export async function ensureEntropyBinding(): Promise<EntropyBinding> {
-  const { fingerprint, source } = await observePrimaryPhrase();
-  // Another request may have observed a newer phrase while this one waited
-  // for its reconciliation; what was observed here no longer describes the
-  // wallet, so nothing read under it may be honoured.
-  if (contextFingerprint !== fingerprint) {
-    throw phraseChangedError();
-  }
+  // The observation itself refuses when a newer phrase was observed while it
+  // waited for its reconciliation, so from here to the next await the phrase
+  // it returned is the context's.
+  const { fingerprint, source, generation } = await observePrimaryPhrase();
   if (!bindingVerified) {
     throw externalServiceError(
       'The wallet could not confirm which secret recovery phrase this snap ' +
@@ -678,16 +726,21 @@ export async function ensureEntropyBinding(): Promise<EntropyBinding> {
   }
   const { activeAccount } = state;
   if (cachedAddress(activeAccount, fingerprint) === undefined) {
-    await resolveAddresses([activeAccount], { fingerprint, source });
+    await resolveAddresses([activeAccount], {
+      fingerprint,
+      source,
+      generation,
+    });
   }
-  // Re-checked for the memo-hit path, which awaited nothing since the state
-  // read and could otherwise return a binding whose fingerprint a concurrent
-  // request has already superseded. (The miss path confirms inside
-  // `resolveAddresses`.)
-  if (contextFingerprint !== fingerprint) {
+  // Re-checked after the awaits above: a concurrent request can observe a
+  // newer phrase (or a newer tenure of this one) between the state read and
+  // here, and a binding returned then would carry a snapshot the store has
+  // already moved past. The generation subsumes the fingerprint: equal
+  // generations mean no change was observed at all.
+  if (contextGeneration !== generation) {
     throw phraseChangedError();
   }
-  return { fingerprint, source, state };
+  return { fingerprint, source, generation, state };
 }
 
 /**
@@ -737,9 +790,35 @@ export async function assertPhraseUnchanged(
   ) {
     throw phraseChangedError();
   }
-  // A concurrent request may have observed a different phrase between the
-  // observation above and this line.
-  if (contextFingerprint !== expected.fingerprint) {
+  // The generation, not merely the fingerprint: the phrase can have changed
+  // away and back while some other request watched, and an approval collected
+  // in the earlier tenure must not commit in the later one. This also covers
+  // a concurrent request observing a different phrase between the observation
+  // above and this line.
+  if (contextGeneration !== expected.generation) {
+    throw phraseChangedError();
+  }
+}
+
+/**
+ * Refuses a continuation whose binding some request has already observed to
+ * be superseded, without asking the platform again.
+ *
+ * The in-context complement of {@link assertPhraseUnchanged}, for the awaits
+ * that come *after* that check has already run: the grant recording every
+ * signing handler performs, and `authorizeEntry`'s internal signing interval.
+ * Those awaits are windows in which a concurrent request can observe a new
+ * phrase and reconcile the store to it, and a signature or result returned
+ * afterwards would describe a wallet the snap already knows was left. This
+ * check is synchronous and costs nothing, so it runs after every such await;
+ * what it cannot see, by construction, is a switch nothing observed, which
+ * only a fresh platform observation can catch.
+ *
+ * @param phrase - The phrase the request was authorised under.
+ * @throws An external-service error when a supersession has been observed.
+ */
+export function assertBindingCurrent(phrase: BoundPhrase): void {
+  if (contextGeneration !== phrase.generation) {
     throw phraseChangedError();
   }
 }
@@ -827,6 +906,11 @@ async function deriveAddress(node: SLIP10Node, index: number): Promise<string> {
     const address = keypair.publicKey();
     assertNodeCurrent(node);
     return address;
+  } catch (error) {
+    // A rejected sweep never derives from this node again, so the retained
+    // subtree key has no remaining use; leave one fewer reachable copy.
+    wipeNode(node);
+    throw error;
   } finally {
     wipeKeypair(keypair);
   }
@@ -849,7 +933,26 @@ export async function deriveKeypair(
   index: number,
   phrase: BoundPhrase,
 ): Promise<Keypair> {
-  return deriveFromNode(await getAccountParentNode(phrase), index);
+  const node = await getAccountParentNode(phrase);
+  let keypair: Keypair;
+  try {
+    keypair = await deriveFromNode(node, index);
+  } catch (error) {
+    wipeNode(node);
+    throw error;
+  }
+  // Asserted after the child derivation settles, exactly as `deriveAddress`
+  // does for the public sweep: the derivation awaits, and a concurrent
+  // request can observe a changed secret recovery phrase in that interval.
+  // The keypair in hand would sign correctly for the *former* wallet, and
+  // nothing downstream re-derives, so this is the last point the supersession
+  // is visible before a signature exists.
+  if (!isNodeCurrent(node)) {
+    wipeNode(node);
+    wipeKeypair(keypair);
+    throw phraseChangedError();
+  }
+  return keypair;
 }
 
 /**
@@ -921,7 +1024,7 @@ async function resolveAddresses(
   indices: number[],
   phrase: BoundPhrase,
 ): Promise<{ index: number; address: string }[]> {
-  const { fingerprint, source } = phrase;
+  const { fingerprint, source, generation } = phrase;
   const missing = [
     ...new Set(
       indices.filter(
@@ -939,7 +1042,9 @@ async function resolveAddresses(
     if (
       observed.fingerprint !== fingerprint ||
       observed.source !== source ||
-      contextFingerprint !== fingerprint
+      // The tenure, not only the phrase: a batch bound before a switch away
+      // and back must not fill the memo of the tenure that replaced it.
+      contextGeneration !== generation
     ) {
       throw phraseChangedError();
     }
@@ -1140,7 +1245,12 @@ export async function resolveSigningAccount(
   if (
     binding !== undefined &&
     (phrase.fingerprint !== binding.fingerprint ||
-      phrase.source !== binding.source)
+      phrase.source !== binding.source ||
+      // The same tenure, not merely the same phrase: a binding from before a
+      // switch away and back carries a snapshot the store has already reset,
+      // and resolving against it would compare the named address with a
+      // registry that no longer exists.
+      phrase.generation !== binding.generation)
   ) {
     throw phraseChangedError();
   }

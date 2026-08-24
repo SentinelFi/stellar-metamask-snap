@@ -33,7 +33,7 @@ Unlike Phases 0–4, this phase is mostly process: the code is feature-complete 
 - **Pack contents verified** via `yarn workspace <name> pack --dry-run`:
   - `stellar-soroban-snap` → `dist/bundle.js`, `images/icon.svg`, `snap.manifest.json`, LICENSE, README, package.json — exactly the files the manifest references.
   - `stellar-soroban-snap-connector` → complete `dist/` with type declarations, LICENSE, README, package.json.
-- Versions aligned (`0.1.0` in both `package.json`s and the snap manifest); `prepublishOnly: mm-snap manifest` regenerates the shasum at publish time; CI's manifest-drift check guards it between releases.
+- Versions aligned (`0.1.0` in both `package.json`s and the snap manifest); the release workflow's build job runs `mm-snap` and fails on any manifest diff (publishing the sealed tarball runs no lifecycle scripts, so `prepublishOnly` covers only local directory publishes); CI's manifest-drift check guards it between releases.
 - **Name check before first publish:** confirm `stellar-soroban-snap` and `stellar-soroban-snap-connector` are still free on npm at publish time; if taken, the fallback is scoping under the npm account (requires updating `snap.manifest.json` `packageName`, connector `DEFAULT_SNAP_ID`, and docs).
 
 ## Build reproducibility (verified; Node 22 only)

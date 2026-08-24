@@ -12,6 +12,7 @@ import { Buffer } from 'buffer';
 import { assertConnected } from './account';
 import type { EntropyBinding } from '../keys';
 import {
+  assertBindingCurrent,
   assertPhraseUnchanged,
   deriveSigningKeypair,
   resolveSigningAccount,
@@ -509,6 +510,11 @@ export async function signTransaction(
   // after the derivation above confirmed the displayed address still belongs
   // to the active phrase. Best effort: see `recordGrantBestEffort`.
   await recordGrantBestEffort(origin, phrase.fingerprint);
+  // The grant write awaited, and a concurrent request can observe a phrase
+  // change in that interval. The envelope below either goes to a submission
+  // endpoint or back to the origin, and both are answers about a wallet the
+  // snap may already know was left; refuse before either happens.
+  assertBindingCurrent(phrase);
   const warningsField = warnings.length > 0 ? { warnings } : {};
 
   if (request.submit) {
@@ -836,10 +842,17 @@ export async function signAuthEntry(
   } finally {
     wipeKeypair(keypair);
   }
+  // `authorizeEntry` awaited between the derivation's currency check and
+  // here, so a concurrent request can have observed a phrase change while
+  // the entry was being signed. The grant below and the signed entry both
+  // describe the wallet the user approved for; neither may outlive it.
+  assertBindingCurrent(phrase);
 
   // Recorded only after the derivation confirmed the displayed address still
   // belongs to the active phrase. Best effort: see `recordGrantBestEffort`.
   await recordGrantBestEffort(origin, phrase.fingerprint);
+  // The grant write awaited too; re-checked before the signature leaves.
+  assertBindingCurrent(phrase);
 
   return {
     signedAuthEntry: signed.toXDR('base64'),
@@ -947,6 +960,9 @@ export async function signMessage(
   // Recorded only after the derivation confirmed the displayed address still
   // belongs to the active phrase. Best effort: see `recordGrantBestEffort`.
   await recordGrantBestEffort(origin, phrase.fingerprint);
+  // The grant write awaited; a supersession observed during it means this
+  // signature describes a wallet the user has left, so it is not returned.
+  assertBindingCurrent(phrase);
 
   return { signedMessage: signature.toString('base64'), signerAddress };
 }

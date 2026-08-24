@@ -132,6 +132,38 @@ describe('getLatestLedger', () => {
     );
   });
 
+  it('refuses a response that does not declare JSON-RPC 2.0', async () => {
+    // The version member is part of what makes the body a reply to this
+    // protocol at all; a body without it (or with another version) is not a
+    // JSON-RPC 2.0 response, however plausible its result looks.
+    mockFetch(mockResponse({ id: 1, result: { sequence: 4321 } }));
+    await expect(getLatestLedger(RPC)).rejects.toThrow(
+      'Malformed Stellar RPC response (getLatestLedger).',
+    );
+    mockFetch(
+      mockResponse({ jsonrpc: '1.0', id: 1, result: { sequence: 4321 } }),
+    );
+    await expect(getLatestLedger(RPC)).rejects.toThrow(
+      'Malformed Stellar RPC response (getLatestLedger).',
+    );
+  });
+
+  it('refuses a response carrying both result and error members', async () => {
+    // JSON-RPC 2.0 makes the two mutually exclusive; a body answering both
+    // ways at once is malformed, and neither half may be believed.
+    mockFetch(
+      mockResponse({
+        jsonrpc: '2.0',
+        id: 1,
+        result: { sequence: 4321 },
+        error: { message: 'boom' },
+      }),
+    );
+    await expect(getLatestLedger(RPC)).rejects.toThrow(
+      'Malformed Stellar RPC response (getLatestLedger).',
+    );
+  });
+
   it('refuses a response whose id is not the one the request carried', async () => {
     // A body answering some other request is not this call's reply, however
     // well formed its result is.

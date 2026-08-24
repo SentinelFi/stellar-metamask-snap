@@ -348,8 +348,28 @@ describe('simulation provenance', () => {
     ok: true as const,
     minResourceFee: '1000',
     authSigners: [],
+    authSignersTruncated: false,
     restoreRequired: false,
   };
+
+  it('marks a capped signer list as incomplete', () => {
+    // A decoding cap means part of the endpoint's report went unread; the
+    // visible signers must not present themselves as the whole list.
+    const content = render({
+      tx: buildTx([PAYMENT]),
+      simulation: { ...SIMULATION, authSignersTruncated: true },
+    });
+    expect(content).toContain('Signer list incomplete');
+    expect(content).toContain('may be missing signers');
+  });
+
+  it('does not mark a complete signer list', () => {
+    const content = render({
+      tx: buildTx([PAYMENT]),
+      simulation: SIMULATION,
+    });
+    expect(content).not.toContain('Signer list incomplete');
+  });
 
   it('names the reporting endpoint and says the figures are unverified', () => {
     const content = render({
