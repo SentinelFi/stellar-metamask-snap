@@ -43,7 +43,12 @@ name: Release
 #            recorded, and runs `npm publish <tarball> --provenance`. Job
 #            outputs are stored by GitHub, not by the artifact store, so a
 #            step that could rewrite the artifact cannot also rewrite the
-#            digest it is checked against.
+#            digest it is checked against. Publication is serialized across
+#            all releases (a fixed concurrency group), refuses to move npm's
+#            `latest` backward, skips a version already on the registry with
+#            exactly the sealed bytes (so a partial release is resumed by
+#            re-running), and finishes by verifying that the registry serves
+#            the sealed pair with `latest` resolving to it.
 #
 # Why the seal is a separate job rather than later steps of the build job.
 # Steps within a job share more than a working directory. `GITHUB_PATH` and
@@ -567,6 +572,18 @@ jobs:
     # graph cannot influence, and this condition states the same rule where
     # the token lives.
     if: ${{ !inputs.dry-run && startsWith(github.ref, 'refs/tags/v') }}
+    # One production publication at a time, whatever tag started it. GitHub
+    # runs workflows for different tags concurrently, and npm assigns every
+    # publish to `latest`, so a slower run for an older tag finishing after a
+    # newer release would otherwise repoint fresh installs at the superseded
+    # pair. The group is fixed, deliberately not keyed by tag or ref, so
+    # every release queues behind the one currently publishing, and nothing
+    # in progress is ever cancelled: the preflight step below is what decides
+    # whether a queued release may still move the tag forward once its turn
+    # comes.
+    concurrency:
+      group: npm-production-release
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Protection rules on this environment (required reviewers) are the human
@@ -661,6 +678,127 @@ jobs:
             | sha256sum --check --strict
           echo "Publishing $SNAP_TGZ ($SNAP_SHA256) and $CONNECTOR_TGZ ($CONNECTOR_SHA256)"
 
+      # Serialization above makes releases take turns; this step is what a
+      # release does when its turn comes. Two failure modes remain once only
+      # one publish runs at a time. A release for an older tag can reach here
+      # after a newer release has completed, and because npm assigns every
+      # publish to `latest`, letting it publish would move the tag backward
+      # onto the superseded pair. So the registry's current `latest` is read
+      # for each package and any publish that would not move it forward is
+      # refused, with versions compared as strict X.Y.Z triples (anything
+      # else, on either side, fails closed rather than being guessed at). And
+      # a release that published the snap but failed before the connector
+      # cannot be blindly re-run, because npm versions are immutable and the
+      # re-publish of the half that landed would fail before reaching the
+      # half that did not. So a version that already exists is checked
+      # against the sealed tarball's integrity and marked to be skipped on an
+      # exact match, which makes a re-run of a partial release converge
+      # instead of failing. A registry version that exists with *different*
+      # bytes is not a resumable release, it is a substituted package, and
+      # the release fails closed on it.
+      #
+      # The name and version are read from the sealed tarballs themselves
+      # (this job has no checkout), so what is compared against the registry
+      # is exactly what would be published.
+      - name: Refuse dist-tag rollback and detect already-published versions
+        id: preflight
+        env:
+          SNAP_TGZ: ${{ needs.seal.outputs.snap-tarball }}
+          CONNECTOR_TGZ: ${{ needs.seal.outputs.connector-tarball }}
+        run: |
+          set -euo pipefail
+          node - "tarballs/$SNAP_TGZ" "tarballs/$CONNECTOR_TGZ" <<'PREFLIGHT'
+          const { execFileSync } = require('node:child_process');
+          const { createHash } = require('node:crypto');
+          const { readFileSync, appendFileSync } = require('node:fs');
+
+          const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+
+          const parseVersion = (value, label) => {
+            const match = VERSION_RE.exec(value);
+            if (!match) {
+              console.error(`${label} is not a plain X.Y.Z version: "${value}"`);
+              process.exit(1);
+            }
+            return match.slice(1, 4).map(Number);
+          };
+
+          const compare = (a, b) => {
+            for (let i = 0; i < 3; i += 1) {
+              if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+            }
+            return 0;
+          };
+
+          // Reads one field from the registry. Only a definite "not
+          // published" (E404) may be treated as absence: a transient
+          // registry failure must abort the release rather than make an
+          // existing version look unpublished.
+          const view = (spec, field) => {
+            try {
+              return execFileSync('npm', ['view', spec, field], {
+                encoding: 'utf8',
+              }).trim();
+            } catch (error) {
+              const output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+              if (output.includes('E404')) return null;
+              console.error(`npm view ${spec} ${field} failed:\n${output}`);
+              process.exit(1);
+            }
+          };
+
+          const integrityOf = (path) =>
+            `sha512-${createHash('sha512').update(readFileSync(path)).digest('base64')}`;
+
+          const check = (tarball, key) => {
+            const manifest = JSON.parse(
+              execFileSync('tar', ['-xzOf', tarball, 'package/package.json'], {
+                encoding: 'utf8',
+              }),
+            );
+            const { name, version } = manifest;
+            const candidate = parseVersion(version, `${name} tarball version`);
+
+            const latest = view(name, 'dist-tags.latest');
+            if (latest !== null && latest !== '') {
+              const current = parseVersion(latest, `${name} registry latest`);
+              if (compare(candidate, current) < 0) {
+                console.error(
+                  `Refusing to publish ${name}@${version}: the registry's latest is already ${latest}, and publishing would move the latest tag backward onto an older release.`,
+                );
+                process.exit(1);
+              }
+            }
+
+            const registryIntegrity = view(`${name}@${version}`, 'dist.integrity');
+            if (registryIntegrity === null || registryIntegrity === '') {
+              console.log(`${name}@${version}: not on the registry yet; publishing.`);
+              appendFileSync(process.env.GITHUB_OUTPUT, `${key}=publish\n`);
+              return;
+            }
+            const sealed = integrityOf(tarball);
+            if (registryIntegrity !== sealed) {
+              console.error(
+                `${name}@${version} already exists on the registry with different bytes:\n  registry ${registryIntegrity}\n  sealed   ${sealed}\nThat is not a partial release to resume; treat it as package substitution and investigate before releasing.`,
+              );
+              process.exit(1);
+            }
+            if (latest === null || latest === '' || compare(parseVersion(latest, `${name} registry latest`), candidate) < 0) {
+              console.error(
+                `${name}@${version} is already on the registry with the sealed bytes, but the latest tag points at ${latest || 'nothing'}. This workflow cannot move dist-tags (trusted publishing authenticates npm publish only); promote the tag manually, then re-run.`,
+              );
+              process.exit(1);
+            }
+            console.log(
+              `${name}@${version}: already published with the sealed bytes; skipping the publish and keeping the verification below.`,
+            );
+            appendFileSync(process.env.GITHUB_OUTPUT, `${key}=skip\n`);
+          };
+
+          check(process.argv[2], 'snap');
+          check(process.argv[3], 'connector');
+          PREFLIGHT
+
       # Bootstrap path only. npm's trusted publisher configuration lives in
       # the settings of a package that already exists on the registry, so the
       # very first publish of a package cannot use it. For that one run, and
@@ -678,7 +816,10 @@ jobs:
 
       # Snap first: the connector pins the snap version it installs, so a
       # connector on npm naming a snap release that does not exist yet is a
-      # window in which a dapp can install a broken pair.
+      # window in which a dapp can install a broken pair. Each publish is
+      # skipped when the preflight found the exact sealed bytes already on
+      # the registry, which is what lets a re-run of a partially published
+      # release finish the half that is missing.
       #
       # Publishing a tarball runs no lifecycle scripts (no `prepack`, no
       # `prepublishOnly`): everything those scripts checked was checked in the
@@ -687,13 +828,85 @@ jobs:
       # somehow reached here without one stops rather than publishing an
       # unattested artifact.
       - name: Publish snap
+        if: ${{ steps.preflight.outputs.snap != 'skip' }}
         env:
           SNAP_TGZ: ${{ needs.seal.outputs.snap-tarball }}
           NODE_AUTH_TOKEN: ${{ inputs.bootstrap-token && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
         run: npm publish "tarballs/$SNAP_TGZ" --provenance --access public
 
       - name: Publish connector
+        if: ${{ steps.preflight.outputs.connector != 'skip' }}
         env:
           CONNECTOR_TGZ: ${{ needs.seal.outputs.connector-tarball }}
           NODE_AUTH_TOKEN: ${{ inputs.bootstrap-token && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
         run: npm publish "tarballs/$CONNECTOR_TGZ" --provenance --access public
+
+      # The release is judged by what the registry now serves, not by the
+      # publish commands having exited zero: consumers install from the
+      # registry, so both versions must exist there with exactly the sealed
+      # bytes, and `latest` must resolve to this release for both packages,
+      # so the pair a fresh install receives is the pair that was sealed
+      # together. A publish that half-landed fails here and the re-run
+      # converges through the preflight above. Reads are retried briefly,
+      # since registry views can trail a publish by a few seconds.
+      #
+      # This is as close to publish-then-promote as trusted publishing
+      # allows: the OIDC exchange authenticates `npm publish` and nothing
+      # else, so a staging dist-tag promoted to `latest` afterwards would
+      # need a long-lived npm token with tag-mutation rights held in this
+      # repository, reintroducing exactly the standing credential this
+      # workflow exists to avoid. Ordering is protected by the serialization
+      # group and the preflight's rollback refusal instead, and this step
+      # proves the outcome those controls were meant to produce.
+      - name: Verify the published pair
+        env:
+          SNAP_TGZ: ${{ needs.seal.outputs.snap-tarball }}
+          CONNECTOR_TGZ: ${{ needs.seal.outputs.connector-tarball }}
+        run: |
+          set -euo pipefail
+          node - "tarballs/$SNAP_TGZ" "tarballs/$CONNECTOR_TGZ" <<'PAIRCHECK'
+          const { execFileSync } = require('node:child_process');
+          const { createHash } = require('node:crypto');
+          const { readFileSync } = require('node:fs');
+
+          const ATTEMPTS = 6;
+          const RETRY_SECONDS = '5';
+
+          const view = (spec, field) => {
+            try {
+              return execFileSync('npm', ['view', spec, field], {
+                encoding: 'utf8',
+              }).trim();
+            } catch {
+              return null;
+            }
+          };
+
+          const verify = (tarball) => {
+            const { name, version } = JSON.parse(
+              execFileSync('tar', ['-xzOf', tarball, 'package/package.json'], {
+                encoding: 'utf8',
+              }),
+            );
+            const sealed = `sha512-${createHash('sha512').update(readFileSync(tarball)).digest('base64')}`;
+            for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+              const integrity = view(`${name}@${version}`, 'dist.integrity');
+              const latest = view(name, 'dist-tags.latest');
+              if (integrity === sealed && latest === version) {
+                console.log(`${name}@${version}: registry serves the sealed bytes and latest resolves to it.`);
+                return;
+              }
+              console.log(
+                `${name}@${version}: not settled yet (integrity ${integrity ?? 'unavailable'}, latest ${latest ?? 'unavailable'}), attempt ${attempt}/${ATTEMPTS}.`,
+              );
+              if (attempt < ATTEMPTS) execFileSync('sleep', [RETRY_SECONDS]);
+            }
+            console.error(
+              `${name}@${version}: the registry does not serve the sealed release (or latest does not resolve to it). The published pair is unverified; investigate before announcing the release, and re-run this workflow to resume a partial publish.`,
+            );
+            process.exit(1);
+          };
+
+          verify(process.argv[2]);
+          verify(process.argv[3]);
+          PAIRCHECK

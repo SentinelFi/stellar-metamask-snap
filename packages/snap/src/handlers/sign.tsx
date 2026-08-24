@@ -533,8 +533,19 @@ export async function signTransaction(
     try {
       // Soroban transactions must go through the RPC; classic ones use
       // Horizon's synchronous endpoint.
+      //
+      // The submission round trip is the longest await in the request, and a
+      // switch of the primary secret recovery phrase can land inside it with
+      // nothing else running to observe it — the in-context generation check
+      // above only sees what some request has already noticed. The envelope
+      // may already be at the endpoint by then, and that cannot be undone;
+      // what can be prevented is answering the origin with a signature and
+      // submission report for a wallet the user has left. So the platform is
+      // asked again after each submission settles, before its response is
+      // believed or anything is returned.
       if (isSoroban) {
         const sent = await sendTransaction(network.sorobanRpcUrl, signedTxXdr);
+        await assertPhraseUnchanged(phrase);
         // sendTransaction is asynchronous: PENDING/DUPLICATE mean accepted,
         // but ERROR/TRY_AGAIN_LATER are failures that must not be reported as
         // a successful hash.
@@ -556,13 +567,22 @@ export async function signTransaction(
         network.horizonUrl,
         signedTxXdr,
       );
+      await assertPhraseUnchanged(phrase);
       assertSubmittedHash(txHash);
       return { signedTxXdr, signerAddress, hash: txHash, ...warningsField };
     } catch (error) {
       // The user did sign — surface the signature alongside the submission
       // failure. On a Horizon timeout the transaction may still land, so
-      // the dapp needs the envelope to poll or retry.
+      // the dapp needs the envelope to poll or retry. But only while the
+      // signature still describes the active wallet: the failure arrived
+      // through the same submission await as a success would have, so the
+      // phrase is re-observed here too, and on a change this throws the
+      // supersession refusal itself rather than wrapping it with an envelope
+      // that must not be disclosed. (A refusal the checks above raised comes
+      // back through here as well; the repeated observation is then a cheap
+      // reconfirmation of the same answer.)
       if (error instanceof SnapError) {
+        await assertPhraseUnchanged(phrase);
         const data =
           typeof error.data === 'object' &&
           error.data !== null &&

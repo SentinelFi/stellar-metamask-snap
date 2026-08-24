@@ -15,6 +15,7 @@ import {
   nativeToScVal,
   Networks,
   Operation,
+  SorobanDataBuilder,
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk';
@@ -238,7 +239,21 @@ const TOKEN_READS: Record<string, xdr.ScVal> = {
   decimals: nativeToScVal(7, { type: 'u32' }),
   // 1.0000000 at 7 decimals, so a wrong `decimals` cannot render as "1".
   balance: nativeToScVal(10_000_000n, { type: 'i128' }),
+  // The display-verification simulation of the submission schedules' transfer
+  // envelope; the value itself is never rendered.
+  transfer: xdr.ScVal.scvVoid(),
 };
+
+/**
+ * What the mocked Horizon answers a `POST /transactions` submission with,
+ * settable per test. The default is a well-formed acceptance whose hash is
+ * not the signed envelope's; tests that need the success path to complete
+ * replace it with the real hash.
+ */
+let horizonSubmission: { status: number; body: unknown };
+
+/** The same, for the mocked Soroban RPC's `sendTransaction`. */
+let sorobanSubmission: { status: number; body: unknown };
 
 /**
  * Decodes a simulateTransaction request body and returns the ScVal the named
@@ -482,13 +497,15 @@ function gateNextRequest(
 
 /**
  * The `fetch` counterpart of {@link gateNextRequest}: holds the next outbound
- * request whose URL matches, so a handler can be suspended in the middle of
- * a network lookup.
+ * request that matches, so a handler can be suspended in the middle of a
+ * network lookup.
  *
- * @param matches - Which URL to hold.
+ * @param matches - Which request to hold, by URL and (when it needs the
+ * body, e.g. to tell one JSON-RPC method from another on the same endpoint)
+ * the request init.
  * @returns `hit` and `release`, as for {@link gateNextRequest}.
  */
-function gateNextFetch(matches: (url: string) => boolean): {
+function gateNextFetch(matches: (url: string, init?: unknown) => boolean): {
   hit: () => boolean;
   release: () => void;
 } {
@@ -503,7 +520,7 @@ function gateNextFetch(matches: (url: string) => boolean): {
     release = resolve;
   });
   host.fetch = async (url: string, init?: unknown) => {
-    if (armed && matches(url)) {
+    if (armed && matches(url, init)) {
       armed = false;
       arrived = true;
       await gate;
@@ -557,6 +574,48 @@ function classicPaymentXdr(): string {
         asset: Asset.native(),
         amount: '1',
       }),
+    )
+    .setTimeout(300)
+    .build()
+    .toXDR();
+}
+
+/**
+ * A Soroban transfer invocation from account 0, carrying the minimal
+ * footprint the signing gate requires, for the submission schedules below.
+ *
+ * @returns The envelope XDR.
+ */
+function sorobanTransferXdr(): string {
+  const footprint = [
+    xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract: new Address(CONTRACT).toScAddress(),
+        key: xdr.ScVal.scvLedgerKeyContractInstance(),
+        durability: xdr.ContractDataDurability.persistent(),
+      }),
+    ),
+  ];
+  return new TransactionBuilder(new Account(ADDRESS_0, '1'), {
+    fee: '1000100',
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.invokeContractFunction({
+        contract: CONTRACT,
+        function: 'transfer',
+        args: [
+          new Address(ADDRESS_0).toScVal(),
+          new Address(ADDRESS_1).toScVal(),
+          nativeToScVal(10_000_000n, { type: 'i128' }),
+        ],
+      }),
+    )
+    .setSorobanData(
+      new SorobanDataBuilder()
+        .setFootprint(footprint, [])
+        .setResourceFee(1_000_000n)
+        .build(),
     )
     .setTimeout(300)
     .build()
@@ -809,6 +868,15 @@ describe('connection gate and account resolution', () => {
     flipDuringNextPrivateImport = false;
     privateImportSource = null;
     mixedResponseSource = null;
+    horizonSubmission = { status: 200, body: { hash: 'a'.repeat(64) } };
+    sorobanSubmission = {
+      status: 200,
+      body: {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { status: 'PENDING', hash: 'a'.repeat(64) },
+      },
+    };
     sourceNodes.set(SOURCE_A, entropy);
     sourceNodes.set(
       SOURCE_B,
@@ -926,6 +994,14 @@ describe('connection gate and account resolution', () => {
       if (url.includes('/accounts/')) {
         return jsonResponse(HORIZON_ACCOUNT);
       }
+      // Horizon's synchronous submission endpoint, answered from the
+      // per-test fixture so the submission schedules can serve an acceptance
+      // or a failure on demand.
+      if (url.includes('/transactions')) {
+        return jsonResponse(horizonSubmission.body, {
+          status: horizonSubmission.status,
+        });
+      }
       // Horizon's root, the second of the two ledger-height sources. Signing
       // an authorization entry requires both to answer and takes the lower
       // height, so a harness that served only one would make every such
@@ -940,6 +1016,13 @@ describe('connection gate and account resolution', () => {
             jsonrpc: '2.0',
             id: 1,
             result: { sequence: LATEST_LEDGER },
+          });
+        }
+        // The Soroban RPC submission, answered from the per-test fixture
+        // exactly like the Horizon endpoint above.
+        if (String(init.body).includes('"sendTransaction"')) {
+          return jsonResponse(sorobanSubmission.body, {
+            status: sorobanSubmission.status,
           });
         }
         // Answer by the contract function actually being simulated, decoded
@@ -2288,6 +2371,131 @@ describe('connection gate and account resolution', () => {
       } finally {
         gate.restore();
       }
+    });
+  });
+
+  describe('supersession during transaction submission', () => {
+    /*
+     * The `submit: true` tail. The signature exists and the binding was
+     * current when submission began, but the longest await in the whole
+     * request — a network round trip to the submission endpoint — is still
+     * ahead, and a switch of the primary secret recovery phrase can land
+     * inside it with no other request running to observe it. The in-context
+     * generation check cannot see that; only asking the platform again after
+     * the await settles can. The envelope may already be at the endpoint by
+     * then, and these schedules do not pretend otherwise: what they assert
+     * is that nothing is *returned* once the wallet has moved on — no
+     * envelope, no hash, no signer — whether the endpoint accepted or
+     * failed.
+     */
+
+    const submissions: [
+      string,
+      () => string,
+      (url: string, init?: unknown) => boolean,
+    ][] = [
+      [
+        'classic Horizon',
+        classicPaymentXdr,
+        (url) => url.includes('/transactions'),
+      ],
+      [
+        'Soroban RPC',
+        sorobanTransferXdr,
+        (_url, init) => {
+          const body = (init as { body?: unknown } | undefined)?.body;
+          return typeof body === 'string' && body.includes('"sendTransaction"');
+        },
+      ],
+    ];
+
+    /**
+     * Runs one submitted signing request across an unobserved phrase switch
+     * held inside the submission fetch, and returns how it settled, already
+     * serialized so the assertions in the tests stay unconditional.
+     *
+     * @param envelope - The envelope builder for the variant under test.
+     * @param matcher - Matches that variant's submission request.
+     * @returns The rejection message and its serialized error data (or the
+     * literal 'resolved' when the request wrongly succeeded).
+     */
+    async function supersededSubmission(
+      envelope: () => string,
+      matcher: (url: string, init?: unknown) => boolean,
+    ): Promise<{ message: string; serializedData: string }> {
+      stored = stateV2({ origins: CONNECTED });
+      const gate = gateNextFetch(matcher);
+      const held = signTransaction(ORIGIN, { xdr: envelope(), submit: true });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      // Nothing else runs: the switch is unobserved while the submission is
+      // in flight, which is exactly the interval an in-context comparison
+      // cannot see.
+      swapEntropy();
+      gate.release();
+
+      return held.then(
+        () => ({ message: 'resolved', serializedData: '' }),
+        (error: unknown) => {
+          const failure = error as { message?: unknown; data?: unknown };
+          return {
+            message: String(failure.message),
+            serializedData: JSON.stringify(failure.data ?? {}),
+          };
+        },
+      );
+    }
+
+    it.each(submissions)(
+      '%s: an accepted submission reports nothing once the wallet moved on',
+      async (_name, envelope, matcher) => {
+        const failure = await supersededSubmission(envelope, matcher);
+        expect(failure.message).toContain('secret recovery phrase changed');
+        expect(failure.serializedData).not.toContain('signedTxXdr');
+      },
+    );
+
+    it.each(submissions)(
+      '%s: a failed submission does not attach the envelope either',
+      async (_name, envelope, matcher) => {
+        horizonSubmission = { status: 500, body: { detail: 'boom' } };
+        sorobanSubmission = { status: 500, body: { detail: 'boom' } };
+        const failure = await supersededSubmission(envelope, matcher);
+        expect(failure.message).toContain('secret recovery phrase changed');
+        expect(failure.serializedData).not.toContain('signedTxXdr');
+      },
+    );
+
+    it('the positive control: a Soroban submission completes while the phrase holds', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      const envelope = sorobanTransferXdr();
+      // The handler signs before submitting, so the expected hash is the
+      // signed envelope's; recompute it the way the handler does.
+      const binding = await ensureEntropyBinding();
+      const keypair = await deriveSigningKeypair(0, ADDRESS_0, binding);
+      const signed = TransactionBuilder.fromXDR(
+        envelope,
+        Networks.TESTNET,
+      ) as Transaction;
+      signed.sign(keypair);
+      const expected = signed.hash().toString('hex');
+      sorobanSubmission = {
+        status: 200,
+        body: {
+          jsonrpc: '2.0',
+          id: 1,
+          result: { status: 'PENDING', hash: expected },
+        },
+      };
+
+      const result = await signTransaction(ORIGIN, {
+        xdr: envelope,
+        submit: true,
+      });
+      expect(result.hash).toBe(expected);
+      expect(result.status).toBe('PENDING');
+      expect(dialogs).toHaveLength(1);
     });
   });
 
