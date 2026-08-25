@@ -769,6 +769,39 @@ function isGrantWrite(args: RequestArgs): boolean {
 }
 
 /**
+ * Matches the state write that commits the PUBLIC network preference, for
+ * {@link gateNextRequest}. Declared at module scope because the compound
+ * check is a conditional, which `jest/no-conditional-in-test` refuses in a
+ * test body.
+ *
+ * @param args - The intercepted request.
+ * @returns True for a `snap_manageState` write carrying the new network.
+ */
+function isPublicNetworkWrite(args: RequestArgs): boolean {
+  return (
+    args.method === 'snap_manageState' &&
+    args.params.operation !== 'get' &&
+    JSON.stringify(args.params.newState ?? {}).includes('"network":"PUBLIC"')
+  );
+}
+
+/**
+ * Matches the state write that commits the tracked-token registry entry for
+ * {@link CONTRACT}, for {@link gateNextRequest}. Declared at module scope
+ * for the same lint reason as {@link isPublicNetworkWrite}.
+ *
+ * @param args - The intercepted request.
+ * @returns True for a `snap_manageState` write carrying the token.
+ */
+function isTokenWrite(args: RequestArgs): boolean {
+  return (
+    args.method === 'snap_manageState' &&
+    args.params.operation !== 'get' &&
+    JSON.stringify(args.params.newState ?? {}).includes(CONTRACT)
+  );
+}
+
+/**
  * Makes every state write fail, leaving reads working.
  *
  * Models a store the platform will not persist to. That is the condition under
@@ -2650,6 +2683,90 @@ describe('connection gate and account resolution', () => {
       expect(
         Object.keys((stored as { origins: Record<string, unknown> }).origins),
       ).toStrictEqual([ORIGIN]);
+    });
+  });
+
+  describe('an unobserved switch at a phrase-surviving commit', () => {
+    /*
+     * `setNetwork` and `addToken` write the two values a phrase-change
+     * reconciliation deliberately keeps, so a write landed under a stale
+     * approval is never erased by a later reset: the choice approved for one
+     * wallet silently becomes the next wallet's default. The in-lock
+     * fingerprint comparison cannot see a switch nobody observed — the store
+     * still names the phrase the request began under — so these commits ask
+     * the platform again inside the lock, before the write and again after
+     * it. The schedules below land the switch in each interval with no
+     * observer running.
+     *
+     * The pre-commit schedules hold the commit confirmation's own subtree
+     * key request. Three subtree fetches precede it deterministically: the
+     * admission observation, the confirming observation that closes its
+     * address resolution, and the post-dialog re-observation.
+     */
+
+    it('setNetwork refuses before writing once the switch lands at the commit', async () => {
+      stored = stateV2({ origins: CONNECTED, network: 'TESTNET' });
+      const gate = gateNextRequest(isSubtreeKeyFetch, 3);
+      const held = setNetwork(ORIGIN, { network: 'PUBLIC' });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      // Refused before the write: the preference never moved at all.
+      expect(stored).toMatchObject({ network: 'TESTNET' });
+    });
+
+    it('addToken refuses before writing once the switch lands at the commit', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      const gate = gateNextRequest(isSubtreeKeyFetch, 3);
+      const held = addToken(ORIGIN, { contractId: CONTRACT });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      expect(JSON.stringify(stored)).not.toContain(CONTRACT);
+    });
+
+    it('setNetwork rolls back a commit superseded during the write itself', async () => {
+      stored = stateV2({ origins: CONNECTED, network: 'TESTNET' });
+      const gate = gateNextRequest(isPublicNetworkWrite);
+      const held = setNetwork(ORIGIN, { network: 'PUBLIC' });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      // The pre-commit confirmation has already passed; the switch lands
+      // while the state update itself is in flight.
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      // The write landed and was withdrawn: the post-write confirmation put
+      // the snapshot read under the same lock back before refusing, so the
+      // new wallet does not inherit the approved network.
+      expect(stored).toMatchObject({ network: 'TESTNET' });
+    });
+
+    it('addToken rolls back a commit superseded during the write itself', async () => {
+      stored = stateV2({ origins: CONNECTED });
+      const gate = gateNextRequest(isTokenWrite);
+      const held = addToken(ORIGIN, { contractId: CONTRACT });
+      held.catch(() => undefined);
+      await waitUntil(gate.hit);
+
+      swapEntropy();
+      gate.release();
+
+      await expect(held).rejects.toThrow('secret recovery phrase changed');
+      // The rollback restores the exact pre-write snapshot, which is why the
+      // commit builds its new registry without mutating that snapshot in
+      // place: a map mutated in place would smuggle the token back in.
+      expect(JSON.stringify(stored)).not.toContain(CONTRACT);
     });
   });
 

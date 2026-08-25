@@ -1,6 +1,7 @@
 import type { EntropyBinding } from '../keys';
 import {
   assertPhraseUnchanged,
+  assertPhraseUnchangedForCommit,
   ensureEntropyBinding,
   getActiveAddress,
   getOwnedAccounts,
@@ -479,6 +480,10 @@ export async function addToken(
   // active phrase before committing, then commit under the state lock, where
   // the fingerprint proves the store still belongs to it.
   await assertPhraseUnchanged(binding);
+  // The commit confirmation re-asks the platform inside the lock, on both
+  // sides of the write: a switch can land after the observation above with
+  // nothing running to notice it, and the token registry would survive the
+  // reconciliation that erases every other stale write.
   await addTokenToState(
     network.name,
     {
@@ -487,6 +492,7 @@ export async function addToken(
       decimals: metadata.decimals,
     },
     binding.fingerprint,
+    async () => assertPhraseUnchangedForCommit(binding),
   );
   return { contractId: request.contractId, ...metadata };
 }

@@ -800,6 +800,50 @@ export async function assertPhraseUnchanged(
   }
 }
 
+/**
+ * Re-observes the primary phrase for a commit that is already holding the
+ * state lock, and refuses when it is no longer the one expected.
+ *
+ * Deliberately does *not* bind what it observes. {@link assertPhraseUnchanged}
+ * routes its observation through the binding, and a changed fingerprint
+ * starts a store reconciliation that takes the state lock — the lock the
+ * caller is holding, so the request would deadlock instead of refusing. This
+ * variant asks the platform the same questions (the named source's key, and
+ * whether that source is still primary once the key is in hand) and binds
+ * nothing: the refusal propagates out of the lock, and the next observation
+ * anywhere performs the reconciliation this one skipped, since every request
+ * begins with one.
+ *
+ * It exists for the two writes whose value deliberately survives a phrase
+ * change: the network preference and the token registry. Everything else a
+ * stale approval could write is erased when the new phrase is reconciled, so
+ * for those the in-lock fingerprint comparison is enough — a write that lands
+ * anyway does not outlive the reset. These two would, which is why they alone
+ * re-ask the platform at the commit itself, on both sides of the write.
+ *
+ * @param expected - The phrase the approval was collected under.
+ * @throws An external-service error when the active phrase is not that one.
+ */
+export async function assertPhraseUnchangedForCommit(
+  expected: BoundPhrase,
+): Promise<void> {
+  const source = await primaryEntropySource();
+  const fingerprint = fingerprintOf(
+    await fetchPublicKeyBytes(SUBTREE_PATH, source),
+  );
+  if (
+    fingerprint !== expected.fingerprint ||
+    source !== expected.source ||
+    (await primaryEntropySource()) !== expected.source ||
+    // The tenure as well as the phrase, exactly as the binding-aware check
+    // compares it: a concurrent request may have observed a change this
+    // observation cannot see from the platform alone.
+    contextGeneration !== expected.generation
+  ) {
+    throw phraseChangedError();
+  }
+}
+
 /*
  * There is deliberately no synchronous, in-context-only counterpart to
  * {@link assertPhraseUnchanged} for the awaits that follow it (grant

@@ -1,5 +1,5 @@
 import { assertConnected } from './account';
-import { assertPhraseUnchanged } from '../keys';
+import { assertPhraseUnchanged, assertPhraseUnchangedForCommit } from '../keys';
 import { userRejected } from '../rpc/errors';
 import { clearDialogRejections, recordDialogOpened } from '../rpc/throttle';
 import { SetNetworkParams, validate } from '../rpc/validation';
@@ -91,7 +91,13 @@ export async function setNetwork(
     // Re-read and write under the state lock: the pre-dialog snapshot may
     // be stale by the time the user approves, and the fingerprint proves the
     // store still belongs to the phrase whose grant admitted this request.
-    await setActiveNetwork(target, binding.fingerprint);
+    // The commit confirmation re-asks the platform inside the lock, on both
+    // sides of the write, because a switch can land after the observation
+    // above with nothing running to notice it, and this value would survive
+    // the reconciliation that erases every other stale write.
+    await setActiveNetwork(target, binding.fingerprint, async () =>
+      assertPhraseUnchangedForCommit(binding),
+    );
   }
 
   const network = NETWORKS[target];

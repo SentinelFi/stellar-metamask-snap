@@ -487,19 +487,48 @@ export async function getActiveNetwork(): Promise<NetworkConfig> {
  * fingerprint comparison keeps an approval collected under that grant from
  * changing the network of a wallet the origin was never connected to.
  *
+ * The comparison alone only sees a change the store has already been
+ * reconciled to. Because this value survives that reconciliation, a switch
+ * nobody observed would make an approval collected under one phrase the
+ * default network of the wallet that replaced it, with no later reset to
+ * undo it. So the caller supplies a fresh platform confirmation, and it runs
+ * on both sides of the write: before the commit, refusing without writing,
+ * and after it, rolling the store back to the state read under this same
+ * lock before rethrowing. The rollback write is the one residual interval,
+ * and it restores the status quo rather than applying a choice.
+ *
  * @param network - The network to activate.
  * @param expectedFingerprint - The entropy fingerprint the request was bound
  * to, or `undefined` to skip the check (tests only).
+ * @param confirmPhrase - Re-observes the primary phrase from the platform,
+ * throwing when it is no longer the one the approval was collected under.
+ * Optional for tests exercising the lock in isolation; every dialog-driven
+ * caller passes it.
  */
 export async function setActiveNetwork(
   network: NetworkName,
   expectedFingerprint: string | undefined,
+  confirmPhrase?: () => Promise<void>,
 ): Promise<void> {
   await withStateLock(async () => {
     const state = await getState();
     assertStoreFingerprint(state, expectedFingerprint);
-    if (state.network !== network) {
-      await saveState({ ...state, network });
+    if (state.network === network) {
+      return;
+    }
+    await confirmPhrase?.();
+    await saveState({ ...state, network });
+    if (confirmPhrase === undefined) {
+      return;
+    }
+    try {
+      await confirmPhrase();
+    } catch (error) {
+      // The write above landed for a phrase that is no longer active; put
+      // back what this lock read before it. Best effort: a store that
+      // cannot be written again must not mask the refusal below.
+      await saveState(state).catch(() => undefined);
+      throw error;
     }
   });
 }
@@ -944,6 +973,10 @@ export async function getTokens(network: NetworkName): Promise<TrackedToken[]> {
  * @param token - The token to add.
  * @param expectedFingerprint - The entropy fingerprint the request was bound
  * to, or `undefined` to skip the check (tests only).
+ * @param confirmPhrase - Re-observes the primary phrase from the platform,
+ * throwing when it is no longer the one the approval was collected under;
+ * see {@link setActiveNetwork}. Optional for tests exercising the lock in
+ * isolation; every dialog-driven caller passes it.
  * @returns True when newly added, false when already present.
  * @throws An invalid-request error when the cap is already reached.
  */
@@ -951,6 +984,7 @@ export async function addToken(
   network: NetworkName,
   token: TrackedToken,
   expectedFingerprint: string | undefined,
+  confirmPhrase?: () => Promise<void>,
 ): Promise<boolean> {
   return withStateLock(async () => {
     const state = await getState();
@@ -965,8 +999,24 @@ export async function addToken(
         `Token limit reached: at most ${MAX_TRACKED_TOKENS} tracked tokens per network.`,
       );
     }
-    tokens[network] = [...forNetwork, token];
-    await saveState({ ...state, tokens });
+    // The registry survives a phrase change exactly as the network
+    // preference does, so the confirmation runs on both sides of the write
+    // for the same reason `setActiveNetwork` documents. The new map is built
+    // without touching the snapshot read above: the rollback writes that
+    // snapshot back, and a map mutated in place would smuggle the very token
+    // the rollback exists to withdraw.
+    const nextTokens = { ...tokens, [network]: [...forNetwork, token] };
+    await confirmPhrase?.();
+    await saveState({ ...state, tokens: nextTokens });
+    if (confirmPhrase === undefined) {
+      return true;
+    }
+    try {
+      await confirmPhrase();
+    } catch (error) {
+      await saveState(state).catch(() => undefined);
+      throw error;
+    }
     return true;
   });
 }
