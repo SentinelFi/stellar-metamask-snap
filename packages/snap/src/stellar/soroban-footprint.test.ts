@@ -207,6 +207,38 @@ describe('Soroban data extension', () => {
     expect(summary?.lines).toContain('Auto-restore: read-write entries #1, #3');
   });
 
+  it('marks an auto-restore list beyond the cap as incomplete', () => {
+    // `archivedSorobanEntries<>` is unbounded on the wire like the key lists
+    // above it. Uncapped, a flooded list would destroy the section's
+    // readability while `findUndisplayableFootprint` reported the footprint
+    // as fully displayable, so the signing gate would not fire.
+    const data = new xdr.SorobanTransactionData({
+      ext: new xdr.SorobanTransactionDataExt(
+        1,
+        new xdr.SorobanResourcesExtV0({
+          archivedSorobanEntries: Array.from(
+            { length: MAX_FOOTPRINT_KEYS + 5 },
+            (_unused, index) => index,
+          ),
+        }),
+      ),
+      resources: new xdr.SorobanResources({
+        footprint: new xdr.LedgerFootprint({
+          readOnly: [],
+          readWrite: [contractDataKey()],
+        }),
+        instructions: 1,
+        diskReadBytes: 2,
+        writeBytes: 3,
+      }),
+      resourceFee: xdr.Int64.fromString('100'),
+    });
+    const summary = summarizeFootprint(data);
+    expect(summary?.truncated).toBe(true);
+    expect(summary?.lines.join('\n')).toContain('+5 more');
+    expect(findUndisplayableFootprint(data)).toBe('truncated');
+  });
+
   it('says nothing about restores when the extension is empty', () => {
     const data = new xdr.SorobanTransactionData({
       ext: new xdr.SorobanTransactionDataExt(0),

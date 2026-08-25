@@ -67,6 +67,8 @@ second hand-maintained list.
    yarn workspace stellar-soroban-snap-connector build
    ```
 
+   Also re-verify the mainnet Soroban RPC gateway relationship (`soroban-rpc.mainnet.stellar.gateway.fm`): confirm the operator and terms are still the ones the threat model accepts. The endpoint is a hardcoded constant inside the shasum-sealed bundle, so rotating it requires a new release and re-allowlisting; its compromise or discontinuation is a slow-remediation event, which makes this a per-release check rather than something a later fix can absorb.
+
 6. **Check the pack contents** of both packages, so nothing unintended ships and nothing needed is missing. `prepack` runs `scripts/check-publish-env.mjs`, which refuses to pack outside the release workflow unless told this is a local inspection:
 
    ```bash
@@ -270,6 +272,21 @@ Work through the entries whose trigger fired; skip the rest.
    much beyond its current size, size the cap as
    `MAX_TRACKED_ORIGINS * RATE_LIMITS.size`, or key the map by origin with a
    per-method sub-record so the constant means what it says.
+
+### Trigger: rendering a new XDR collection in a dialog
+
+Every variable-length XDR collection rendered for review in
+`packages/snap/src/stellar/soroban.ts` must go through `renderBounded`, which
+pairs the item cap with the `truncated` flag the signing gates fail closed on.
+The two halves of that invariant are useless separately: a cap without the flag
+hides items while reporting the list fully disclosed, and most of these arrays
+(`constructorArgs<>`, `archivedSorobanEntries<>`, `ScVal` vectors and maps) are
+unbounded on the wire, so nothing upstream bounds the count. A bare `.map` over
+a new collection is exactly how a quarter-megabyte dialog line slips past
+`findUndisplayableOperation`, `findUndisplayableAuthEntry`, and
+`findUndisplayableFootprint` as reviewable. Regression cases for the over-cap
+shapes live in `soroban-decode.test.ts` and `soroban-footprint.test.ts`; add
+one for any new collection alongside its renderer.
 
 ### Trigger: adding a renderable operation type
 

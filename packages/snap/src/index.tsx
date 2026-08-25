@@ -93,7 +93,13 @@ export const onHomePage: OnHomePageHandler = async () => {
  *
  * @returns Resolves when dismissed.
  */
-export const onInstall: OnInstallHandler = async () => installWelcome();
+export const onInstall: OnInstallHandler = async () => {
+  // Best effort, exactly as `onUpdate`: the platform logs and swallows a
+  // lifecycle rejection, so throwing gains nothing today, and the welcome is
+  // advisory. The wrapper is here so a future version of this handler that
+  // grows a state read does not inherit a crash path silently.
+  await installWelcome().catch(() => undefined);
+};
 
 /**
  * Post-update notice, shown only when an existing connection grant needs

@@ -29,6 +29,28 @@ const SOURCE = 'GDRXE2BQUC3AZNPVFSCEZ76NJ3WWL25FYFK6RGZGIEKWE4SOOHSUJUJ6';
 const CONTRACT = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 
 /**
+ * Builds V2 create-contract args carrying the given number of void
+ * constructor arguments.
+ *
+ * @param count - How many constructor arguments to attach.
+ * @returns The create-contract args.
+ */
+function createContractV2Args(count: number): xdr.CreateContractArgsV2 {
+  return new xdr.CreateContractArgsV2({
+    contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+      new xdr.ContractIdPreimageFromAddress({
+        address: new Address(SOURCE).toScAddress(),
+        salt: Buffer.alloc(32, 7),
+      }),
+    ),
+    executable: xdr.ContractExecutable.contractExecutableWasm(
+      Buffer.alloc(32, 9),
+    ),
+    constructorArgs: Array.from({ length: count }, () => xdr.ScVal.scvVoid()),
+  });
+}
+
+/**
  * Builds a contract-fn invocation node with the given sub-invocations.
  *
  * @param subInvocations - Nested invocation nodes.
@@ -309,6 +331,47 @@ describe('decodeHostFunction', () => {
     expect(details).toContain(SOURCE);
     expect(details).toContain(Buffer.alloc(32, 7).toString('hex'));
     expect(details).toContain(Buffer.alloc(32, 9).toString('hex'));
+  });
+
+  it('marks constructor arguments beyond the item cap as truncated', () => {
+    // `constructorArgs<>` is unbounded on the wire, and the per-value limits
+    // bound how one argument renders, never how many there are. Uncapped,
+    // one meaningful constructor argument could be buried among thousands of
+    // fillers while the fail-closed reviewability gate saw nothing wrong.
+    const decoded = decodeHostFunction(
+      xdr.HostFunction.hostFunctionTypeCreateContractV2(
+        createContractV2Args(25),
+      ),
+    );
+    expect(decoded.kind).toBe('createContract');
+    expect(decoded.truncated).toBe(true);
+    expect(JSON.stringify(decoded.details)).toContain('+5 more');
+  });
+
+  it('reports constructor arguments within the cap as fully rendered', () => {
+    const decoded = decodeHostFunction(
+      xdr.HostFunction.hostFunctionTypeCreateContractV2(
+        createContractV2Args(20),
+      ),
+    );
+    expect(decoded.truncated).toBe(false);
+    expect(JSON.stringify(decoded.details)).not.toContain('more');
+  });
+
+  it('marks an auth entry deploying with over-cap constructor arguments as truncated', () => {
+    // The same helper is reached from the authorization path, so a
+    // standalone signAuthEntry request must fail closed on it too.
+    const entry = addressEntry(
+      new xdr.SorobanAuthorizedInvocation({
+        function:
+          xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeCreateContractV2HostFn(
+            createContractV2Args(25),
+          ),
+        subInvocations: [],
+      }),
+    );
+    expect(decodeAuthEntry(entry).truncated).toBe(true);
+    expect(findUndisplayableAuthEntry([entry])).toBe('truncated');
   });
 });
 

@@ -141,6 +141,39 @@ export function formatSymbolBytes(raw: string | Uint8Array): string {
 type TruncationFlags = { truncated: boolean };
 
 /**
+ * Renders a bounded prefix of a variable-length list, setting the truncation
+ * flag and appending an explicit `…+N more` marker when items were dropped.
+ *
+ * Every variable-length XDR collection this module renders must go through
+ * here. The lists are envelope- or endpoint-controlled and most are
+ * unbounded on the wire, so the cap is what keeps a dialog reviewable, and
+ * the flag is what the signing gates fail closed on: a bare `.map` renders a
+ * list larger than any dialog can display while reporting it as fully
+ * disclosed, which is precisely the condition those gates exist to refuse.
+ * Pairing the cap with the flag in one place makes forgetting one half of
+ * the invariant impossible at the call site.
+ *
+ * @param items - The list to render.
+ * @param cap - The maximum number of items rendered in full.
+ * @param flags - Walk flags; `truncated` is set when items were dropped.
+ * @param render - Renders one item.
+ * @returns The rendered prefix, with the overflow marker when applicable.
+ */
+function renderBounded<Type>(
+  items: readonly Type[],
+  cap: number,
+  flags: TruncationFlags,
+  render: (item: Type) => string,
+): string[] {
+  const rendered = items.slice(0, cap).map(render);
+  if (items.length > cap) {
+    flags.truncated = true;
+    rendered.push(`…+${items.length - cap} more`);
+  }
+  return rendered;
+}
+
+/**
  * Stringifies an ScVal in typed notation (`u32(5)`, `sym(transfer)`,
  * `bytes(6a6f…)`) so values of different types can never render
  * identically. Bounded in depth, item count, and byte length; truncation is
@@ -260,32 +293,26 @@ function formatScValInner(
     case 'scvAddress':
       return Address.fromScVal(value).toString();
     case 'scvVec': {
-      const items = value.vec() ?? [];
-      const shown = items
-        .slice(0, MAX_SCVAL_ITEMS)
-        .map((item) => formatScVal(item, depth + 1, flags));
-      if (items.length > MAX_SCVAL_ITEMS) {
-        flags.truncated = true;
-        shown.push(`…+${items.length - MAX_SCVAL_ITEMS} more`);
-      }
+      const shown = renderBounded(
+        value.vec() ?? [],
+        MAX_SCVAL_ITEMS,
+        flags,
+        (item) => formatScVal(item, depth + 1, flags),
+      );
       return `[${shown.join(', ')}]`;
     }
     case 'scvMap': {
-      const entries = value.map() ?? [];
-      const shown = entries
-        .slice(0, MAX_SCVAL_ITEMS)
-        .map(
-          (entry) =>
-            `${formatScVal(entry.key(), depth + 1, flags)}: ${formatScVal(
-              entry.val(),
-              depth + 1,
-              flags,
-            )}`,
-        );
-      if (entries.length > MAX_SCVAL_ITEMS) {
-        flags.truncated = true;
-        shown.push(`…+${entries.length - MAX_SCVAL_ITEMS} more`);
-      }
+      const shown = renderBounded(
+        value.map() ?? [],
+        MAX_SCVAL_ITEMS,
+        flags,
+        (entry) =>
+          `${formatScVal(entry.key(), depth + 1, flags)}: ${formatScVal(
+            entry.val(),
+            depth + 1,
+            flags,
+          )}`,
+      );
       return `{${shown.join(', ')}}`;
     }
     case 'scvContractInstance': {
@@ -295,21 +322,17 @@ function formatScValInner(
         executable.switch().name === 'contractExecutableWasm'
           ? `wasm(${executable.wasmHash().toString('hex')})`
           : 'built-in-token';
-      const storage = instance.storage() ?? [];
-      const shown = storage
-        .slice(0, MAX_SCVAL_ITEMS)
-        .map(
-          (entry) =>
-            `${formatScVal(entry.key(), depth + 1, flags)}: ${formatScVal(
-              entry.val(),
-              depth + 1,
-              flags,
-            )}`,
-        );
-      if (storage.length > MAX_SCVAL_ITEMS) {
-        flags.truncated = true;
-        shown.push(`…+${storage.length - MAX_SCVAL_ITEMS} more`);
-      }
+      const shown = renderBounded(
+        instance.storage() ?? [],
+        MAX_SCVAL_ITEMS,
+        flags,
+        (entry) =>
+          `${formatScVal(entry.key(), depth + 1, flags)}: ${formatScVal(
+            entry.val(),
+            depth + 1,
+            flags,
+          )}`,
+      );
       const storageText =
         shown.length > 0 ? `, storage: {${shown.join(', ')}}` : '';
       return `contract-instance(${executableText}${storageText})`;
@@ -397,12 +420,20 @@ function describeCreateContractArgs(
   }
 
   if (args instanceof xdr.CreateContractArgsV2) {
+    // `constructorArgs<>` is unbounded on the wire, so the count needs the
+    // same cap-and-flag treatment every argument list here gets: the
+    // per-value limits bound how one argument renders, never how many there
+    // are, and an uncapped list is exactly the unreviewable dialog the
+    // signing gates fail closed on.
     const ctorArgs = args.constructorArgs();
     if (ctorArgs.length > 0) {
       lines.push(
-        `Constructor args: ${ctorArgs
-          .map((value) => formatScVal(value, 0, flags))
-          .join(', ')}`,
+        `Constructor args: ${renderBounded(
+          ctorArgs,
+          MAX_SCVAL_ITEMS,
+          flags,
+          (value) => formatScVal(value, 0, flags),
+        ).join(', ')}`,
       );
     }
   }
@@ -425,14 +456,12 @@ export function decodeHostFunction(
   switch (hostFunction.switch().name) {
     case 'hostFunctionTypeInvokeContract': {
       const invocation = hostFunction.invokeContract();
-      const rawArgs = invocation.args();
-      const args = rawArgs
-        .slice(0, MAX_SCVAL_ITEMS)
-        .map((value) => formatScVal(value, 0, flags));
-      if (rawArgs.length > MAX_SCVAL_ITEMS) {
-        flags.truncated = true;
-        args.push(`…+${rawArgs.length - MAX_SCVAL_ITEMS} more`);
-      }
+      const args = renderBounded(
+        invocation.args(),
+        MAX_SCVAL_ITEMS,
+        flags,
+        (value) => formatScVal(value, 0, flags),
+      );
       return {
         kind: 'invoke',
         contract: Address.fromScAddress(
@@ -522,14 +551,12 @@ function describeInvocation(
     case 'sorobanAuthorizedFunctionTypeContractFn': {
       const args = fn.contractFn();
       const contract = Address.fromScAddress(args.contractAddress()).toString();
-      const rendered = args
-        .args()
-        .slice(0, MAX_SCVAL_ITEMS)
-        .map((value) => formatScVal(value, 0, flags));
-      if (args.args().length > MAX_SCVAL_ITEMS) {
-        flags.truncated = true;
-        rendered.push(`…+${args.args().length - MAX_SCVAL_ITEMS} more`);
-      }
+      const rendered = renderBounded(
+        args.args(),
+        MAX_SCVAL_ITEMS,
+        flags,
+        (value) => formatScVal(value, 0, flags),
+      );
       return `${contract}.${formatSymbolBytes(args.functionName())}(${rendered.join(
         ', ',
       )})`;
@@ -945,12 +972,10 @@ export function summarizeFootprint(
         continue;
       }
       lines.push(`${label} (${keys.length}):`);
-      for (const key of keys.slice(0, MAX_FOOTPRINT_KEYS)) {
-        lines.push(`  ${describeLedgerKey(key, flags)}`);
-      }
-      if (keys.length > MAX_FOOTPRINT_KEYS) {
-        flags.truncated = true;
-        lines.push(`  …+${keys.length - MAX_FOOTPRINT_KEYS} more`);
+      for (const line of renderBounded(keys, MAX_FOOTPRINT_KEYS, flags, (key) =>
+        describeLedgerKey(key, flags),
+      )) {
+        lines.push(`  ${line}`);
       }
     }
 
@@ -969,12 +994,19 @@ export function summarizeFootprint(
     // is reported as incomplete, like every other unknown variant here.
     const ext = sorobanData.ext();
     if (ext.switch() === 1) {
+      // `archivedSorobanEntries<>` is unbounded on the wire like the key
+      // lists above, and this section's whole promise is that the signed
+      // state-access scope is either shown in full or declared incomplete;
+      // the cap-and-flag pair is what keeps that promise for a flooded list.
       const archived = ext.resourceExt().archivedSorobanEntries();
       if (archived.length > 0) {
         lines.push(
-          `Auto-restore: read-write entries ${archived
-            .map((position: number) => `#${position + 1}`)
-            .join(', ')}`,
+          `Auto-restore: read-write entries ${renderBounded(
+            archived,
+            MAX_FOOTPRINT_KEYS,
+            flags,
+            (position: number) => `#${position + 1}`,
+          ).join(', ')}`,
         );
       }
     } else if (ext.switch() !== 0) {
