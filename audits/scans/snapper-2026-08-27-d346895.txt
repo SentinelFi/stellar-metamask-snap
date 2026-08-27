@@ -1,0 +1,1375 @@
+2026-08-27T14:16:32.823Z [[34mdebug[39m]: Running detectors: ConsoleLog, DangerousFunctions, DeprecatedFunctions, HardcodedSecrets, ExcessiveComments, InsecureRandomness, UnusedFunctions, UnusedImports, UnusedVariables, LeftoverTODOs, InsecureCryptoLibraries, InsecureCryptography, UsedBeforeDefinedFunctions, UsedBeforeDefinedArrowFunctions, UsedBeforeDefinedInterfaces, UnusedPermissions, DeprecatedPermissions, DependencyOutdated, DependencyVersioning, LackOfExceptionHandling, originValidation, PotentialOutdatedEngine, MissingExplicitStrictTypeChecking, BroadPermissions, FloatingPointPrecision, UnhandledPromiseRejection, ImproperTypeUsage, ESLinting
+2026-08-27T14:16:33.970Z [[34mdebug[39m]: Processing project: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/tsconfig.json
+2026-08-27T14:16:33.975Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/keys/index.test.ts
+2026-08-27T14:16:33.976Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/errors.test.ts
+2026-08-27T14:16:33.976Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/limiter.test.ts
+2026-08-27T14:16:33.976Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/router.test.ts
+2026-08-27T14:16:33.976Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/throttle.test.ts
+2026-08-27T14:16:33.976Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/validation.test.ts
+2026-08-27T14:16:33.976Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/state/index.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/events.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/horizon.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/http.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/rpc.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/safety.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/soroban-decode.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/soroban-footprint.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/soroban-fuzz.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/soroban-simulate.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/token.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/ui/format.test.ts
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/index.test.tsx
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/multi-account.test.tsx
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/phase4.test.tsx
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/soroban.test.tsx
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/access-guards.test.tsx
+2026-08-27T14:16:33.977Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/sign-guards.test.tsx
+2026-08-27T14:16:33.978Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/ui/transaction-disclosure.test.tsx
+2026-08-27T14:16:33.978Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/ui/transaction-fidelity.test.tsx
+2026-08-27T14:16:33.978Z [[34mdebug[39m]: Skipping test file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/ui/transaction-fuzz.test.tsx
+2026-08-27T14:16:33.978Z [[32minfo[39m]: Processing 28 files in /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap
+2026-08-27T14:16:33.978Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/snap.config.ts
+2026-08-27T14:16:33.978Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:33.984Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:33.985Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:33.989Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:33.989Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:33.990Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:33.990Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:33.999Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:33.999Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:33.999Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (14-23).
+2026-08-27T14:16:34.000Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (98-117).
+2026-08-27T14:16:34.000Z [[34mdebug[39m]: Found 2 issues
+2026-08-27T14:16:34.000Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:34.001Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.001Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:34.005Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.005Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:34.009Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.009Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:34.378Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.378Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:34.383Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.383Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:34.384Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.384Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:34.386Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.386Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:34.414Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.414Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:34.424Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.424Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:34.426Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.426Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:34.428Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.428Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:34.429Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.429Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:34.430Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.430Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:34.432Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:34.432Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:37.369Z [[34mdebug[39m]: [ESLinting] Adding finding - Definition for rule 'import-x/no-dynamic-require' was not found.
+2026-08-27T14:16:37.369Z [[34mdebug[39m]: [ESLinting] Adding finding - Definition for rule 'n/no-extraneous-require' was not found.
+2026-08-27T14:16:37.369Z [[34mdebug[39m]: [ESLinting] Adding finding - Definition for rule 'import-x/no-dynamic-require' was not found.
+2026-08-27T14:16:37.369Z [[34mdebug[39m]: [ESLinting] Adding finding - Definition for rule 'n/no-extraneous-require' was not found.
+2026-08-27T14:16:37.369Z [[34mdebug[39m]: Found 4 issues
+2026-08-27T14:16:37.369Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/access.tsx
+2026-08-27T14:16:37.369Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.370Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.370Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.371Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.371Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.372Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.372Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.372Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (31-42).
+2026-08-27T14:16:37.372Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:37.372Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.372Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.372Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.376Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.376Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.377Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.377Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.378Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.378Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.378Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.379Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.379Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.379Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.379Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.379Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.380Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.380Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.381Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.381Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.381Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.382Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.382Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.382Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.382Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.383Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.383Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.383Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.383Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.383Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/account.tsx
+2026-08-27T14:16:37.383Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.390Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.390Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.395Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.395Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.396Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.396Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.396Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (210-231).
+2026-08-27T14:16:37.396Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (341-346).
+2026-08-27T14:16:37.396Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (393-409).
+2026-08-27T14:16:37.396Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (434-446).
+2026-08-27T14:16:37.396Z [[34mdebug[39m]: Found 4 issues
+2026-08-27T14:16:37.396Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.397Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.397Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.406Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.406Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.409Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.409Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.418Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.419Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.431Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.431Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.433Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.433Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.471Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.471Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.478Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.478Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.487Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.487Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.489Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.489Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.490Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.490Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.491Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.491Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.491Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.491Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.493Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.493Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/accounts.tsx
+2026-08-27T14:16:37.493Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.494Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.494Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.496Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.496Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.496Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.496Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.496Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.496Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.496Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.496Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.499Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.499Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.500Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.500Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.500Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.500Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.501Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.502Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.502Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.502Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.502Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.502Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.503Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.503Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.507Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.507Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.507Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.507Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.508Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.508Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.508Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.508Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.508Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.508Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.509Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.509Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/home.tsx
+2026-08-27T14:16:37.509Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.511Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.511Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.526Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.526Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.531Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.531Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.532Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (266-278).
+2026-08-27T14:16:37.532Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (285-296).
+2026-08-27T14:16:37.532Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (324-333).
+2026-08-27T14:16:37.532Z [[34mdebug[39m]: Found 3 issues
+2026-08-27T14:16:37.532Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.536Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.536Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.542Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.542Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.544Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.544Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.545Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.545Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.551Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.551Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.557Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.557Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.559Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.559Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.562Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.562Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.566Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.566Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.569Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.569Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.571Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.571Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.572Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.572Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.574Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.574Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.577Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.577Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/install.tsx
+2026-08-27T14:16:37.577Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.577Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.577Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.578Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.578Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.578Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.579Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.579Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.579Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.579Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.579Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.581Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.581Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.581Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.581Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.582Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.582Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.583Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.583Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.583Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.583Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.587Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.588Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.588Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.588Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.588Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.588Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.588Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.588Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/network.tsx
+2026-08-27T14:16:37.589Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.590Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.590Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (91-97).
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.591Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.593Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.594Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.594Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.594Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.595Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.595Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.596Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.596Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.596Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.596Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.597Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.597Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.597Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.597Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.598Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.598Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.598Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.598Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/handlers/sign.tsx
+2026-08-27T14:16:37.599Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.602Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.602Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.607Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.607Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.612Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.612Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.612Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (207-214).
+2026-08-27T14:16:37.612Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (244-249).
+2026-08-27T14:16:37.612Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (255-262).
+2026-08-27T14:16:37.612Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (372-377).
+2026-08-27T14:16:37.612Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (393-402).
+2026-08-27T14:16:37.612Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (419-425).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (463-468).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (478-494).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (512-519).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (537-548).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (577-586).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (671-679).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (719-766).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (840-850).
+2026-08-27T14:16:37.613Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (868-873).
+2026-08-27T14:16:37.614Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (875-877).
+2026-08-27T14:16:37.614Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (879-880).
+2026-08-27T14:16:37.614Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (901-913).
+2026-08-27T14:16:37.614Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (964-972).
+2026-08-27T14:16:37.614Z [[34mdebug[39m]: Found 19 issues
+2026-08-27T14:16:37.614Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.615Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.615Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.630Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.630Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.634Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.634Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.637Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.637Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.647Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.647Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.648Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.649Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.650Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.650Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.660Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.660Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.676Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.676Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.679Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.679Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.685Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.685Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.686Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.686Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.687Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.687Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.690Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.690Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/index.tsx
+2026-08-27T14:16:37.690Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.692Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.692Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.695Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.695Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.696Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.696Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.697Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (327-337).
+2026-08-27T14:16:37.697Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (397-404).
+2026-08-27T14:16:37.697Z [[34mdebug[39m]: Found 2 issues
+2026-08-27T14:16:37.697Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.698Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.698Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.707Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.707Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.710Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.710Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.712Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.712Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.715Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.715Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.716Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.716Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.717Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.717Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.719Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.719Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.721Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.721Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.723Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.723Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.724Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.724Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.725Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.725Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.725Z [[34mdebug[39m]: [UnhandledPromiseRejection] Adding finding - Empty or ineffective catch block detected, which can lead to unhandled promise rejections.
+2026-08-27T14:16:37.725Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:37.725Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.729Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.730Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/keys/index.ts
+2026-08-27T14:16:37.730Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:37.732Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.732Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:37.736Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.737Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:37.738Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.738Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:37.750Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.750Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:37.750Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (502-507).
+2026-08-27T14:16:37.751Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (570-583).
+2026-08-27T14:16:37.751Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (593-598).
+2026-08-27T14:16:37.751Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (600-602).
+2026-08-27T14:16:37.751Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (624-629).
+2026-08-27T14:16:37.751Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (882-896).
+2026-08-27T14:16:37.752Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (976-981).
+2026-08-27T14:16:37.752Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (1270-1275).
+2026-08-27T14:16:37.753Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (847-855).
+2026-08-27T14:16:37.753Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (1356-1362).
+2026-08-27T14:16:37.753Z [[34mdebug[39m]: Found 10 issues
+2026-08-27T14:16:37.753Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:37.755Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.755Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:37.767Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.767Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:37.772Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.772Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:37.776Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.776Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:37.782Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.782Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:37.784Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.784Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:37.786Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.786Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:37.801Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.801Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:37.822Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.823Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:37.832Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.832Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:37.833Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.833Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:37.834Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.834Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:37.835Z [[34mdebug[39m]: [UnhandledPromiseRejection] Adding finding - Empty or ineffective catch block detected, which can lead to unhandled promise rejections.
+2026-08-27T14:16:37.835Z [[34mdebug[39m]: [UnhandledPromiseRejection] Adding finding - Empty or ineffective catch block detected, which can lead to unhandled promise rejections.
+2026-08-27T14:16:37.835Z [[34mdebug[39m]: Found 2 issues
+2026-08-27T14:16:37.835Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:37.839Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:37.840Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.309Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: Found 28 issues
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/errors.ts
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.310Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:38.311Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.311Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:38.311Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.311Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:38.312Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.312Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:38.312Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.312Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:38.312Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.313Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:38.313Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.313Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:38.313Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.313Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:38.313Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.313Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:38.314Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.314Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:38.314Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.314Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:38.314Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.314Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:38.314Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.314Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:38.315Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.316Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:38.364Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.369Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.369Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.369Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.369Z [[34mdebug[39m]: Found 4 issues
+2026-08-27T14:16:38.369Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/limiter.ts
+2026-08-27T14:16:38.369Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:38.375Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.375Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:38.382Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.382Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:38.388Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.388Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:38.421Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "setActiveAccount"
+2026-08-27T14:16:38.422Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:38.422Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:38.422Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (95-109).
+2026-08-27T14:16:38.422Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (113-119).
+2026-08-27T14:16:38.422Z [[34mdebug[39m]: Found 2 issues
+2026-08-27T14:16:38.422Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:38.428Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.428Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:38.445Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.449Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:38.462Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.462Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:38.474Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.474Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:38.486Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.486Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:38.493Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.494Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:38.497Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.497Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:38.503Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.503Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:38.521Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.521Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:38.532Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.532Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:38.544Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.550Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:38.557Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.557Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:38.558Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.558Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:38.573Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.577Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:38.911Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: Found 7 issues
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/router.ts
+2026-08-27T14:16:38.914Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:38.915Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.915Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:38.918Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.918Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:38.919Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.919Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:38.923Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.923Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:38.923Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (100-109).
+2026-08-27T14:16:38.923Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:38.923Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:38.924Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.924Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:38.925Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.925Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:38.926Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.926Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:38.927Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.927Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:38.929Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.929Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:38.929Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.929Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:38.939Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.939Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:38.940Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.940Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:38.942Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.942Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:38.943Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.943Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:38.944Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.944Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:38.944Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.944Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:38.944Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.944Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:38.945Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:38.945Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:39.046Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.047Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.047Z [[34mdebug[39m]: [ESLinting] Adding finding - Unused eslint-disable directive (no problems were reported from '@typescript-eslint/only-throw-error').
+2026-08-27T14:16:39.047Z [[34mdebug[39m]: Found 3 issues
+2026-08-27T14:16:39.047Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/throttle.ts
+2026-08-27T14:16:39.047Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:39.048Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.048Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:39.049Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.049Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:39.050Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.050Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:39.055Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "setActiveAccount"
+2026-08-27T14:16:39.055Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:39.056Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:39.056Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.056Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:39.056Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.056Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:39.062Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.062Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:39.063Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.063Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:39.064Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.064Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:39.065Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.065Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:39.068Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.068Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:39.068Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.068Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:39.069Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.069Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:39.072Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.073Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:39.073Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.073Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:39.074Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.074Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:39.074Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.074Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:39.074Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.074Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:39.075Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.075Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:39.176Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.177Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.177Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.177Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.177Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.177Z [[34mdebug[39m]: Found 5 issues
+2026-08-27T14:16:39.177Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/rpc/validation.ts
+2026-08-27T14:16:39.177Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:39.178Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.178Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:39.179Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.179Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:39.180Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.180Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:39.181Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.181Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:39.182Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.182Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:39.182Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.182Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:39.189Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.189Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:39.189Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.189Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:39.190Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.190Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:39.191Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.192Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:39.192Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.192Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:39.192Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.192Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:39.194Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.194Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:39.196Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.196Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:39.196Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.196Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:39.197Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.197Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:39.197Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.197Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:39.197Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.197Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:39.198Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.198Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:39.306Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.306Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.306Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.306Z [[34mdebug[39m]: Found 3 issues
+2026-08-27T14:16:39.306Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/state/index.ts
+2026-08-27T14:16:39.306Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:39.310Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.310Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:39.315Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.315Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:39.325Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.325Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:39.338Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.338Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:39.339Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (812-823).
+2026-08-27T14:16:39.339Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (1002-1007).
+2026-08-27T14:16:39.339Z [[34mdebug[39m]: Found 2 issues
+2026-08-27T14:16:39.339Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:39.341Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.341Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:39.347Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.347Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:39.352Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.352Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:39.362Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.362Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:39.369Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.369Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:39.371Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.371Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:39.373Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.373Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:39.389Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.389Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:39.412Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.412Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:39.421Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.421Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:39.429Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.429Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:39.430Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.430Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:39.431Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.432Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:39.435Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.435Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: Found 26 issues
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/state/networks.ts
+2026-08-27T14:16:39.803Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:39.806Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.806Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:39.806Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.806Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:39.807Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.807Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:39.807Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.807Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:39.807Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.807Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:39.810Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.810Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:39.810Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.810Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:39.810Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.810Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:39.810Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.810Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:39.811Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.811Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:39.811Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.811Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:39.811Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.811Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:39.811Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.811Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:39.812Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.812Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:39.814Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.814Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:39.814Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.814Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:39.814Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.814Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:39.814Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.814Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:39.815Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.815Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:39.857Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.857Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/events.ts
+2026-08-27T14:16:39.857Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:39.864Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.864Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:39.872Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.873Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:39.874Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.874Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:39.880Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.880Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:39.880Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.881Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:39.882Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.882Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:39.885Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.885Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:39.888Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.888Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:39.890Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.890Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:39.901Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.901Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:39.902Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.902Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:39.904Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.904Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:39.907Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.907Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:39.912Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.912Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:39.915Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.915Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:39.917Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.917Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:39.918Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.918Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:39.919Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.919Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:39.921Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:39.921Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:40.161Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: Found 9 issues
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/horizon.ts
+2026-08-27T14:16:40.165Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:40.177Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.177Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:40.203Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.203Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:40.210Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.210Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:40.248Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "application/json"
+2026-08-27T14:16:40.248Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "application/json"
+2026-08-27T14:16:40.248Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "application/json"
+2026-08-27T14:16:40.249Z [[34mdebug[39m]: Found 3 issues
+2026-08-27T14:16:40.249Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:40.249Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.249Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:40.263Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.263Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:40.305Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.305Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:40.336Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.336Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:40.366Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.367Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:40.397Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.397Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:40.411Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.411Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:40.418Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.418Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:40.452Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.452Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:40.464Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.464Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:40.471Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.471Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:40.475Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.475Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:40.476Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.476Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:40.479Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.479Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:40.483Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.483Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: Found 6 issues
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/http.ts
+2026-08-27T14:16:40.680Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:40.681Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.681Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:40.683Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.683Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:40.683Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.683Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:40.688Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.688Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:40.688Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.688Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:40.688Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.688Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:40.695Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.695Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:40.698Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.698Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:40.699Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.699Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:40.702Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.702Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:40.703Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.703Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:40.703Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.703Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:40.706Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.706Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:40.707Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.707Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:40.707Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.707Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:40.709Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.709Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:40.709Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.709Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:40.709Z [[34mdebug[39m]: [UnhandledPromiseRejection] Adding finding - Empty or ineffective catch block detected, which can lead to unhandled promise rejections.
+2026-08-27T14:16:40.709Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:40.709Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:40.710Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.710Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:40.797Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: Found 3 issues
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/ledger.ts
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.798Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:40.799Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.799Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:40.803Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.803Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:40.803Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.803Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:40.803Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.803Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.804Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:40.807Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.807Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:40.807Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.807Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:40.807Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.808Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:40.808Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.808Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:40.808Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.809Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:40.809Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.809Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:40.809Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.809Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:40.831Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.831Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:40.831Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/rpc.ts
+2026-08-27T14:16:40.831Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:40.833Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.833Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:40.835Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.835Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:40.835Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.835Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:40.838Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "application/json"
+2026-08-27T14:16:40.838Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:40.838Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:40.838Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.838Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:40.839Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.839Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:40.845Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.846Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:40.847Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.847Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:40.848Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.848Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:40.851Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.851Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:40.851Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.852Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:40.852Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.852Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:40.854Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.854Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:40.856Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.856Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:40.857Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.857Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:40.857Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.857Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:40.858Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.858Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:40.858Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.858Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:40.860Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.860Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:40.947Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.947Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.947Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.947Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:40.947Z [[34mdebug[39m]: Found 4 issues
+2026-08-27T14:16:40.947Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/safety.ts
+2026-08-27T14:16:40.947Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:40.949Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.949Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:40.958Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.958Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:40.959Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.959Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:40.963Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "pathPaymentStrictReceive"
+2026-08-27T14:16:40.963Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:40.963Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:40.964Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (101-111).
+2026-08-27T14:16:40.964Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (182-191).
+2026-08-27T14:16:40.964Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (217-222).
+2026-08-27T14:16:40.964Z [[34mdebug[39m]: Found 3 issues
+2026-08-27T14:16:40.964Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:40.965Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.965Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:40.967Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.967Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:40.969Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.969Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:40.971Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.971Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:40.974Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.974Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:40.975Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.975Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:40.976Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.976Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:40.978Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.978Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:40.982Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.982Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:40.986Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.987Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:40.988Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.988Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:40.989Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.989Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:40.989Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.989Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:40.991Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:40.991Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:41.121Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.122Z [[34mdebug[39m]: [ESLinting] Adding finding - Unused eslint-disable directive (no problems were reported from '@typescript-eslint/switch-exhaustiveness-check').
+2026-08-27T14:16:41.127Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.127Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.127Z [[34mdebug[39m]: Found 4 issues
+2026-08-27T14:16:41.127Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/soroban.ts
+2026-08-27T14:16:41.127Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:41.135Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.135Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:41.145Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.145Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:41.153Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.153Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:41.185Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "restoreFootprint"
+2026-08-27T14:16:41.186Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "scvLedgerKeyContractInstance"
+2026-08-27T14:16:41.186Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "hostFunctionTypeCreateContractV2"
+2026-08-27T14:16:41.187Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "assetTypeCreditAlphanum4"
+2026-08-27T14:16:41.187Z [[34mdebug[39m]: [HardcodedSecrets] Adding finding - Potential hardcoded secret detected: "assetTypeCreditAlphanum4"
+2026-08-27T14:16:41.187Z [[34mdebug[39m]: Found 5 issues
+2026-08-27T14:16:41.187Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:41.187Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (260-265).
+2026-08-27T14:16:41.188Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (988-994).
+2026-08-27T14:16:41.189Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (1175-1183).
+2026-08-27T14:16:41.189Z [[34mdebug[39m]: Found 3 issues
+2026-08-27T14:16:41.189Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:41.192Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.192Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:41.208Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.209Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:41.217Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.217Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:41.225Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.225Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:41.238Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.239Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:41.242Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.242Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:41.246Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.246Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:41.260Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.260Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:41.285Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.286Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:41.297Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.298Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:41.303Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.303Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:41.306Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.306Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:41.310Z [[34mdebug[39m]: [UnhandledPromiseRejection] Adding finding - Empty or ineffective catch block detected, which can lead to unhandled promise rejections.
+2026-08-27T14:16:41.311Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:41.311Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:41.318Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.318Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Unused eslint-disable directive (no problems were reported from '@typescript-eslint/switch-exhaustiveness-check').
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.672Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.673Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.673Z [[34mdebug[39m]: Found 25 issues
+2026-08-27T14:16:41.673Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/stellar/token.ts
+2026-08-27T14:16:41.673Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:41.674Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.674Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:41.676Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.676Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:41.677Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.677Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:41.680Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.680Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:41.680Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.680Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:41.680Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.681Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:41.682Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.682Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:41.688Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.688Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:41.690Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.690Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:41.692Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.692Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:41.692Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.693Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:41.693Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.693Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:41.694Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.694Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:41.696Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.696Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:41.698Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.698Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:41.698Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.698Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:41.699Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.699Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:41.699Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.699Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:41.700Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.700Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:41.788Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: Found 8 issues
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/ui/dialogs.tsx
+2026-08-27T14:16:41.789Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:41.791Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.791Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:41.795Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.795Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:41.797Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.797Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:41.797Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.797Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:41.799Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.799Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:41.807Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.807Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:41.812Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.812Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:41.820Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.821Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:41.830Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.830Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:41.832Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.832Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:41.834Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.834Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:41.837Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.837Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:41.844Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.844Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:41.848Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.848Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:41.851Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.851Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:41.858Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.858Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:41.859Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.860Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:41.865Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.865Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/ui/format.ts
+2026-08-27T14:16:41.865Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:41.866Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.866Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:41.868Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.868Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:41.869Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.869Z [[34mdebug[39m]: Running detector: HardcodedSecrets
+2026-08-27T14:16:41.872Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.872Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:41.872Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (183-189).
+2026-08-27T14:16:41.872Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (249-254).
+2026-08-27T14:16:41.872Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (256-255).
+2026-08-27T14:16:41.872Z [[34mdebug[39m]: Found 3 issues
+2026-08-27T14:16:41.872Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:41.873Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.873Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:41.875Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.875Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:41.877Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.877Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:41.878Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.878Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:41.904Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.904Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:41.910Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.910Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:41.918Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.918Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:41.924Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.924Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:41.935Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.935Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:41.941Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.942Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:41.946Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.947Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:41.952Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.952Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:41.953Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.953Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:41.959Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:41.959Z [[34mdebug[39m]: Running detector: ESLinting
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Unused eslint-disable directive (no problems were reported from 'no-misleading-character-class').
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: [ESLinting] Adding finding - Expected only 0 line after block description
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: Found 17 issues
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: Processing file: /home/runner/work/stellar-metamask-snap/stellar-metamask-snap/packages/snap/src/ui/transaction.tsx
+2026-08-27T14:16:42.327Z [[34mdebug[39m]: Running detector: ConsoleLog
+2026-08-27T14:16:42.346Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.346Z [[34mdebug[39m]: Running detector: DangerousFunctions
+2026-08-27T14:16:42.373Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.373Z [[34mdebug[39m]: Running detector: DeprecatedFunctions
+2026-08-27T14:16:42.388Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.388Z [[34mdebug[39m]: Running detector: ExcessiveComments
+2026-08-27T14:16:42.389Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (788-796).
+2026-08-27T14:16:42.390Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (1203-1210).
+2026-08-27T14:16:42.391Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (1482-1488).
+2026-08-27T14:16:42.391Z [[34mdebug[39m]: [ExcessiveComments] Adding finding - Large section of commented-out code detected (1578-1592).
+2026-08-27T14:16:42.393Z [[34mdebug[39m]: Found 4 issues
+2026-08-27T14:16:42.393Z [[34mdebug[39m]: Running detector: InsecureRandomness
+2026-08-27T14:16:42.400Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.400Z [[34mdebug[39m]: Running detector: UnusedFunctions
+2026-08-27T14:16:42.468Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.469Z [[34mdebug[39m]: Running detector: UnusedImports
+2026-08-27T14:16:42.503Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.505Z [[34mdebug[39m]: Running detector: UnusedVariables
+2026-08-27T14:16:42.522Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.523Z [[34mdebug[39m]: Running detector: LeftoverTODOs
+2026-08-27T14:16:42.557Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.557Z [[34mdebug[39m]: Running detector: InsecureCryptoLibraries
+2026-08-27T14:16:42.565Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.565Z [[34mdebug[39m]: Running detector: InsecureCryptography
+2026-08-27T14:16:42.579Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.579Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedFunctions
+2026-08-27T14:16:42.620Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.621Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedArrowFunctions
+2026-08-27T14:16:42.691Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.691Z [[34mdebug[39m]: Running detector: UsedBeforeDefinedInterfaces
+2026-08-27T14:16:42.712Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.712Z [[34mdebug[39m]: Running detector: LackOfExceptionHandling
+2026-08-27T14:16:42.727Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.727Z [[34mdebug[39m]: Running detector: FloatingPointPrecision
+2026-08-27T14:16:42.733Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.733Z [[34mdebug[39m]: Running detector: UnhandledPromiseRejection
+2026-08-27T14:16:42.740Z [[34mdebug[39m]: [UnhandledPromiseRejection] Adding finding - Empty or ineffective catch block detected, which can lead to unhandled promise rejections.
+2026-08-27T14:16:42.741Z [[34mdebug[39m]: Found 1 issues
+2026-08-27T14:16:42.741Z [[34mdebug[39m]: Running detector: ImproperTypeUsage
+2026-08-27T14:16:42.758Z [[34mdebug[39m]: Found 0 issues
+2026-08-27T14:16:42.758Z [[32minfo[39m]: Total issues found: 235
+2026-08-27T14:16:42.771Z [[32minfo[39m]: Results saved to result-14164227082026.json
