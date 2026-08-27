@@ -837,14 +837,18 @@ jobs:
         env:
           SNAP_TGZ: ${{ needs.seal.outputs.snap-tarball }}
           NODE_AUTH_TOKEN: ${{ inputs.bootstrap-token && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
-        run: npm publish "tarballs/$SNAP_TGZ" --provenance --access public
+        # The ./ prefix is load-bearing: npm publish takes a package spec,
+        # and a bare relative path with one slash matches the owner/repo
+        # GitHub shorthand, so npm resolves it as a git URL instead of the
+        # local tarball.
+        run: npm publish "./tarballs/$SNAP_TGZ" --provenance --access public
 
       - name: Publish connector
         if: ${{ steps.preflight.outputs.connector != 'skip' }}
         env:
           CONNECTOR_TGZ: ${{ needs.seal.outputs.connector-tarball }}
           NODE_AUTH_TOKEN: ${{ inputs.bootstrap-token && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
-        run: npm publish "tarballs/$CONNECTOR_TGZ" --provenance --access public
+        run: npm publish "./tarballs/$CONNECTOR_TGZ" --provenance --access public
 
       # The release is judged by what the registry now serves, not by the
       # publish commands having exited zero: consumers install from the
