@@ -1,13 +1,13 @@
 # Snapper scan disposition: 2026-08-27
 
-|                    |                                                                                                                                                                   |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|                    |                                                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Tool**           | [Snapper](https://github.com/sayfer-io/Snapper) (Sayfer), built from `main` source via the [`Snapper security scan` workflow](../../.github/workflows/snapper.yml) |
 | **Scanned commit** | `d346895a4c4afaab1e74535036dac5217b1d3382` (2026-08-25, tagged `pre-audit`)                                                                                        |
-| **Scan date**      | 2026-08-27                                                                                                                                                        |
-| **Scope**          | `packages/snap` (28 source files; test files skipped by the tool)                                                                                                 |
-| **Raw report**     | [snapper-2026-08-27-d346895.txt](snapper-2026-08-27-d346895.txt)                                                                                                  |
-| **Total findings** | 235                                                                                                                                                               |
+| **Scan date**      | 2026-08-27                                                                                                                                                         |
+| **Scope**          | `packages/snap` (28 source files; test files skipped by the tool)                                                                                                  |
+| **Raw report**     | [snapper-2026-08-27-d346895.txt](snapper-2026-08-27-d346895.txt)                                                                                                   |
+| **Total findings** | 235                                                                                                                                                                |
 | **Real defects**   | **0**: every finding is a false positive or a conflict between Snapper's bundled lint config and MetaMask's own lint standard (details below)                      |
 
 This scan replaces the 2026-08-11 report (54 findings, all dispositioned as
@@ -65,17 +65,17 @@ documentation an auditor needs; it stays.
 
 ### 3. `HardcodedSecrets`: 12 findings: **false positive (not secrets)**
 
-| File                      | Flagged string                       | What it actually is                       |
-| ------------------------- | ------------------------------------ | ----------------------------------------- |
-| `stellar/horizon.ts` (×3) | `"application/json"`                 | HTTP `Accept`/`Content-Type` MIME type    |
-| `stellar/rpc.ts`          | `"application/json"`                 | HTTP MIME type                            |
-| `rpc/limiter.ts`          | `"setActiveAccount"`                 | RPC method name in the rate-limit table   |
-| `rpc/throttle.ts`         | `"setActiveAccount"`                 | RPC method name in the throttle table     |
-| `stellar/safety.ts`       | `"pathPaymentStrictReceive"`         | Stellar operation type discriminant       |
-| `stellar/soroban.ts`      | `"restoreFootprint"`                 | Soroban operation type discriminant       |
-| `stellar/soroban.ts`      | `"scvLedgerKeyContractInstance"`     | Soroban XDR ScVal discriminant            |
-| `stellar/soroban.ts`      | `"hostFunctionTypeCreateContractV2"` | Soroban XDR host-function discriminant    |
-| `stellar/soroban.ts` (×2) | `"assetTypeCreditAlphanum4"`         | Stellar XDR asset-type discriminant       |
+| File                      | Flagged string                       | What it actually is                     |
+| ------------------------- | ------------------------------------ | --------------------------------------- |
+| `stellar/horizon.ts` (×3) | `"application/json"`                 | HTTP `Accept`/`Content-Type` MIME type  |
+| `stellar/rpc.ts`          | `"application/json"`                 | HTTP MIME type                          |
+| `rpc/limiter.ts`          | `"setActiveAccount"`                 | RPC method name in the rate-limit table |
+| `rpc/throttle.ts`         | `"setActiveAccount"`                 | RPC method name in the throttle table   |
+| `stellar/safety.ts`       | `"pathPaymentStrictReceive"`         | Stellar operation type discriminant     |
+| `stellar/soroban.ts`      | `"restoreFootprint"`                 | Soroban operation type discriminant     |
+| `stellar/soroban.ts`      | `"scvLedgerKeyContractInstance"`     | Soroban XDR ScVal discriminant          |
+| `stellar/soroban.ts`      | `"hostFunctionTypeCreateContractV2"` | Soroban XDR host-function discriminant  |
+| `stellar/soroban.ts` (×2) | `"assetTypeCreditAlphanum4"`         | Stellar XDR asset-type discriminant     |
 
 The detector pattern-matches string literals; none of these are
 credentials, keys, or tokens. No secret material exists in the snap:
