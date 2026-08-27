@@ -360,15 +360,20 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package version $PKG_VERSION"
             exit 1
           fi
-          if [ "$(git cat-file -t "$GITHUB_REF")" != "tag" ]; then
-            echo "Tag $GITHUB_REF_NAME is not an annotated tag"
-            exit 1
-          fi
           # Fetched from the repository's URL rather than from the `origin`
           # remote: a remote name is read out of local Git configuration,
           # which earlier steps could have rewritten to point somewhere that
           # answers this question the way an attacker prefers.
           REPO_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          # actions/checkout peels annotated tags: the local ref it writes
+          # points at the commit, not the tag object, so asking the checkout
+          # what kind of ref this is would answer "commit" for every tag,
+          # annotated or not. Re-fetch the real ref before asking.
+          git fetch --no-tags --depth=1 "$REPO_URL" "+$GITHUB_REF:$GITHUB_REF"
+          if [ "$(git cat-file -t "$GITHUB_REF")" != "tag" ]; then
+            echo "Tag $GITHUB_REF_NAME is not an annotated tag"
+            exit 1
+          fi
           git fetch --no-tags --depth=1 "$REPO_URL" main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
             # The shallow fetch above only sees the tip; deepen until the
