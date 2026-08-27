@@ -106,7 +106,8 @@ Testing: snaps-jest suite (derivation vectors, per-method happy/reject paths, di
 - [x] Mainnet RPC decision: Gateway.fm RPC + SDF Horizon (CORS-verified); re-probe before submission; drop-in alternates documented.
 - [ ] **Snapper security scan** (CI workflow builds from source; on the frozen pre-publish commit) — assessment: [research/snapper-security-scan.md](research/snapper-security-scan.md).
 - [ ] **Third-party audit** (mandatory — audit-gated entropy permission); then freeze, re-probe CORS, Snapper, tag.
-- [ ] **npm publish** both packages; **Directory Information form** (draft in PHASE-5.md) + ≥2-approval review; after allowlisting: Wallets Kit upstream PR.
+- [x] **npm publish (name reservation)**: `v0.1.0` of both packages published 2026-08-27 via the release workflow's bootstrap path, trusted publishing configured, token deleted. `0.1.0` is the pre-audit build; the audited release is `0.1.1+` (see RELEASE.md "First release and the audited release").
+- [ ] **Audited npm release** (`0.1.1+`, after audit + freeze); **Directory Information form** (draft in PHASE-5.md) + ≥2-approval review; after allowlisting: Wallets Kit upstream PR.
 
 ## Open questions (resolve during Phase 0–1)
 
